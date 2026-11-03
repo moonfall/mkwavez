@@ -105,6 +105,7 @@ async function run(label, url, browser) {
   assert(true, 'worklet holds every timeline table');
   await timelineMarkerChecks(page);
   await wavetableChecks(page);
+  await wavetableEditorChecks(page, tlCount);
   await timelineCopyChecks(page, tlCount);
   await shortcutChecks(page);
   await wordingCheck(page, 'after Seed / Timeline');
@@ -1452,7 +1453,7 @@ async function wavetableChecks(page) {
     !(await page.$('.gen-targets')) && !(await M(() => document.body.textContent.includes('Sets window of'))),
     'no "Sets window of" checkboxes',
   );
-  assert((await page.isDisabled('#wt-edit')) && (await page.isDisabled('#wt-new')), 'Edit / + present but disabled (phase 2)');
+  assert(!(await page.isDisabled('#wt-edit')) && !(await page.isDisabled('#wt-new')), 'Edit / + enabled');
   const shapes = {};
   for (const [id, shape, label] of [
     [0, '1d', '1D'],
@@ -2036,3 +2037,212 @@ try {
   for (const s of servers) await (s.close?.() ?? s.httpServer?.close());
 }
 process.exit(failed ? 1 : 0);
+
+/**
+ * Wavetables editor (phase 2): Edit expands it over the Generate row (Generate hidden, the
+ * Timeline stays) and Collapse returns; it fits 1440×900 / 1180×820 and 390px doesn't
+ * overflow; + 1D / 2D / Rows create user wavetables (2D resized to X × Y); a built-in
+ * duplicates into an editable copy; rename; a Live 1D receives Seed adds at its write head
+ * (next-write markers shown); mouse drags from the Timeline replace and insert, a touch
+ * drag (synthetic pointer events) inserts, a slot drag reorders, Delete empties a slot,
+ * undo reverts, built-ins refuse drops; delete (confirmed) moves its voice to the Timeline.
+ */
+async function wavetableEditorChecks(page, tlCount) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const last = () => M(() => window.mkwavez.model.wavetables.at(-1));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
+  const n0 = await M(() => window.mkwavez.model.wavetables.length);
+
+  // Expand / fit.
+  await page.click('#wt-edit');
+  await page.waitForTimeout(150);
+  const fitEditor = () =>
+    M(() => {
+      const b = document.querySelector('#sec-wavetables-body');
+      const s = document.querySelector('#sec-wavetables').getBoundingClientRect();
+      return {
+        editing: document.querySelector('.shell').classList.contains('wt-editing'),
+        gen: getComputedStyle(document.querySelector('#sec-generate')).display,
+        editor: !document.querySelector('#wt-editor').hidden,
+        compact: !document.querySelector('#wavetable-overview').closest('.wt-box').hidden,
+        wide: s.width / innerWidth,
+        fits: b.scrollHeight <= b.clientHeight + 1,
+        timeline: document.querySelector('#sec-timeline').getBoundingClientRect().top > s.bottom,
+      };
+    });
+  for (const [w, hh] of [
+    [1440, 900],
+    [1180, 820],
+  ]) {
+    await page.setViewportSize({ width: w, height: hh });
+    await page.waitForTimeout(250);
+    const f = await fitEditor();
+    assert(
+      f.editing && f.gen === 'none' && f.editor && !f.compact && f.wide > 0.95 && f.fits && f.timeline && (await fitsScreen(page)),
+      `${w}×${hh}: editor over the Generate row, Timeline below, fits one screen (${JSON.stringify(f)})`,
+    );
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/editor-${w}x${hh}.png` });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
+
+  // Create each shape.
+  for (const [btn, shape] of [
+    ['#wte-new-1d', '1d'],
+    ['#wte-new-2d', '2d'],
+    ['#wte-new-rows', 'rows'],
+  ]) {
+    await page.click(btn);
+    await page.waitForTimeout(50);
+    const wt = await last();
+    const r = await M((id) => ({ sel: document.querySelector(`#wte-item-${id}`)?.getAttribute('aria-selected'), shape: document.querySelector('#wte-canvas').dataset.shape }), wt.id);
+    assert(wt.shape === shape && !wt.builtin && !wt.live && r.sel === 'true' && r.shape === shape, `${btn}: new ${shape} wavetable “${wt.name}”, selected`);
+  }
+  assert((await M(() => window.mkwavez.model.wavetables.length)) === n0 + 3, 'three user wavetables');
+  // 2D: X × Y.
+  const g2 = (await M(() => window.mkwavez.model.wavetables.at(-2))).id;
+  await page.click(`#wte-item-${g2}`);
+  await page.fill('#wte-w', '4');
+  await page.press('#wte-w', 'Tab');
+  await page.fill('#wte-h', '3');
+  await page.press('#wte-h', 'Tab');
+  const dims = await M((id) => window.mkwavez.model.wavetable(id).rows.map((r) => r.length).join(), g2);
+  assert(dims === '4,4,4', `2D resized to 4 × 3 (${dims})`);
+
+  // Duplicate a built-in (the primary action there), then rename it.
+  await page.click('#wte-item-3');
+  assert((await page.getAttribute('#wte-duplicate', 'class')).includes('primary') && (await page.isHidden('#wte-delete')), 'built-in: Duplicate is primary, no Delete');
+  await page.click('#wte-duplicate');
+  let d = await last();
+  const grid = await M(() => window.mkwavez.model.wavetable(3));
+  assert(d.name === 'Grid copy' && !d.builtin && d.pins && JSON.stringify(d.rows) === JSON.stringify(grid.rows), 'Duplicate of Grid: editable copy with its slots');
+  await page.click('#wte-rename');
+  await page.fill('#wte-name-input', 'Bells');
+  await page.press('#wte-name-input', 'Enter');
+  d = await last();
+  assert(d.name === 'Bells' && (await page.textContent(`#wte-item-${d.id}`)).includes('Bells') && (await page.textContent('#wte-name')) === 'Bells', 'renamed inline');
+
+  // A Live 1D receives Seed adds at its write head.
+  const a = (await M(() => window.mkwavez.model.wavetables.find((w) => w.name === 'Wavetable 1'))).id;
+  await page.click(`#wte-item-${a}`);
+  await page.click('#wte-live');
+  await page.waitForTimeout(150);
+  const writes = await page.getAttribute('#wte-canvas', 'data-writes');
+  assert((await M((id) => window.mkwavez.model.wavetable(id).live, a)) && writes.startsWith('append'), `Live: next writes marked (${writes})`);
+  await page.click('#wt-collapse');
+  assert(!(await page.isHidden('#sec-generate')) && (await page.isVisible('#wavetable-overview')), 'Collapse: Generate and the compact panel are back');
+  const before = await tlCount();
+  await page.click('#tab-seed');
+  await page.click('#seed-add-batch');
+  const added = await M((n) => window.mkwavez.model.timeline.slice(n).map((t) => t.id), before);
+  const rowsA = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(added.length > 1 && rowsA.join() === added.join(), `Live 1D received the Seed batch (${rowsA.length})`);
+  await page.click('#wt-edit');
+  await page.click(`#wte-item-${a}`);
+  await page.click('#wte-frozen');
+  await page.waitForTimeout(150);
+
+  // Drags from the Timeline (mouse): onto slot 1 = replace, at slot 3's left edge = insert.
+  const geo = () =>
+    M(() => {
+      const s = document.querySelector('#wte-scroll');
+      s.scrollLeft = 0;
+      document.querySelector('#timeline-scroll').scrollLeft = 0;
+      const r = s.getBoundingClientRect();
+      const t = document.querySelector('#timeline-grid').getBoundingClientRect();
+      return { vx: r.left + 1 + 8, vy: r.top + 60, tx: t.left, ty: t.top + t.height / 2 };
+    });
+  const slotX = (g, x, dx = 33) => g.vx + x * 72 + dx;
+  const dragFromTimeline = async (cell, toX, toY) => {
+    const g = await geo();
+    await page.waitForTimeout(50);
+    await page.mouse.move(g.tx + cell * 63 + 31, g.ty);
+    await page.mouse.down();
+    await page.mouse.move(g.tx + cell * 63 + 31, g.ty - 12, { steps: 2 });
+    await page.mouse.move(toX, toY, { steps: 8 });
+    await page.waitForTimeout(80);
+    const label = await page.textContent('#wave-drag-ghost .wdrag-label');
+    await page.mouse.up();
+    await page.waitForTimeout(50);
+    return label;
+  };
+  const tid = (i) => M((i) => window.mkwavez.model.timeline[i].id, i);
+  let g = await geo();
+  let label = await dragFromTimeline(0, slotX(g, 1), g.vy);
+  let row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[1] === (await tid(0)) && row.length === rowsA.length && label.startsWith('replace'), `drag onto a slot replaces it (“${label}”)`);
+  label = await dragFromTimeline(1, slotX(g, 3, 4), g.vy);
+  row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[3] === (await tid(1)) && row.length === rowsA.length + 1 && label.startsWith('insert'), `drag between slots inserts (“${label}”)`);
+  assert(!(await page.$('#wave-drag-ghost')) && (await page.getAttribute('#wte-canvas', 'data-drop')) === '', 'drag ghost and drop indicator cleared');
+
+  // Touch: synthetic pointer events, a vertical move out of the strip.
+  g = await geo();
+  const parents0 = await M(() => window.mkwavez.model.breedParents.length);
+  await M(
+    ({ g, to }) => {
+      const el = document.querySelector('#timeline-grid');
+      const ev = (type, x, y) =>
+        el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, clientX: x, clientY: y }));
+      const x0 = g.tx + 2 * 63 + 31;
+      ev('pointerdown', x0, g.ty);
+      ev('pointermove', x0, g.ty - 6);
+      ev('pointermove', x0, g.ty - 20);
+      ev('pointermove', to.x, to.y);
+      ev('pointerup', to.x, to.y);
+    },
+    { g, to: { x: slotX(g, 0, 4), y: g.vy } },
+  );
+  row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[0] === (await tid(2)) && row.length === rowsA.length + 2, 'touch drag (synthetic pointer events) inserts');
+  await page.waitForTimeout(500);
+  assert((await M(() => window.mkwavez.model.breedParents.length)) === parents0, 'the touch drag did not toggle a Breed parent');
+
+  // Reorder by dragging a slot; Delete empties the selected slot; undo.
+  g = await geo();
+  const first = row[0];
+  await page.mouse.move(slotX(g, 0), g.vy);
+  await page.mouse.down();
+  await page.mouse.move(slotX(g, 0) + 10, g.vy, { steps: 2 });
+  await page.mouse.move(slotX(g, 2, 64), g.vy, { steps: 6 });
+  await page.waitForTimeout(50);
+  await page.mouse.up();
+  await page.waitForTimeout(50);
+  row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[2] === first && row.length === rowsA.length + 2, `dragging a slot moves it (reorder: ${row.slice(0, 4)})`);
+  await page.mouse.click(slotX(g, 1), g.vy);
+  await page.keyboard.press('Delete');
+  row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[1] === null && (await page.textContent('#wte-slot-info')).includes('empty'), 'Delete empties the selected slot');
+  await page.click('#undo');
+  row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[1] !== null, 'undo restores the slot');
+  // Built-ins refuse drops.
+  await page.click('#wte-item-1');
+  g = await geo();
+  label = await dragFromTimeline(0, g.vx + 30, g.vy);
+  assert(label.includes('read-only'), `built-in: drop refused (“${label}”)`);
+
+  // Delete (confirmed): its voice falls back to the Timeline.
+  await M((id) => window.mkwavez.model.updateVoice(2, { wavetableId: id }), d.id);
+  await page.click(`#wte-item-${d.id}`);
+  page.once('dialog', (dlg) => dlg.accept());
+  await page.click('#wte-delete');
+  const v2 = await M(() => window.mkwavez.model.voice(2).wavetableId);
+  assert(!(await M((id) => !!window.mkwavez.model.wavetable(id), d.id)) && v2 === 0 && !(await page.$(`#wte-item-${d.id}`)), 'Delete: gone, its voice on the Timeline');
+
+  // Phone width.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(250);
+  assert(!(await M(() => document.documentElement.scrollWidth > innerWidth)) && (await page.isVisible('#wte-scroll')), '390px: editor shown, no horizontal overflow');
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/editor-390.png`, fullPage: true });
+  await page.click('#wt-collapse');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
+  // Leave no user wavetables (they would pin waveforms through the later eviction checks).
+  await M(() => {
+    const m = window.mkwavez.model;
+    for (const w of m.wavetables.filter((w) => !w.builtin)) m.deleteWavetable(w.id);
+  });
+}
