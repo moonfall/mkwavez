@@ -1,0 +1,42 @@
+import type { Recipe } from '../table';
+import { basicWave, type BasicWave } from './basic';
+import { caGenerations } from './ca';
+import { formulaTable, type FormulaCompiler } from './formula';
+import { perlinTable, type PerlinParams } from './perlin';
+
+export * from './basic';
+export * from './ca';
+export * from './formula';
+export * from './formulaPresets';
+export * from './perlin';
+
+export interface RenderEnv {
+  /** Needed only for 'formula' recipes (browser: src/browser/formulaEval.ts). */
+  compileFormula?: FormulaCompiler;
+}
+
+/** Re-render a single seed-generator table from its recipe. Deterministic. */
+export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
+  const index = r.batch?.index ?? 0;
+  const count = r.batch?.count ?? 1;
+  const p = r.params;
+  switch (r.op) {
+    case 'basic':
+      return basicWave(p.wave as BasicWave, r.seed);
+    case 'perlin':
+      return perlinTable(p as unknown as PerlinParams, r.seed, index, count);
+    case 'ca':
+      return caGenerations(
+        { rule: Number(p.rule), cells: Number(p.cells) },
+        r.seed,
+        Number(p.generation),
+        1,
+      )[0];
+    case 'formula': {
+      if (!env.compileFormula) throw new Error('renderRecipe: formula needs a compiler');
+      return formulaTable(env.compileFormula(String(p.expr)), r.seed, index, count);
+    }
+    default:
+      throw new Error(`renderRecipe: unknown op ${r.op}`);
+  }
+}
