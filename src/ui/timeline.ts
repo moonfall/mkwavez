@@ -3,7 +3,7 @@ import type { VoiceParams } from '../core/voice';
 import { ALL_WAVETABLE_ID } from '../core/wavetable';
 import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { h, icon, ICONS, panel, voiceColorVar } from './dom';
+import { h, icon, ICONS, isNarrowShell, panel, voiceColorVar } from './dom';
 
 /** Cell width and the gap between cells (px); one cell per table, in one row. */
 const CELL_W = 62;
@@ -74,7 +74,9 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   const viewDots = h('span', { class: 'tl-dots', 'aria-hidden': 'true' });
   const selLabel = h('span', { class: 'sel-label', id: 'timeline-selected' });
   const legend = h('span', { class: 'tl-legend', id: 'timeline-legend' });
-  sec.tools.append(viewBtn, viewDots, selLabel, legend);
+  // Touch devices get the Breed-parent hint visibly (mouse users have the tooltip).
+  const hint = h('span', { class: 'tl-hint', id: 'timeline-hint' }, 'Long-press: Breed parent');
+  sec.tools.append(viewBtn, viewDots, selLabel, hint, legend);
 
   const grid = h('canvas', { 'aria-label': 'Timeline of all tables; click to select', id: 'timeline-grid' });
   const overlay = h('canvas', { class: 'tl-overlay', id: 'timeline-markers', 'aria-hidden': 'true' });
@@ -294,7 +296,8 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   scroller.addEventListener(
     'wheel',
     (e) => {
-      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || e.ctrlKey) return;
+      // Only on the wide shell: in the phone column the wheel must keep scrolling the page.
+      if (isNarrowShell() || Math.abs(e.deltaY) <= Math.abs(e.deltaX) || e.ctrlKey) return;
       const max = scroller.scrollWidth - scroller.clientWidth;
       if (max <= 0) return;
       const d = e.deltaMode === 1 ? e.deltaY * PITCH : e.deltaY;

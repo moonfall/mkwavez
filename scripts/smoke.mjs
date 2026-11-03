@@ -892,6 +892,33 @@ async function timelineMarkerChecks(page) {
   await M(() => window.mkwavez.model.select(window.mkwavez.model.timeline[1].id));
   await frames();
   assert((await sc()).left <= 63, 'a changed selection is scrolled into view');
+  // Wide shell: a vertical wheel over the strip scrolls it sideways.
+  const box = await page.$eval('#timeline-scroll', (s) => {
+    const r = s.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.mouse.move(box.x, box.y);
+  const l0 = (await sc()).left;
+  await page.mouse.wheel(0, 300);
+  await page.waitForFunction((l0) => document.querySelector('#timeline-scroll').scrollLeft > l0, l0, { timeout: 2000 });
+  assert(true, 'wide: vertical wheel scrolls the strip sideways');
+  // Phone column: the wheel keeps scrolling the page, not the strip.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(150);
+  const p = await M(() => {
+    const s = document.querySelector('#timeline-scroll');
+    s.scrollLeft = 0;
+    s.scrollIntoView({ block: 'center' });
+    const r = s.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, y0: scrollY };
+  });
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.wheel(0, 300);
+  await page.waitForFunction((y0) => scrollY > y0, p.y0, { timeout: 2000 });
+  assert((await sc()).left === 0, 'phone: the wheel over the strip scrolls the page, not the strip');
+  assert(await page.isVisible('#timeline-hint'), 'phone: long-press Breed-parent hint visible');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
   await page.click('#undo');
   await page.click('#undo');
   await page.click('#undo');
