@@ -35,6 +35,9 @@ import {
   seedTable,
   type SeedRequest,
 } from '../src/core/generators';
+import { ksPasses, ksString } from '../src/core/generators/karplus';
+import { resamplePeriodic } from '../src/core/generators/resample';
+import { shape } from '../src/core/shape';
 import { describeRecipe } from '../src/core/table';
 
 const same = (a: Float32Array, b: Float32Array) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -79,20 +82,66 @@ describe('parameter modes', () => {
     expect(same(a, seedTable(req('dynamical-systems', {}, 1, 2), 0).data)).toBe(true);
   });
 
-  it('Karplus-Strong: the string darkens over the batch; noise is seeded, the pluck shape is not', () => {
+  it('Karplus-Strong: both excitations darken over the batch; noise is seeded, the pluck shape is not', () => {
+    // Brightness: derivative energy over energy (∝ Σ k²·A_k² / Σ A_k²).
     const hf = (x: Float32Array) => {
-      let s = 0;
-      for (let i = 1; i < x.length; i++) s += Math.abs(x[i] - x[i - 1]);
-      return s;
+      let d = 0;
+      let e = 0;
+      for (let i = 0; i < x.length; i++) {
+        d += (x[i] - x[(i - 1 + x.length) % x.length]) ** 2;
+        e += x[i] ** 2;
+      }
+      return d / e;
     };
-    const b = seedBatch(req('karplus-strong', {}, 6));
-    expect(hf(b[5].data)).toBeLessThan(hf(b[0].data));
+    for (const excite of [0, 1]) {
+      const b = seedBatch(req('karplus-strong', { excite }, 8));
+      for (let i = 1; i < b.length; i++) {
+        expect(hf(b[i].data), `excite ${excite} #${i}`).toBeLessThan(hf(b[i - 1].data));
+        expect(maxDiff(b[i].data, b[i - 1].data), `excite ${excite} #${i}`).toBeGreaterThan(0.01);
+      }
+      // The batch reaches the mellow tail: the last snapshot is far from the first.
+      expect(maxDiff(b[7].data, b[0].data), `excite ${excite}`).toBeGreaterThan(0.2);
+    }
     const t = (excite: number, seed: number) => seedTable(req('karplus-strong', { excite }, 3, seed), 1).data;
     expect(same(t(0, 1), t(0, 2))).toBe(false);
     expect(same(t(1, 1), t(1, 2))).toBe(true);
-    // Snapshot i of a batch = the string after start + i·passes, whatever the batch size.
-    const s = seedTable(req('karplus-strong', { start: 12, passes: 6 }, 8), 0).data;
-    expect(same(s, seedTable(req('karplus-strong', { start: 6, passes: 6 }, 3), 1).data)).toBe(true);
+    // The first / last snapshot are the string at Start pass / Batch → pass, whatever the batch size.
+    const at = (start: number, end: number, n: number, i: number) => seedTable(req('karplus-strong', { start, end }, n), i).data;
+    expect(maxDiff(at(40, 900, 8, 0), at(40, 7, 3, 0))).toBeLessThan(1e-12);
+    expect(maxDiff(at(40, 900, 8, 7), at(0, 900, 3, 2))).toBeLessThan(1e-12);
+  });
+
+  it('Karplus-Strong: log-spaced passes; the closed form matches running the loop', () => {
+    expect(ksPasses(0, 1000, 0)).toBe(0);
+    expect(ksPasses(0, 1000, 1)).toBeCloseTo(1000, 9);
+    expect(ksPasses(0, 1000, 0.5)).toBeCloseTo(Math.sqrt(1001) - 1, 9);
+    expect(ksPasses(500, 100, 1)).toBeCloseTo(100, 9); // Batch → pass below Start sweeps back
+    expect(ksPasses(10, 10, 0.7)).toBe(10);
+    // Reference: the KS loop, sample by sample (renormalised each pass), then resampled.
+    const loop = (buf: Float64Array, b: number, n: number) => {
+      const L = buf.length;
+      let x = Float64Array.from(buf);
+      for (let j = 0; j < n; j++) {
+        const y = new Float64Array(L);
+        let peakY = 0;
+        for (let i = 0; i < L; i++) {
+          y[i] = (1 - 0.5 * b) * x[i] + 0.5 * b * x[(i - 1 + L) % L];
+          peakY = Math.max(peakY, Math.abs(y[i]));
+        }
+        x = y.map((v) => v / peakY);
+      }
+      return shape(resamplePeriodic(x));
+    };
+    for (const L of [16, 61, 96, 300]) {
+      const buf = Float64Array.from({ length: L }, (_, i) => Math.sin(i * 1.7) + 0.5 * Math.cos(i * i * 0.3) + (i === 3 ? 2 : 0));
+      for (const [b, n] of [
+        [0.6, 0],
+        [0.6, 7],
+        [1, 25],
+        [0.25, 120],
+      ])
+        expect(maxDiff(ksString(buf, b, n), loop(buf, b, n)), `L ${L} b ${b} n ${n}`).toBeLessThan(1e-5);
+    }
   });
 
   it('additive designer: slope, balance, formants and phase modes', () => {
@@ -164,8 +213,8 @@ describe('parameter modes', () => {
   });
 
   it('no silent tables: late Karplus-Strong snapshots, a sine map settling on a fixed point', () => {
-    const late = seedTable(req('karplus-strong', { damping: 1, passes: 64, start: 256 }, 64), 63).data;
-    const short = seedTable(req('karplus-strong', { length: 16, damping: 1, passes: 64, start: 256 }, 64), 63).data;
+    const late = seedTable(req('karplus-strong', { damping: 1, start: 256, end: 4096 }, 64), 63).data;
+    const short = seedTable(req('karplus-strong', { length: 16, damping: 1, start: 256, end: 4096 }, 64), 63).data;
     expect(peak(short)).toBeCloseTo(1, 5);
     expect(peak(late)).toBeCloseTo(1, 5);
     const sine = seedTable(req('dynamical-systems', { map: 1, control: 0, controlEnd: 0, iterations: 64 }, 1), 0).data;

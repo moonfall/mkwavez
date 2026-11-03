@@ -8,7 +8,7 @@
 import type { ParamValue } from '../table';
 import { additiveTable, DEFAULT_ADDITIVE as AD, type AdditiveParams } from './additive';
 import { DEFAULT_DYN, DYN_MAP_LABELS, dynamicalTable } from './dynamical';
-import { DEFAULT_KS, karplusTable } from './karplus';
+import { DEFAULT_KS, KS_MAX_PASS, karplusTable } from './karplus';
 import { glyphTable } from './glyph';
 import { DEFAULT_LIFE as LF, LIFE_READS, LIFE_RULES, lifeTable, type LifeParams } from './life';
 import { DEFAULT_RD as RD, RD_CUSTOM, RD_PRESETS, rdTable, type RdParams } from './reactionDiffusion';
@@ -94,29 +94,30 @@ export const PARAM_MODES = [
     cat: 'Simulations',
     name: 'Karplus-Strong snapshots',
     about:
-      'A plucked string: a burst circulates through an averaging filter. Waveform i is the string after ' +
-      'start + i × passes round trips, so a batch scans one decaying pluck (bright → mellow).',
+      'A plucked string: a burst circulates through an averaging filter. A batch scans one decaying pluck ' +
+      '(bright → mellow), from Start pass to “Batch → pass” round trips, log-spaced (early snapshots close together).',
     params: [
       { key: 'excite', label: 'Excitation', min: 0, max: 1, step: 1, value: DEFAULT_KS.excite, options: opts(['Noise burst (seeded)', 'Pluck shape']) },
       { key: 'length', label: 'String length', min: 16, max: 512, step: 1, value: DEFAULT_KS.length },
       { key: 'damping', label: 'Damping', min: 0, max: 1, step: 0.01, value: DEFAULT_KS.damping },
-      { key: 'passes', label: 'Passes per waveform', min: 1, max: 64, step: 1, value: DEFAULT_KS.passes },
-      { key: 'start', label: 'Start pass', min: 0, max: 256, step: 1, value: DEFAULT_KS.start },
+      { key: 'start', label: 'Start pass', min: 0, max: KS_MAX_PASS, step: 1, value: DEFAULT_KS.start },
+      { key: 'end', label: 'Batch → pass', min: 0, max: KS_MAX_PASS, step: 1, value: DEFAULT_KS.end },
       { key: 'position', label: 'Pluck position', min: 0.02, max: 0.5, step: 0.01, value: DEFAULT_KS.position },
     ],
     seeded: (p) => num(p, 'excite') === 0,
-    render: (p, seed, index) =>
+    render: (p, seed, index, count) =>
       karplusTable(
         {
           excite: num(p, 'excite'),
           length: num(p, 'length'),
           damping: num(p, 'damping'),
-          passes: num(p, 'passes'),
           start: num(p, 'start'),
+          end: num(p, 'end'),
           position: num(p, 'position'),
         },
         seed,
         index,
+        count,
       ),
   },
   {
