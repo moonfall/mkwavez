@@ -41,6 +41,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   let currentTab = 'Seed';
   const setTab = (name: string) => {
     currentTab = name;
+    ctx.ui.setPref('generateTab', name);
     for (const [n, b] of tabButtons) b.setAttribute('aria-selected', String(n === name));
     for (const [n, p] of panels) p.hidden = n !== name;
     shared.hidden = name !== 'Breed';
@@ -95,7 +96,12 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
     panels.set(name, p);
   }
   sec.body.append(...panels.values());
-  setTab('Seed');
+  // The open tab is saved with the session (and follows an imported one).
+  const savedTab = () => ctx.ui.pref('generateTab', 'Seed', (v) => tabNames.includes(v as (typeof tabNames)[number]));
+  setTab(savedTab());
+  ctx.ui.onPrefs(() => {
+    if (savedTab() !== currentTab) setTab(savedTab());
+  });
   return {
     el: sec.el,
     view: {

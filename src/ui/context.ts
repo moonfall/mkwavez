@@ -5,9 +5,13 @@ import type { AudioBridge } from '../audio/bridge';
  * UI-only state shared between sections: the voice whose tab is selected (the Voice and
  * Sequence panels both follow it). Kept valid as voices come and go: when the selected
  * voice is removed, the voice now at its place (or the last one) is selected.
+ * `prefs` are small UI choices saved with the session (e.g. the open Generate tab); JSON
+ * values only.
  */
 export class UiState {
   voiceId: number | null = null;
+  private prefs: Record<string, unknown> = {};
+  private prefFns = new Set<() => void>();
   private fns = new Set<() => void>();
   private lastIndex = 0;
 
@@ -25,6 +29,34 @@ export class UiState {
 
   onVoice(fn: () => void): void {
     this.fns.add(fn);
+  }
+
+  pref<T>(key: string, fallback: T, valid: (v: unknown) => boolean = (v) => typeof v === typeof fallback): T {
+    const v = this.prefs[key];
+    return v !== undefined && valid(v) ? (v as T) : fallback;
+  }
+
+  setPref(key: string, value: unknown): void {
+    if (this.prefs[key] === value) return;
+    this.prefs = { ...this.prefs, [key]: value };
+    for (const fn of this.prefFns) fn();
+  }
+
+  onPrefs(fn: () => void): void {
+    this.prefFns.add(fn);
+  }
+
+  /** What the session saves: the selected voice tab and the prefs. */
+  exportPrefs(): Record<string, unknown> {
+    return { ...this.prefs, voiceId: this.voiceId };
+  }
+
+  /** Restore saved prefs (the voice tab only if that voice exists). */
+  loadPrefs(p: Readonly<Record<string, unknown>>): void {
+    const { voiceId, ...rest } = p;
+    this.prefs = { ...rest };
+    if (typeof voiceId === 'number' && this.model.voice(voiceId)) this.setVoice(voiceId);
+    for (const fn of this.prefFns) fn();
   }
 
   private validate(): void {

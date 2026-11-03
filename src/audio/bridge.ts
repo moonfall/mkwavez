@@ -36,7 +36,8 @@ export class AudioBridge {
   private stateFns: ((s: AudioState) => void)[] = [];
   private ctx: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
-  private sentTables = new Set<TableId>();
+  /** Table ids the worklet holds → the data sent (a restored / imported session may reuse an id). */
+  private sentTables = new Map<TableId, Float32Array>();
   private pending: WaveTable[] = [];
   private pumpScheduled = false;
   private sentVoices = new Set<number>();
@@ -147,14 +148,14 @@ export class AudioBridge {
 
   private syncTables(): void {
     if (!this.node) return;
-    const live = new Set<TableId>(this.model.timeline.map((t) => t.id));
-    const removed = [...this.sentTables].filter((id) => !live.has(id));
+    const live = new Map<TableId, Float32Array>(this.model.timeline.map((t) => [t.id, t.data]));
+    const removed = [...this.sentTables].filter(([id, data]) => live.get(id) !== data).map(([id]) => id);
     if (removed.length) {
       for (const id of removed) this.sentTables.delete(id);
       this.post({ type: 'tables/remove', ids: removed });
     }
+    this.pending = this.pending.filter((t) => live.get(t.id) === t.data);
     const queued = new Set(this.pending.map((t) => t.id));
-    this.pending = this.pending.filter((t) => live.has(t.id));
     // Newest first (and ahead of any backlog) so fresh tables become audible immediately.
     const fresh: WaveTable[] = [];
     for (let i = this.model.timeline.length - 1; i >= 0; i--) {
@@ -192,7 +193,7 @@ export class AudioBridge {
     const chunk = this.pending.splice(0, n);
     if (!chunk.length) return;
     const items = chunk.map((t) => ({ id: t.id, mips: buildMipSet(t.data) }));
-    for (const t of chunk) this.sentTables.add(t.id);
+    for (const t of chunk) this.sentTables.set(t.id, t.data);
     this.post(
       { type: 'tables/add', items },
       items.map((i) => i.mips.buffer as ArrayBuffer),

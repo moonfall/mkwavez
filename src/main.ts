@@ -3,14 +3,17 @@ import { MidiController } from './app/midi';
 import { AppModel } from './app/model';
 import { AudioBridge } from './audio/bridge';
 import { WebMidi } from './browser/webMidi';
-import { generateBasic } from './core/generators';
-import { LAST_BATCH_WAVETABLE_ID } from './core/wavetable';
+import { Autosaver, type SaveScheduler } from './app/autosave';
+import { defaultSessionState } from './app/defaultSession';
+import { SessionStore } from './browser/sessionStore';
+import { decodeSession, type SessionState, type WaveformRecord } from './core/session';
 import { setTheme, storedTheme, throttle } from './ui/canvas';
 import { UiState, type FrameView, type UiContext } from './ui/context';
 import { h } from './ui/dom';
 import { buildGenerate } from './ui/generate';
 import { buildMidi } from './ui/midi';
 import { buildSequences } from './ui/sequences';
+import { buildSessionMenu, showNotice } from './ui/session';
 import { installShortcuts } from './ui/shortcuts';
 import { buildTimeline } from './ui/timeline';
 import { buildTransport, togglePlay } from './ui/transport';
@@ -23,30 +26,21 @@ const ctx: UiContext = { model, bridge, ui: new UiState(model) };
 // Dark by default; an explicit choice (theme toggle) is remembered.
 setTheme(storedTheme() ?? 'dark', false);
 
-// ---- initial state (as the prototype): five basic tables (one batch), three voices, one
-// sequence each; only voice 1 starts unmuted. V1 plays the built-in Last batch, so each new
-// batch (or single add) becomes what it plays; V2 / V3 play windows of the Timeline. ----
-model.addTables(
-  (['sine', 'tri', 'saw', 'square', 'p25'] as const).map((w) => generateBasic(w, 0)),
-  false,
-);
-const v1 = model.addVoice({ wavetableId: LAST_BATCH_WAVETABLE_ID, windowStart: 0, windowEnd: 4, position: 0.3, lfoDepth: 0.6, lfoRate: 0.25, octave: 0 })!;
-const v2 = model.addVoice({ windowStart: 1, windowEnd: 4, position: 0.75, lfoDepth: 0.3, lfoRate: 0.11, lfoPhase: 1.5, octave: 1, mute: true })!;
-const v3 = model.addVoice({
-  windowStart: 0,
-  windowEnd: 2,
-  position: 0.5,
-  lfoDepth: 0.9,
-  lfoRate: 1.2,
-  lfoPhase: 3,
-  octave: -1,
-  mute: true,
-})!;
-model.addSequence(v1.id, [0, -1, 3, -1, 4, 4, -1, 2, 0, -1, 5, 4, -1, 3, 2, -1]);
-model.addSequence(v2.id, [-1, -1, 7, -1, -1, 5, -1, -1, -1, -1, 6, -1, 4, -1, -1, -1]);
-model.addSequence(v3.id, [0, -1, -1, -1, 0, -1, -1, -1, 3, -1, -1, -1, 2, -1, -1, -1]);
-model.select(model.timeline[0].id);
-model.clearUndo();
+// ---- session: restore the autosaved one (before the first render), else the default ----
+const boot = await restoreSession();
+model.loadState(boot.state.model);
+ctx.ui.loadPrefs(boot.state.ui);
+const saver = new Autosaver(model, () => ctx.ui.exportPrefs(), boot.store, browserScheduler());
+saver.init(boot.stored);
+ctx.ui.onVoice(() => saver.markDirty());
+ctx.ui.onPrefs(() => saver.markDirty());
+// Hidden / closing: write now (no idle yielding; audio runs on its own thread).
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') void saver.flush();
+});
+window.addEventListener('pagehide', () => void saver.flush());
+// A fresh session (nothing restored) is saved right away.
+if (!boot.restored) saver.markDirty();
 
 // ---- MIDI: input events go straight to the router and the worklet (not via the frame loop) ----
 // CC moves reach the worklet at once (voice/patch); the model and sliders catch up per frame
@@ -70,9 +64,10 @@ const timeline = buildTimeline(ctx);
 const wavetables = buildWavetables(ctx);
 const voices = buildVoices(ctx);
 const sequences = buildSequences(ctx);
+const session = buildSessionMenu(ctx, saver);
 const root = document.getElementById('app')!;
 root.replaceChildren(
-  buildTransport(ctx, buildMidi(ctx, midi, webMidi)),
+  buildTransport(ctx, fragment(session.el, buildMidi(ctx, midi, webMidi))),
   h(
     'main',
     { class: 'shell' },
@@ -115,4 +110,91 @@ bridge.onStatus = (s) => {
 };
 
 // Debug handle for the console and smoke tests.
-(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, setTheme, midi, webMidi };
+(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, setTheme, midi, webMidi, saver, session };
+
+for (const n of boot.notices) showNotice(n.text, n.actions);
+
+// ---- session restore ----
+
+interface Boot {
+  state: SessionState;
+  store: SessionStore | null;
+  /** Records the store holds (so autosave writes only new waveforms). */
+  stored: WaveformRecord[];
+  restored: boolean;
+  notices: { text: string; actions?: { label: string; run: () => void }[] }[];
+}
+
+/**
+ * Open storage and decode the last session. Never throws: no storage → a fresh session,
+ * autosave off and a notice; an unreadable save → a fresh session, the bad save kept in
+ * the store (meta key 'corrupt') and a notice offering to discard it.
+ */
+async function restoreSession(): Promise<Boot> {
+  const fresh = (): SessionState => ({ model: defaultSessionState(), ui: {} });
+  let store: SessionStore;
+  try {
+    store = await SessionStore.open();
+  } catch (e) {
+    console.warn('[session] storage unavailable', e);
+    return {
+      state: fresh(),
+      store: null,
+      stored: [],
+      restored: false,
+      notices: [{ text: 'Autosave is off: this browser isn’t allowing storage (private window?). Use Session → Export to keep your work.' }],
+    };
+  }
+  let loaded;
+  try {
+    loaded = await store.load();
+  } catch (e) {
+    console.warn('[session] reading the saved session failed', e);
+    return {
+      state: fresh(),
+      store: null,
+      stored: [],
+      restored: false,
+      notices: [{ text: 'Couldn’t read the saved session; autosave is off for this tab. Use Session → Export to keep your work.' }],
+    };
+  }
+  const stored = [...loaded.records.values()];
+  if (loaded.meta === undefined) return { state: fresh(), store, stored, restored: false, notices: [] };
+  try {
+    const { state, warnings } = decodeSession(loaded.meta, loaded.records);
+    if (warnings.length) console.warn('[session] restored with warnings', warnings);
+    return { state, store, stored, restored: true, notices: warnings.length ? [{ text: `Session restored, but ${warnings[0]}.` }] : [] };
+  } catch (e) {
+    console.warn('[session] the saved session could not be restored', e);
+    const error = e instanceof Error ? e.message : String(e);
+    await store.keepCorrupt(loaded.meta, error).catch(() => {});
+    return {
+      state: fresh(),
+      store,
+      stored,
+      restored: false,
+      notices: [
+        {
+          text: `Couldn’t restore the last session (${error}); started a new one. The unreadable save is kept for debugging.`,
+          actions: [{ label: 'Discard it', run: () => void store.clearCorrupt().catch(() => {}) }],
+        },
+      ],
+    };
+  }
+}
+
+function browserScheduler(): SaveScheduler {
+  const ric = (globalThis as { requestIdleCallback?: (fn: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  return {
+    now: () => performance.now(),
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    idle: (fn) => (ric ? ric(fn, { timeout: 250 }) : setTimeout(fn, 16)),
+  };
+}
+
+function fragment(...nodes: Node[]): DocumentFragment {
+  const f = document.createDocumentFragment();
+  f.append(...nodes);
+  return f;
+}

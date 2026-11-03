@@ -283,6 +283,66 @@ canvas {
   align-items: center;
   justify-content: center;
 }
+/* Session menu (autosave status, New / Export / Import; popover styled like MIDI's) + notice. */
+.session {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.transport .session-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 0 8px;
+}
+.transport .session-open svg {
+  width: 16px;
+  height: 16px;
+}
+.transport .session-open[data-state='off'] svg,
+.transport .session-open[data-state='error'] svg {
+  color: var(--danger);
+}
+.session-status {
+  color: var(--text-2);
+}
+.session-status-error {
+  color: var(--danger);
+}
+.session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.session-notice {
+  position: fixed;
+  left: 50%;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.35);
+  font-size: 12px;
+}
+.session-notice[hidden] {
+  display: none;
+}
+.session-notice-text {
+  min-width: 0;
+}
+.session-notice button {
+  flex: 0 0 auto;
+}
 /* MIDI: LED + input picker + short status + popover button (popover in the top layer). */
 .midi {
   display: flex;
@@ -412,7 +472,8 @@ canvas {
     display: none;
   }
   .midi-status,
-  .transport .midi > select {
+  .transport .midi > select,
+  .session-label {
     display: none;
   }
 }
