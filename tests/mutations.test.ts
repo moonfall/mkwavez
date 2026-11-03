@@ -99,6 +99,17 @@ describe('mutations (core port)', () => {
     expect(sl[20] / sl[1]).toBeLessThan(0.5 * (1 / 20));
   });
 
+  it('nonlinear: asymmetric saturation adds even harmonics to a sine; Chebyshev adds T_n', () => {
+    const sine = generateBasic('sine', 0).data;
+    const mags = (x: Float32Array) => harmonicMagnitudes(x, 72);
+    expect(mags(mutate('asym', sine, 0.8, 0))[2]).toBeGreaterThan(0.01);
+    expect(mags(mutate('sineShape', sine, 0.8, 0))[2]).toBeLessThan(1e-6); // odd shaper: odd harmonics only
+    const ch = mags(mutate('cheby', sine, 1, 5));
+    const top = ch.indexOf(Math.max(...ch.slice(1)));
+    expect(top).toBeGreaterThanOrEqual(2);
+    expect(top).toBeLessThanOrEqual(8);
+  });
+
   it('sweep amounts', () => {
     expect(sweepAmounts(4, 1, 'lin')).toEqual([0.25, 0.5, 0.75, 1]);
     const log = sweepAmounts(3, 0.64, 'log');

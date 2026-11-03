@@ -39,6 +39,10 @@ export const MUTATIONS = [
   { group: 'Time', id: 'slew', label: 'Slew limit', hint: 'Step per sample limited to 2·0.0015^a' },
   { group: 'Time', id: 'decimate', label: 'Decimate', hint: 'Sample-and-hold to 2048 / 2^(7a) steps, then band-limited' },
   { group: 'Time', id: 'window', label: 'Window impose', hint: 'Cycle squeezed into W = 1 − 0.9a (silence after), Hann-shaped by a' },
+  { group: 'Nonlinear', id: 'logisticShape', label: 'Logistic shaper', hint: 'Blend by a toward 3 logistic-map steps on (x+1)/2, r = 3.5 + 0.5a' },
+  { group: 'Nonlinear', id: 'sineShape', label: 'Sine-map shaper', hint: 'x → sin(g·x)/g, g = 3π·a^1.5 (folds as a grows)' },
+  { group: 'Nonlinear', id: 'asym', label: 'Asymmetric saturation', hint: 'tanh(g·(x + b)), g = 6a, bias b = 0.5a (adds even harmonics)' },
+  { group: 'Nonlinear', id: 'cheby', label: 'Chebyshev mix', hint: 'Blend (1−a)·x + a·T_n(x), n = 2–8 seeded', seeded: true },
   { group: 'Spectral', id: 'smooth', label: 'Smooth', hint: 'Gaussian low-pass at harmonic 2 / a^1.5' },
   { group: 'Spectral', id: 'spread', label: 'Spread up', hint: 'Harmonic k gains a·(k−1)/k of harmonic k−1' },
   { group: 'Spectral', id: 'stretch', label: 'Stretch', hint: 'Harmonic k moves to round(k·(1 + 0.6a))' },
@@ -115,6 +119,16 @@ function fold(x: Float32Array, g: number): Float32Array {
   return shapeFrom((i) => {
     let s = 0;
     for (let j = 0; j < os; j++) s += triFold(g * lerpAt(x, i + (j + 0.5) / os - 0.5));
+    return s / os;
+  });
+}
+
+/** Per-sample shaper f, 4x oversampled like fold() (centred sub-samples, no phase shift). */
+function shaper(x: Float32Array, f: (v: number) => number): Float32Array {
+  const os = 4;
+  return shapeFrom((i) => {
+    let s = 0;
+    for (let j = 0; j < os; j++) s += f(lerpAt(x, i + (j + 0.5) / os - 0.5));
     return s / os;
   });
 }
@@ -312,6 +326,29 @@ export function mutate(
         const t = i / N / w;
         return t >= 1 ? 0 : lerpAt(x, t * N) * (1 - a + a * (0.5 - 0.5 * Math.cos(2 * Math.PI * t)));
       });
+    }
+    case 'logisticShape': {
+      if (a <= 0) return shape(x);
+      const r = 3.5 + 0.5 * a;
+      return shaper(x, (v) => {
+        let u = Math.min(1, Math.max(0, (v + 1) / 2));
+        for (let j = 0; j < 3; j++) u = r * u * (1 - u);
+        return (1 - a) * v + a * (2 * u - 1);
+      });
+    }
+    case 'sineShape': {
+      const g = 3 * Math.PI * Math.pow(a, 1.5);
+      return g < 1e-6 ? shape(x) : shaper(x, (v) => Math.sin(g * v) / g);
+    }
+    case 'asym': {
+      const g = 6 * a;
+      const b = 0.5 * a;
+      return g < 1e-6 ? shape(x) : shaper(x, (v) => (Math.tanh(g * (v + b)) - Math.tanh(g * b)) / g);
+    }
+    case 'cheby': {
+      const n = 2 + rand.int(7);
+      if (a <= 0) return shape(x);
+      return shaper(x, (v) => (1 - a) * v + a * Math.cos(n * Math.acos(Math.max(-1, Math.min(1, v)))));
     }
     case 'smooth':
       return smoothBy(x, a);
