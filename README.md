@@ -163,8 +163,11 @@ switches (the choice is remembered).
   - **Step length** ("Steps [16] of [1/8]"): each sequence's steps are 1/4, 1/8
     (default), 1/16, 1/8T or 1/16T notes; BPM counts quarter notes, so a step lasts
     (60 / BPM) × (4 × the fraction) seconds — 16 steps of 1/8 are 2 bars of 4/4. The
-    header shows the length ("16 steps · 1/8 · 2 bars") and the playhead as bar.beat
-    ("1.3"); the grid shades the first step of each beat and draws a line at each bar.
+    header shows the length in bars ("16 steps · 1/8 · 2 bars", "12 steps · 1/8 · 1.5
+    bars") and the transport position as bar.beat since Play ("5.3"), which keeps
+    counting across loops. The grid shades the first step of each beat (beats 1 and 3
+    at 1/4) and draws a line at each bar, counted from the pattern start: a pattern
+    that isn't a whole number of bars loops off the bar line, and the header says so.
   - All sequences run on one clock from the moment Play is pressed, so different step
     lengths (and pattern lengths) stay bar-aligned; changing the step length while
     playing picks up at the next step of the new grid. Sessions saved before step

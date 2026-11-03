@@ -77,10 +77,54 @@ export function stepAtTick(tick: number, len: StepLength, length: number): numbe
   return Math.floor(tick / STEP_TICKS[len]) % length;
 }
 
-/** Where step `step` (0-based) sits in its pattern, as bar.beat (both 1-based): "1.3". */
+/**
+ * Where step `step` (0-based) sits in its own pattern, as bar.beat (both 1-based): "1.3".
+ * Pattern-relative: for the transport position use tickBarBeat.
+ */
 export function stepBarBeat(step: number, len: StepLength): string {
-  const t = step * STEP_TICKS[len];
-  return `${Math.floor(t / TICKS_PER_BAR) + 1}.${Math.floor((t % TICKS_PER_BAR) / TICKS_PER_BEAT) + 1}`;
+  return tickBarBeat(step * STEP_TICKS[len]);
+}
+
+/**
+ * Clock tick `tick` (ticks since Play, as the engine counts them; it never wraps) as the
+ * transport's bar.beat, both 1-based: "1.1" at tick 0, "3.2" at tick 108. This is the real
+ * bar clock: a pattern that isn't a whole number of bars (12 × 1/8 = 1.5 bars) starts its
+ * second loop at "2.3", not back at "1.1". "–" before the first tick.
+ */
+export function tickBarBeat(tick: number): string {
+  if (tick < 0) return '–';
+  return `${Math.floor(tick / TICKS_PER_BAR) + 1}.${Math.floor((tick % TICKS_PER_BAR) / TICKS_PER_BEAT) + 1}`;
+}
+
+/**
+ * Ticks between shaded grid cells. Normally a beat (the first step of each beat is
+ * shaded); when a step is a whole beat (1/4) that would shade every cell, so the unit
+ * becomes a half bar (beats 1 and 3): every other cell, like 1/8.
+ */
+export function shadeTicks(len: StepLength): number {
+  return STEP_TICKS[len] < TICKS_PER_BEAT ? TICKS_PER_BEAT : TICKS_PER_BAR / 2;
+}
+
+/** Step `k` gets beat shading in the grid (counted from the pattern start; see shadeTicks). */
+export function isShadedStep(k: number, len: StepLength): boolean {
+  return (k * STEP_TICKS[len]) % shadeTicks(len) === 0;
+}
+
+/** Step `k` starts a bar of its pattern (counted from the pattern start). */
+export function isBarStep(k: number, len: StepLength): boolean {
+  return (k * STEP_TICKS[len]) % TICKS_PER_BAR === 0;
+}
+
+/** A pattern of `length` steps fills a whole number of bars (so every loop starts on a bar line). */
+export function isWholeBars(length: number, len: StepLength): boolean {
+  return (Math.max(0, length) * STEP_TICKS[len]) % TICKS_PER_BAR === 0;
+}
+
+/** A pattern's length in bars: "2 bars", "1 bar", "1.5 bars", "0.75 bars", "≈1.33 bars". */
+export function lengthInBars(length: number, len: StepLength): string {
+  const bars = (Math.max(0, length) * STEP_TICKS[len]) / TICKS_PER_BAR;
+  const shown = Number(bars.toFixed(2));
+  return `${shown === bars ? '' : '≈'}${shown} bar${bars === 1 ? '' : 's'}`;
 }
 
 /** Fractions of a beat (in ticks) a pattern can end on. */
@@ -102,9 +146,12 @@ export function lengthBarsBeats(length: number, len: StepLength): string {
   return parts.join(' ');
 }
 
-/** "16 steps · 1/8 · 2 bars". */
+/**
+ * "16 steps · 1/8 · 2 bars", "12 steps · 1/8 · 1.5 bars": the length in bars, so a pattern
+ * that loops off the bar line is obvious (lengthBarsBeats gives the exact bars + beats).
+ */
 export function sequenceSummary(length: number, len: StepLength): string {
-  return `${length} step${length === 1 ? '' : 's'} · ${len} · ${lengthBarsBeats(length, len)}`;
+  return `${length} step${length === 1 ? '' : 's'} · ${len} · ${lengthInBars(length, len)}`;
 }
 
 export const REST = -1;

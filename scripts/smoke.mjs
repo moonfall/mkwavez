@@ -730,17 +730,18 @@ async function sequenceTimingChecks(page) {
       const x = Math.round(30 + k * cw) - 0.5;
       return Array.from(c.getContext('2d').getImageData(Math.floor(x * sx), Math.floor(c.height / 2), 1, 1).data).join();
     }, k);
-  const barBeat = (step, ticks) => `${Math.floor((step * ticks) / 48) + 1}.${Math.floor(((step * ticks) % 48) / 12) + 1}`;
+  /** The transport bar clock (48 ticks a bar, 12 a beat), counted from Play. */
+  const barBeat = (tick) => `${Math.floor(tick / 48) + 1}.${Math.floor((tick % 48) / 12) + 1}`;
 
   let g = await grid();
   assert(g.summary === '16 steps · 1/8 · 2 bars', `header shows the length in bars (“${g.summary}”)`);
   assert(g.len === '1/8' && g.beats === '0,2,4,6,8,10,12,14' && g.bars === '0,8', `1/8 grid: beats every 2 steps, bar line at 8 (beats ${g.beats}; bars ${g.bars})`);
   assert((await lineAt(8)) !== (await lineAt(4)), 'bar line drawn between bars');
-  assert(g.step === Math.floor(g.tick / 6) % 16 && g.pos === barBeat(g.step, 6), `playhead step ${g.step} = tick ${g.tick} / 6, readout ${g.pos}`);
+  assert(g.step === Math.floor(g.tick / 6) % 16 && g.pos === barBeat(g.tick), `playhead step ${g.step} = tick ${g.tick} / 6, readout ${g.pos} on the bar clock`);
   const pos0 = g.pos;
   await page.waitForFunction((p) => document.querySelector('#seq-pos').textContent !== p, pos0, { timeout: 3000 });
   g = await grid();
-  assert(/^[12]\.[1-4]$/.test(g.pos) && g.pos !== pos0, `bar.beat readout advances (${pos0} → ${g.pos})`);
+  assert(/^\d+\.[1-4]$/.test(g.pos) && g.pos !== pos0 && g.pos === barBeat(g.tick), `bar.beat readout advances (${pos0} → ${g.pos})`);
   const r8 = await rate();
 
   await page.selectOption('#seq-step-length', '1/16');
@@ -748,18 +749,53 @@ async function sequenceTimingChecks(page) {
   await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.stepLength === '1/16', null, { timeout: 3000 });
   g = await grid();
   assert(g.summary === '16 steps · 1/16 · 1 bar' && g.beats === '0,4,8,12' && g.bars === '0', `1/16: “${g.summary}”, beats every 4 steps (${g.beats}), one bar`);
-  assert(g.step === Math.floor(g.tick / 3) % 16 && g.pos === barBeat(g.step, 3), `1/16 playhead step ${g.step} = tick ${g.tick} / 3, readout ${g.pos}`);
+  assert(g.step === Math.floor(g.tick / 3) % 16 && g.pos === barBeat(g.tick), `1/16 playhead step ${g.step} = tick ${g.tick} / 3, readout ${g.pos}`);
   const r16 = await rate();
   assert(r16 / r8 > 1.6 && r16 / r8 < 2.4, `1/16 steps twice as fast as 1/8 (${r8.toFixed(1)} → ${r16.toFixed(1)} steps/s)`);
 
   await page.selectOption('#seq-step-length', '1/8T');
   await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.stepLength === '1/8T', null, { timeout: 3000 });
   g = await grid();
-  assert(g.summary === '16 steps · 1/8T · 1 bar 1⅓ beats' && g.beats === '0,3,6,9,12,15' && g.bars === '0,12', `1/8T: “${g.summary}”, beats every 3 steps, bar line at 12`);
+  assert(g.summary === '16 steps · 1/8T · ≈1.33 bars' && g.beats === '0,3,6,9,12,15' && g.bars === '0,12', `1/8T: “${g.summary}”, beats every 3 steps, bar line at 12`);
   await page.selectOption('#seq-step-length', '1/4');
   await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.stepLength === '1/4', null, { timeout: 3000 });
   g = await grid();
-  assert(g.summary === '16 steps · 1/4 · 4 bars' && g.beats.split(',').length === 16 && g.bars === '0,4,8,12', `1/4: every step a beat, bar lines every 4 (“${g.summary}”)`);
+  assert(
+    g.summary === '16 steps · 1/4 · 4 bars' && g.beats === '0,2,4,6,8,10,12,14' && g.bars === '0,4,8,12',
+    `1/4: beats 1 and 3 shaded (${g.beats}), not every step; bar lines every 4 (“${g.summary}”)`,
+  );
+
+  // A pattern that isn't a whole number of bars (12 × 1/8 = 1.5 bars): the header says so,
+  // the grid stays pattern-relative, and the readout stays on the bar clock across loops
+  // (a loop starts on beat 1 or beat 3, alternately).
+  await M(() => {
+    const m = window.mkwavez.model;
+    m.updateSequence(m.sequences.find((s) => s.voiceId === 1).id, { stepLength: '1/8', length: 12 });
+  });
+  await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.length === '12', null, { timeout: 3000 });
+  // Read the grid in the same frame it shows step 0 (it lasts ~¼ s).
+  g = await (
+    await page.waitForFunction(
+      () => {
+        const c = document.querySelector('#seq-grid');
+        if (c.dataset.step !== '0') return null;
+        const d = c.dataset;
+        return { step: 0, tick: Number(d.tick), beats: d.beats, bars: d.bars, wholeBars: d.wholeBars, pos: document.querySelector('#seq-pos').textContent, summary: document.querySelector('#seq-summary').textContent };
+      },
+      null,
+      { timeout: 5000, polling: 'raf' },
+    )
+  ).jsonValue();
+  const wholeBars = g.wholeBars;
+  const loopN = Math.floor(g.tick / 72);
+  assert(
+    g.summary === '12 steps · 1/8 · 1.5 bars' && wholeBars === 'false' && g.beats === '0,2,4,6,8,10' && g.bars === '0,8',
+    `12 × 1/8: “${g.summary}”, pattern-relative grid (beats ${g.beats}; bars ${g.bars})`,
+  );
+  assert(
+    g.step === 0 && g.pos === barBeat(g.tick) && g.pos.endsWith(loopN % 2 ? '.3' : '.1'),
+    `loop ${loopN} of 12 × 1/8 starts at ${g.pos} on the bar clock (tick ${g.tick})`,
+  );
 
   // Layout with a crowded header (muted target, two sequences, a long length).
   await M(() => {
@@ -2588,8 +2624,8 @@ async function sessionChecks(label, url, browser) {
   assert(
     (await E(() => window.mkwavez.model.sequences.find((s) => s.id === 1).stepLength)) === '1/16' &&
       (await page.inputValue('#seq-step-length')) === '1/16' &&
-      (await page.textContent('#seq-summary')) === '12 steps · 1/16 · 3 beats',
-    'reload keeps the step length (selector and “12 steps · 1/16 · 3 beats”)',
+      (await page.textContent('#seq-summary')) === '12 steps · 1/16 · 0.75 bars',
+    'reload keeps the step length (selector and “12 steps · 1/16 · 0.75 bars”)',
   );
   await page.click('#voice-tab-2');
   assert((await E(() => window.mkwavez.model.nextWavetableId)) === nextWt, 'wavetable id counter restored (deleted ids not reused)');

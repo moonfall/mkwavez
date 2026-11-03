@@ -188,8 +188,10 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   length (`'1/4' | '1/8' | '1/16' | '1/8T' | '1/16T'`, default `'1/8'`). Timing helpers
   live in `core/sequence.ts`: `STEP_TICKS` (clock ticks per step: 12 / 6 / 3 / 4 / 2 at
   `TICKS_PER_BEAT` = 12 per quarter note, 48 per 4/4 bar), `stepSeconds` =
-  (60 / BPM) × (4 × fraction), `stepSamples`, `stepAtTick`, `stepBarBeat`,
-  `sequenceSummary`.
+  (60 / BPM) × (4 × fraction), `stepSamples`, `stepAtTick`, `stepBarBeat`
+  (pattern-relative), `tickBarBeat` (the transport bar clock), `isShadedStep` /
+  `isBarStep` (grid, pattern-relative; shading is per beat, per half bar at 1/4),
+  `lengthInBars`, `sequenceSummary`.
 - **Session** (`core/session.ts`, M5 part 1) — what is saved: the timeline (ids in order
   plus one record per waveform), the id allocators (`nextTableId`, `nextWavetableId` —
   monotonic, a deleted wavetable's id is never reused after a restore — `nextVoiceId`,
@@ -317,8 +319,9 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 - Voice tabs: `UiState.voiceId` (kept valid as voices come and go: a removed voice's
   neighbour is selected). The Voice panel shows only that voice's controls; the
   Sequence panel shows its sequence(s). Its playhead is `stepAtTick(status.tick, …)` of
-  the shown sequence, drawn with its bar.beat (`#seq-pos`); the grid canvas carries
-  `data-step-length`, `data-beats`, `data-bars` and `data-step` for tests. A crowded
+  the shown sequence; `#seq-pos` is `tickBarBeat(status.tick)`, the transport bar.beat
+  (not the pattern's). The grid canvas carries `data-step-length`, `data-beats` (shaded
+  steps), `data-bars`, `data-whole-bars`, `data-step` and `data-tick` for tests. A crowded
   header (muted target, several sequences, a long length) wraps to a second line on the
   wide shell; the grid gives up the height.
 - Session menu: a native popover like the MIDI one (`#session-pop`); notices are one

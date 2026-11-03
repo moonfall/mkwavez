@@ -5,7 +5,11 @@ import { buildMipSet } from '../src/core/mipmap';
 import {
   DEFAULT_STEP_LENGTH,
   emptySteps,
+  isBarStep,
+  isShadedStep,
+  isWholeBars,
   lengthBarsBeats,
+  lengthInBars,
   noteFreq,
   sequenceSummary,
   STEP_LENGTHS,
@@ -16,6 +20,7 @@ import {
   stepSeconds,
   stepsPerBar,
   stepsPerBeat,
+  tickBarBeat,
   TICKS_PER_BAR,
   type SequenceData,
   type StepLength,
@@ -51,7 +56,14 @@ describe('step length', () => {
 
   it('lengths in bars / beats and the bar.beat readout', () => {
     expect(sequenceSummary(16, '1/8')).toBe('16 steps · 1/8 · 2 bars');
-    expect(sequenceSummary(1, '1/4')).toBe('1 step · 1/4 · 1 beat');
+    expect(sequenceSummary(1, '1/4')).toBe('1 step · 1/4 · 0.25 bars');
+    expect(sequenceSummary(12, '1/8')).toBe('12 steps · 1/8 · 1.5 bars');
+    expect(sequenceSummary(12, '1/8T')).toBe('12 steps · 1/8T · 1 bar');
+    expect(lengthInBars(12, '1/16')).toBe('0.75 bars');
+    expect(lengthInBars(16, '1/8T')).toBe('≈1.33 bars');
+    expect(lengthInBars(61, '1/16T')).toBe('≈2.54 bars');
+    expect(lengthInBars(64, '1/4')).toBe('16 bars');
+    expect([isWholeBars(16, '1/8'), isWholeBars(12, '1/8'), isWholeBars(12, '1/8T'), isWholeBars(16, '1/8T'), isWholeBars(4, '1/4')]).toEqual([true, false, true, false, true]);
     expect(lengthBarsBeats(16, '1/16')).toBe('1 bar');
     expect(lengthBarsBeats(12, '1/8')).toBe('1 bar 2 beats');
     expect(lengthBarsBeats(12, '1/8T')).toBe('1 bar');
@@ -66,6 +78,82 @@ describe('step length', () => {
     expect(stepAtTick(-1, '1/8', 16)).toBe(-1);
     expect([0, 5, 6, 95, 96].map((t) => stepAtTick(t, '1/8', 16))).toEqual([0, 0, 1, 15, 0]);
     expect([0, 47, 48].map((t) => stepAtTick(t, '1/16T', 7))).toEqual([0, 2, 3]);
+  });
+
+  it('the playhead readout is the transport bar clock, across loops of any pattern length', () => {
+    expect(tickBarBeat(-1)).toBe('–');
+    expect([0, 11, 12, 47, 48, 108, 191, 192].map(tickBarBeat)).toEqual(['1.1', '1.1', '1.2', '1.4', '2.1', '3.2', '4.4', '5.1']);
+    /** Where each loop of a pattern starts on the bar clock (the engine's tick never wraps). */
+    const loopStarts = (length: number, len: StepLength, loops: number) =>
+      Array.from({ length: loops }, (_, n) => tickBarBeat(n * length * STEP_TICKS[len]));
+    // 12 × 1/8 = 1.5 bars: loops start on beat 1, then beat 3, alternately.
+    expect(loopStarts(12, '1/8', 5)).toEqual(['1.1', '2.3', '4.1', '5.3', '7.1']);
+    // 16 × 1/8T = 1⅓ bars (64 ticks).
+    expect(loopStarts(16, '1/8T', 4)).toEqual(['1.1', '2.2', '3.3', '5.1']);
+    // 3 × 1/4 = 3 beats.
+    expect(loopStarts(3, '1/4', 5)).toEqual(['1.1', '1.4', '2.3', '3.2', '4.1']);
+    // 12 × 1/16 = 3 beats; 7 × 1/16T = 1⅙ beats.
+    expect(loopStarts(12, '1/16', 3)).toEqual(['1.1', '1.4', '2.3']);
+    expect(loopStarts(7, '1/16T', 4)).toEqual(['1.1', '1.2', '1.3', '1.4']);
+    // Whole-bar patterns: every loop starts on a downbeat, and the old pattern-relative
+    // readout (stepBarBeat) agrees with the bar clock in the first loop.
+    expect(loopStarts(16, '1/8', 3)).toEqual(['1.1', '3.1', '5.1']);
+    expect(loopStarts(24, '1/16T', 3)).toEqual(['1.1', '2.1', '3.1']);
+
+    // Every step of several loops: the readout at the playhead step's tick is the bar.beat
+    // its onset falls in (time ÷ beat length, independently of ticks), and equals the
+    // pattern-relative stepBarBeat only while the pattern is in step with the bar.
+    const BPM = 120;
+    const beatSec = 60 / BPM;
+    for (const len of STEP_LENGTHS) {
+      for (const length of [1, 3, 5, 7, 12, 13, 16, 61]) {
+        const ticks = STEP_TICKS[len];
+        const loops = 4;
+        for (let n = 0; n < length * loops; n++) {
+          const tick = n * ticks;
+          const step = stepAtTick(tick, len, length);
+          expect(step).toBe(n % length);
+          const beats = Math.floor((n * stepSeconds(BPM, len)) / beatSec + 1e-9);
+          const want = `${Math.floor(beats / 4) + 1}.${(beats % 4) + 1}`;
+          expect(tickBarBeat(tick), `${length} × ${len}, step ${n}`).toBe(want);
+          // Ticks within a step never cross a beat: the readout is the same all step long.
+          expect(tickBarBeat(tick + ticks - 1)).toBe(want);
+          if (n < length) expect(stepBarBeat(step, len)).toBe(want);
+        }
+        // Whole-bar patterns: the pattern-relative bar.beat repeats every loop (bars offset).
+        if (isWholeBars(length, len)) {
+          const bars = (length * ticks) / TICKS_PER_BAR;
+          for (let n = 0; n < length * loops; n++) {
+            const [b, beat] = tickBarBeat(n * ticks).split('.').map(Number);
+            const [pb, pbeat] = stepBarBeat(n % length, len).split('.').map(Number);
+            expect([b - 1, beat]).toEqual([pb - 1 + bars * Math.floor(n / length), pbeat]);
+          }
+        }
+      }
+    }
+    // The bug this replaces: a 1.5-bar pattern's second loop is not at 1.1 on the bar clock.
+    expect(stepBarBeat(stepAtTick(72, '1/8', 12), '1/8')).toBe('1.1');
+    expect(tickBarBeat(72)).toBe('2.3');
+  });
+
+  it('grid shading marks beats, and at 1/4 (every step a beat) every other beat', () => {
+    const shaded = (len: StepLength, length = 16) => Array.from({ length }, (_, k) => k).filter((k) => isShadedStep(k, len));
+    const bars = (len: StepLength, length = 16) => Array.from({ length }, (_, k) => k).filter((k) => isBarStep(k, len));
+    expect(shaded('1/8')).toEqual([0, 2, 4, 6, 8, 10, 12, 14]);
+    expect(shaded('1/16')).toEqual([0, 4, 8, 12]);
+    expect(shaded('1/8T')).toEqual([0, 3, 6, 9, 12, 15]);
+    expect(shaded('1/16T', 24)).toEqual([0, 6, 12, 18]);
+    expect(shaded('1/4')).toEqual([0, 2, 4, 6, 8, 10, 12, 14]);
+    expect(bars('1/8')).toEqual([0, 8]);
+    expect(bars('1/16')).toEqual([0]);
+    expect(bars('1/8T')).toEqual([0, 12]);
+    expect(bars('1/16T', 48)).toEqual([0, 24]);
+    expect(bars('1/4')).toEqual([0, 4, 8, 12]);
+    for (const len of STEP_LENGTHS) {
+      // Shading always distinguishes cells (never all of them), and every bar start is shaded.
+      expect(shaded(len, 48).length).toBeLessThan(48);
+      for (const k of bars(len, 48)) expect(isShadedStep(k, len)).toBe(true);
+    }
   });
 });
 

@@ -2,16 +2,17 @@ import { MAX_STEPS, SCALE_ROWS, SCALE_SEMITONES } from '../core/constants';
 import { randomSeed } from '../core/prng';
 import {
   emptySteps,
+  isBarStep,
+  isShadedStep,
   isStepLength,
+  isWholeBars,
+  lengthBarsBeats,
   randomSteps,
   sequenceSummary,
   STEP_LENGTHS,
-  STEP_TICKS,
   stepAtTick,
-  stepBarBeat,
   stepLengthOf,
-  TICKS_PER_BAR,
-  TICKS_PER_BEAT,
+  tickBarBeat,
   toggleStep,
   type SequenceData,
   type StepLength,
@@ -47,9 +48,13 @@ let clipboard: number[] | null = null;
  * Sequence: the step pattern(s) of the selected voice (UiState), on the shared transport.
  * Steps of the sequence's step length (1/4 … 1/16T) over A minor pentatonic; the grid
  * fills the panel (row labels are the voice's notes), shades the first step of each beat
- * and draws a line at each bar (4/4). The header shows the length in bars / beats and the
- * playhead as bar.beat. A voice with several sequences gets a small picker; one without
- * gets an "Add sequence" button.
+ * (of each half bar at 1/4, where every step is a beat) and draws a line at each bar
+ * (4/4). The grid shows one static pattern, so its shading and bar lines count from the
+ * pattern start; a pattern that isn't a whole number of bars says so in the header
+ * ("12 steps · 1/8 · 1.5 bars") instead of re-shading every loop. The playhead readout is
+ * the real transport position (bar.beat since Play), so it keeps counting across loops.
+ * A voice with several sequences gets a small picker; one without gets an "Add sequence"
+ * button.
  */
 export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model, bridge, ui } = ctx;
@@ -92,8 +97,12 @@ export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameVi
   stepLenSel.addEventListener('change', () => {
     if (isStepLength(stepLenSel.value)) update({ stepLength: stepLenSel.value });
   });
-  /** Playhead as bar.beat within the shown sequence's pattern. */
-  const pos = h('span', { class: 'seq-pos', id: 'seq-pos', title: 'Playhead (bar.beat)', 'aria-label': 'Playhead, bar.beat' }, '–');
+  /** Transport position as bar.beat (the real bar clock, counted from Play; see tickBarBeat). */
+  const pos = h(
+    'span',
+    { class: 'seq-pos', id: 'seq-pos', title: 'Transport position (bar.beat since Play)', 'aria-label': 'Transport position, bar.beat' },
+    '–',
+  );
   sec.tools.append(
     target,
     picker,
@@ -174,6 +183,9 @@ export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameVi
 
   /** The shown sequence's playhead step from the worklet's clock (-1 when stopped). */
   const playStep = (s: SequenceData) => (model.playing ? stepAtTick(bridge.status.tick, stepLengthOf(s), s.length) : -1);
+  /** The transport's bar.beat from the same clock ("–" when stopped). */
+  const playPos = () => (model.playing ? tickBarBeat(bridge.status.tick) : '–');
+  let lastPos = '';
 
   const draw = (s: SequenceData) => {
     const v = s.voiceId === null ? undefined : model.voice(s.voiceId);
@@ -187,11 +199,11 @@ export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameVi
     const [g] = fit(grid, hh);
     const step = playStep(s);
     lastStep = step;
+    lastPos = playPos();
     const len = stepLengthOf(s);
-    const ticks = STEP_TICKS[len];
-    /** Step k starts a beat / a bar (4/4, counted from the pattern start = a bar line). */
-    const isBeat = (k: number) => (k * ticks) % TICKS_PER_BEAT === 0;
-    const isBar = (k: number) => (k * ticks) % TICKS_PER_BAR === 0;
+    /** Step k is shaded / starts a bar (4/4, counted from the pattern start = a bar line). */
+    const isBeat = (k: number) => isShadedStep(k, len);
+    const isBar = (k: number) => isBarStep(k, len);
     const cBeat = cssColor('--surface-2');
     const cCell = cssColor('--bg');
     const cBorder = cssColor('--border');
@@ -237,8 +249,9 @@ export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameVi
     grid.dataset.beats = beats.join(',');
     grid.dataset.bars = bars.join(',');
     grid.dataset.step = String(step);
-    grid.dataset.tick = String(bridge.status.tick);
-    pos.textContent = step < 0 ? '–' : stepBarBeat(step, len);
+    grid.dataset.wholeBars = String(isWholeBars(s.length, len));
+    grid.dataset.tick = String(model.playing ? bridge.status.tick : -1);
+    pos.textContent = lastPos;
   };
 
   grid.addEventListener('click', (e) => {
@@ -283,7 +296,10 @@ export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameVi
     lenInput.disabled = !s;
     stepLenSel.disabled = !s;
     sec.meta.textContent = s ? sequenceSummary(s.length, stepLengthOf(s)) : '';
-    sec.meta.title = s ? `Seq ${s.id}: ${s.length} × ${STEP_LENGTH_NAMES[stepLengthOf(s)].replace(/s$/, '')} (4/4)` : '';
+    sec.meta.title = s
+      ? `Seq ${s.id}: ${s.length} × ${STEP_LENGTH_NAMES[stepLengthOf(s)].replace(/s$/, '')} = ${lengthBarsBeats(s.length, stepLengthOf(s))} (4/4)` +
+        (isWholeBars(s.length, stepLengthOf(s)) ? '' : '. Not a whole number of bars: the grid’s beats and bar lines count from the pattern start, so later loops fall elsewhere in the bar.')
+      : '';
     if (s) {
       if (document.activeElement !== lenInput) lenInput.value = String(s.length);
       stepLenSel.value = stepLengthOf(s);
@@ -308,7 +324,8 @@ export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameVi
         const s = cur();
         if (!s || !sec.isOpen() || !isOnScreen(grid)) return;
         const step = playStep(s);
-        if (dirty || step !== lastStep) {
+        // The bar.beat readout can change without the step (a 1-step pattern).
+        if (dirty || step !== lastStep || playPos() !== lastPos) {
           dirty = false;
           draw(s);
         }
