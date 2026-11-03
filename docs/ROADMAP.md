@@ -175,10 +175,32 @@ Deviations / known gaps:
   auto-scrolls the page.
 - The view marks the next 4 writes (as one batch).
 
-## M5 — Save/load
+## M5 — Save/load (partly done: autosave / restore, export / import)
 
-- Project save/load (IndexedDB + file export): tables (sample data + recipe), timeline
-  order, wavetables (already plain data), voices, sequences. Version tag on recipes.
+Done:
+- The session survives reloads and browser restarts: autosaved to IndexedDB (debounced,
+  incremental: each waveform written once, chunked at idle time; flushed when the page
+  is hidden) and restored before the first render. Saved: timeline (samples, or the
+  recipe for exact cheap basic / pulse waveforms, or a reference for copies), id
+  allocators, selection, Breed parents, all wavetables (built-ins' state, user
+  wavetables, write heads; stored generically), voices (incl. 2D / Rows), sequences,
+  BPM, voice tab and Generate tab. Theme, timeline view and MIDI settings stay in
+  localStorage.
+- Versioned schema (`SESSION_VERSION`, `MIGRATIONS`); corrupt / incompatible saves fall
+  back to a fresh session (bad save kept for debugging, notice offers to discard it);
+  missing waveforms are dropped with a warning. No storage (private mode, blocked) →
+  runs normally with autosave off and a notice.
+- Session menu in the transport bar: New session (confirm; clears the autosave), Export
+  / Import one `.mkwz` file (JSON + Float32 samples).
+
+Open:
+- Undo history isn't saved (it starts empty after a reload / import).
+- Named projects (several saves, a list, rename / delete), save-as; import without
+  replacing (merge into the current timeline).
+- Cross-tab coordination (two tabs on one origin both autosave; last writer wins).
+- Seed / Mutate / Breed panel settings (entry, formula edits, amounts) aren't saved.
+- Recipes still have no code-version tag (re-render determinism across versions is only
+  checked by a hash for recipe-only waveforms).
 
 ## Deferred from M1 / known gaps
 

@@ -25,6 +25,8 @@
 // duplicate a built-in, rename, a Live wavetable receives Seed adds, Timeline drags (mouse
 // replace / insert, touch insert via synthetic pointer events), slot reorder, Delete, undo,
 // built-ins refuse drops, delete moves its voice to the Timeline.
+// Session: autosave survives a reload, New session, Export / Import, unreadable save and
+// no-storage paths (sessionChecks).
 //
 // Usage: npm run smoke            (builds, then tests `vite preview` and `vite dev`)
 //        CHROME=/path/to/chrome   (default /usr/bin/google-chrome)
@@ -2040,6 +2042,179 @@ async function midiChecks(label, url, browser) {
   assert(errors.length === 0, `no console errors (MIDI)${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 }
 
+/**
+ * Autosave / restore: changes survive a reload (timeline count, selection, voices incl. a
+ * 2D one, wavetables, sequences, BPM, voice tab, Generate tab); playback works after a
+ * restore; Export → New session (clears the autosave) → Import round-trips; a bad file is
+ * refused with a notice; an unreadable save falls back to a fresh session (kept for
+ * debugging); without IndexedDB the app runs with autosave off and a notice.
+ */
+async function sessionChecks(label, url, browser) {
+  console.log(`\n[${label}] session autosave / restore`);
+  const errors = [];
+  const watch = (page) => {
+    page.on('console', (m) => {
+      if (m.type() === 'error') errors.push(m.text());
+    });
+    page.on('pageerror', (e) => errors.push(String(e)));
+  };
+  const ctx = await browser.newContext({ viewport: { width: 1180, height: 820 }, acceptDownloads: true });
+  const page = await ctx.newPage();
+  watch(page);
+  const E = (fn, arg) => page.evaluate(fn, arg);
+  const load = async (reload = true) => {
+    if (reload) await page.reload({ waitUntil: 'load' });
+    else await page.goto(url, { waitUntil: 'load' });
+    await page.waitForSelector('#sec-generate');
+  };
+  const saved = () => page.waitForFunction(() => window.mkwavez.saver.status === 'saved' && window.mkwavez.saver.lastSaved, null, { timeout: 10000 });
+  const snap = () =>
+    E(() => {
+      const { model: m, ui } = window.mkwavez;
+      return JSON.stringify({
+        ids: m.timeline.map((t) => t.id),
+        recipes: m.timeline.map((t) => t.recipe),
+        data: m.timeline.map((t) => Array.from(t.data.subarray(0, 64))),
+        selectedId: m.selectedId,
+        bpm: m.bpm,
+        voices: m.voices,
+        wavetables: m.wavetables,
+        sequences: m.sequences,
+        voiceTab: ui.voiceId,
+      });
+    });
+  await load(false);
+  assert((await E(() => window.mkwavez.model.timeline.length)) === 5 && (await page.isVisible('#session-menu')), 'fresh session: 5 waveforms, Session menu in the transport bar');
+  await saved();
+  assert(true, 'fresh session autosaved');
+
+  // Make changes through the UI and the model.
+  await page.click('#seed-add-shown');
+  await page.click('#seed-add-batch');
+  await E(() => {
+    const { model: m, ui } = window.mkwavez;
+    m.copyToEnd(m.timeline[2].id);
+    m.setTransport({ bpm: 111 });
+    m.updateVoice(2, { mute: false, position: 0.42, lfoDepth: 0.1 });
+    m.addVoice({ wavetableId: 3, windowStart: 1, windowEnd: 4, windowStartY: 0, windowEndY: 1, positionY: 0.8 });
+    m.setWavetableInterp(3, 'step');
+    m.updateSequence(1, { gate: 0.7, length: 12 });
+    m.select(m.timeline[3].id);
+    ui.setVoice(2);
+  });
+  await page.click('#tab-mutate');
+  const before = await snap();
+  const n = await E(() => window.mkwavez.model.timeline.length);
+  await saved();
+  const t0 = Date.now();
+  await load();
+  assert((await snap()) === before, `reload restores the session (${n} waveforms, selection, voices, wavetables, sequences, BPM; ${Date.now() - t0} ms)`);
+  assert(
+    (await page.getAttribute('#tab-mutate', 'aria-selected')) === 'true' && (await page.getAttribute('#voice-tab-2', 'aria-selected')) === 'true',
+    'reload restores the Generate tab and the voice tab',
+  );
+  assert((await page.inputValue('#bpm')) === '111' && (await E(() => window.mkwavez.model.undoDepth)) === 0, 'BPM control shows the restored tempo; undo history starts empty');
+
+  // Playback after restore.
+  await page.click('#play');
+  await page.waitForFunction(() => document.body.dataset.audio === 'running', null, { timeout: 10000 });
+  await page.waitForFunction(() => window.mkwavez.bridge.workletTableCount === window.mkwavez.model.timeline.length && Number(document.body.dataset.step) >= 2, null, { timeout: 10000 });
+  assert(true, 'restored session plays (worklet holds every waveform, sequencer runs)');
+
+  // Export.
+  await page.click('#session-menu');
+  assert(await page.isVisible('#session-pop'), 'Session menu opens');
+  assert((await page.textContent('#session-status')).includes('Autosave on'), 'menu shows autosave status');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#session-export')]);
+  const file = await dl.path();
+  assert(dl.suggestedFilename().endsWith('.mkwz') && file, `export downloads ${dl.suggestedFilename()}`);
+
+  // New session (confirm), while playing: clears the autosave too.
+  page.once('dialog', (d) => d.accept());
+  await page.click('#session-menu').catch(() => {});
+  if (!(await page.isVisible('#session-new'))) await page.click('#session-menu');
+  await page.click('#session-new');
+  await page.waitForFunction(() => window.mkwavez.model.timeline.length === 5 && window.mkwavez.model.bpm === 132, null, { timeout: 5000 });
+  await page.waitForFunction(() => window.mkwavez.bridge.workletTableCount === 5, null, { timeout: 5000 });
+  assert(true, 'New session: back to the default (worklet follows)');
+  await page.click('#play');
+  await saved();
+  await load();
+  assert((await E(() => window.mkwavez.model.timeline.length)) === 5 && (await E(() => window.mkwavez.model.bpm)) === 132, 'New session cleared the autosave (reload stays fresh)');
+
+  // Import (confirm) round-trips the exported session.
+  page.once('dialog', (d) => d.accept());
+  await page.setInputFiles('#session-file', file);
+  await page.waitForFunction((k) => window.mkwavez.model.timeline.length === k, n, { timeout: 10000 });
+  assert((await snap()) === before, 'import restores the exported session exactly');
+  await saved();
+  await load();
+  assert((await snap()) === before, 'imported session survives a reload');
+
+  // A bad file is refused.
+  await page.setInputFiles('#session-file', { name: 'bad.mkwz', mimeType: 'application/octet-stream', buffer: Buffer.from('not a session at all') });
+  await page.waitForSelector('#session-notice:not([hidden])', { timeout: 3000 });
+  assert((await page.textContent('#session-notice')).includes('Couldn’t import'), 'bad file: notice, session unchanged');
+  assert((await snap()) === before, 'session unchanged after a bad import');
+
+  // An unreadable save: fresh session, bad save kept, notice.
+  await E(
+    () =>
+      new Promise((res, rej) => {
+        const r = indexedDB.open('mkwavez');
+        r.onsuccess = () => {
+          const tx = r.result.transaction('meta', 'readwrite');
+          tx.objectStore('meta').put({ format: 'mkwavez-session', version: 1, timeline: 'garbage' }, 'session');
+          tx.oncomplete = () => {
+            r.result.close();
+            res();
+          };
+          tx.onerror = rej;
+        };
+        r.onerror = rej;
+      }),
+  );
+  await E(() => (window.mkwavez.saver.markDirty = () => {})); // keep this tab from re-saving before the reload
+  await load();
+  assert((await E(() => window.mkwavez.model.timeline.length)) === 5, 'unreadable save: starts a fresh session');
+  assert((await page.textContent('#session-notice')).includes('Couldn’t restore'), 'unreadable save: notice');
+  const kept = await E(
+    () =>
+      new Promise((res) => {
+        const r = indexedDB.open('mkwavez');
+        r.onsuccess = () => {
+          const g = r.result.transaction('meta').objectStore('meta').get('corrupt');
+          g.onsuccess = () => res(!!g.result?.meta && typeof g.result.error === 'string');
+        };
+      }),
+  );
+  assert(kept, 'unreadable save kept for debugging');
+  await ctx.close();
+
+  // No IndexedDB (blocked / private mode): runs normally, autosave off, notice.
+  const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p2 = await ctx2.newPage();
+  watch(p2);
+  await p2.addInitScript(() => {
+    Object.defineProperty(window, 'indexedDB', { configurable: true, get: () => undefined });
+  });
+  await p2.goto(url, { waitUntil: 'load' });
+  await p2.waitForSelector('#sec-generate');
+  assert((await p2.evaluate(() => window.mkwavez.model.timeline.length)) === 5, 'no storage: app starts normally');
+  assert((await p2.textContent('#session-notice')).includes('Autosave is off'), 'no storage: non-blocking notice');
+  assert((await p2.getAttribute('#session-menu', 'data-state')) === 'off', 'no storage: Session menu shows autosave off');
+  await p2.click('#seed-add-shown');
+  assert((await p2.evaluate(() => window.mkwavez.model.timeline.length)) === 6, 'no storage: adds still work');
+  const bar = await p2.evaluate(() => {
+    const t = document.querySelector('.transport');
+    return t.scrollWidth <= t.clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth;
+  });
+  assert(bar, '390px: transport bar fits with the Session button');
+  await ctx2.close();
+
+  assert(errors.length === 0, `no console errors (session)${errors.length ? `: ${errors.join(' | ')}` : ''}`);
+}
+
 const browser = await chromium.launch({
   executablePath: CHROME,
   headless: true,
@@ -2052,11 +2227,13 @@ try {
   servers.push(prev);
   await run('preview', prev.resolvedUrls.local[0], browser);
   await midiChecks('preview', prev.resolvedUrls.local[0], browser);
+  await sessionChecks('preview', prev.resolvedUrls.local[0], browser);
   const dev = await createServer({ server: { port: 0 }, logLevel: 'warn' });
   servers.push(dev);
   await dev.listen();
   await run('dev', dev.resolvedUrls.local[0], browser);
   await midiChecks('dev', dev.resolvedUrls.local[0], browser);
+  await sessionChecks('dev', dev.resolvedUrls.local[0], browser);
   console.log('\nsmoke: PASS');
 } catch (e) {
   failed = true;

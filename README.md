@@ -41,7 +41,7 @@ to `main` (or by hand: Actions → Deploy to GitHub Pages → Run workflow) and 
 ## Using it
 
 On a laptop / tablet (≥ 900 px wide) everything is on one screen: the transport bar
-(play, BPM, undo, MIDI, waveform count, sample rate, theme toggle), then Generate | Wavetables,
+(play, BPM, undo, Session menu, MIDI, waveform count, sample rate, theme toggle), then Generate | Wavetables,
 the Timeline strip, and Voice | Sequence. Panels scroll internally when their content
 doesn't fit (e.g. the Breed tab). Narrower screens get one scrolling column
 of the same panels, each collapsible. Dark theme by default; the sun / moon button
@@ -165,6 +165,15 @@ switches (the choice is remembered).
   when you pick an input, or on your first click if the input was remembered (browsers
   only start audio on a gesture). Unsupported browsers / denied permission show a short
   status; the rest of the app is unaffected.
+- **Session** (transport bar): your work is saved in the browser automatically (IndexedDB,
+  a second or two after each change and when the tab is hidden) and restored on reload —
+  waveforms, wavetables, voices, sequences, tempo, the selected voice tab and Generate
+  tab; not undo history. The menu shows the autosave status and has **New session**
+  (asks first; clears the autosaved copy), **Export…** (one `.mkwz` file) and
+  **Import…** (asks first; replaces the current session). If the browser blocks storage
+  (e.g. some private windows) the app runs as usual with autosave off and a notice; a
+  save that can't be read starts a fresh session (the bad save is kept, with an offer to
+  discard it).
 - **Undo** (transport bar) covers waveform adds (including Mutate / Breed adds, Copy to end),
   Timeline moves, window edits, a voice's wavetable switch, note edits and wavetable edits (create, duplicate, rename,
   delete, resize, slot edits). Wavetable settings (Live / Frozen, write head, interpolation)

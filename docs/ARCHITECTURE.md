@@ -36,13 +36,19 @@ src/
     sequence.ts         SequenceData, scale → frequency, step helpers
     midi.ts             MIDI bytes → messages, MidiRouter (channel / Omni routing, held-note
                         tracking per source), velocity curve, bend scale, CC map + learn
+    session.ts          session schema (meta + per-waveform records), encode / decode,
+                        migrations, the .mkwz file container
     engine/             SynthEngine (audio-thread engine), Adsr, NoteStack (held keys)
   browser/formulaEval.ts  JS expression → FormulaFn (browser-only convenience)
   browser/webMidi.ts    Web MIDI access: permission, inputs + hot-plug, chosen input(s),
                         unsupported / insecure / denied states
+  browser/sessionStore.ts  IndexedDB store for the autosaved session (meta + waveforms)
   app/model.ts          AppModel: main-thread state, actions, undo, topic events
   app/midi.ts           MidiController: router → bridge (notes, bend) and → AppModel (CCs);
                         persisted settings (input, Omni, CC map), learn
+  app/autosave.ts       Autosaver: debounced, incremental, chunked session saves (backend
+                        and scheduler injected)
+  app/defaultSession.ts the fresh session (5 basic waveforms, 3 voices, 3 sequences)
   audio/                protocol.ts (messages), worklet.ts (AudioWorkletProcessor adapter),
                         bridge.ts (AudioContext owner, state → messages, mip building)
   ui/                   Plain DOM + canvas panels (no framework), styles.css tokens
@@ -64,8 +70,11 @@ src/
                         engine resolves it); midi.ts (transport MIDI picker,
                         LED, popover with routing and CC map); shortcuts.ts
                         (page-wide keys: Space, [ / ], M, Shift+←/→; one
-                        capture-phase listener, skipped in text fields)
-  main.ts               initial state, shell assembly, frame loop
+                        capture-phase listener, skipped in text fields); session.ts
+                        (Session menu: autosave status, New / Export / Import;
+                        notices)
+  main.ts               session restore (before the first render), shell assembly,
+                        autosave wiring, frame loop
 tests/                  vitest unit tests (core + AppModel)
 scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 ```
@@ -172,6 +181,48 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   level, mute, ADSR. Interpolation belongs to the wavetable. Switching wavetable selects
   all of it. Plain data shared verbatim with the engine.
 - **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate.
+- **Session** (`core/session.ts`, M5 part 1) — what is saved: the timeline (ids in order
+  plus one record per waveform), the id allocators (`nextTableId`, `nextVoiceId`,
+  `nextSeqId`), selection and Breed parents, every wavetable (built-ins' contents / heads /
+  interpolation and user wavetables, stored verbatim so new fields round-trip without
+  schema changes; decode validates known fields and keeps unknown ones), voices (all
+  params; unknown keys kept, bad values → defaults), sequences, BPM, and UI prefs
+  (`UiState.exportPrefs()`: the selected voice tab, the Generate tab). Not saved: undo
+  history, transport play state. Theme, timeline view and MIDI settings stay per browser
+  in localStorage.
+  - Two parts: **meta** (`SessionMeta`, small, JSON-safe, `format` + `version`), rewritten
+    on every save, and **waveform records** (`WaveformRecord`, one per id, written once:
+    waveforms are immutable). A record is `samples` (Float32, the default), `recipe`
+    (only `basic` / `pulse`, which re-render cheaply and exactly — and only if the
+    re-render matches bit for bit when encoded; a sample hash flags a later code change)
+    or `ref` (same samples as another record: copies share data, so a copy costs a few
+    bytes). Formula, Perlin, CA, mutate and breed waveforms always store samples (no user
+    JS is evaluated at load; parents may be gone).
+  - Versioned: `migrateMeta` runs `MIGRATIONS[v]` (v → v+1) up to `SESSION_VERSION`;
+    a newer or unmigratable version is a `SessionError` ('incompatible').
+  - Decoding never trusts input: missing / malformed / non-finite waveform records are
+    dropped (with warnings; wavetables drop the slots the way eviction does, voices are
+    clamped); if no waveform survives, or the meta is unusable, it throws and the app
+    starts fresh.
+  - **.mkwz file** (Export / Import): `'MKWZ'`, u32 container version, u32 JSON length,
+    JSON `{ meta, waveforms }` (sample records carry `offset` / `length` in floats), padding
+    to 4 bytes, little-endian Float32 sample block. Exports store samples (no recipe-only
+    records), so files don't depend on re-render determinism.
+- **Autosave** (`app/autosave.ts` + `browser/sessionStore.ts`): IndexedDB database
+  `mkwavez` with stores `meta` (key `session`; `corrupt` = the last save that couldn't be
+  restored, kept for debugging) and `waveforms` (keyPath `id`). Any model topic or UI pref
+  change marks the session dirty; the save runs 1.5 s after the last change (at most 6 s
+  after the first), writes new waveform records in chunks of ≤ 64 / ≤ 4 ms with idle-time
+  yields between chunks, then the meta and the deletion of unreferenced records (evicted
+  waveforms; a `ref`'s target is kept while referenced) in one transaction — so the stored
+  meta never references a missing record. Hidden page / `pagehide` flushes at once without
+  yielding. Write errors (quota, …) set an error status and retry on the next change.
+  On load, `main.ts` restores the session before building the UI (the page shows
+  "Loading…" meanwhile); storage unavailable → fresh session, autosave off, a notice;
+  unreadable save → fresh session, the bad meta kept under `corrupt`, a notice with
+  "Discard it". New session / Import replace the model (`AppModel.loadState`, undo
+  cleared), clear the store and save everything. Two tabs on one origin both autosave
+  (last writer wins); there's no cross-tab locking yet.
 - **Undo** — snapshots of the timeline array and wavetables (references), selection,
   voice windows with their wavetable (X and Y; switching a voice's wavetable is an undo
   step, so undo puts voices back) and sequence steps; 40 deep. Covers adds, note edits, window edits (a slider drag is one
@@ -214,6 +265,9 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 - Voice tabs: `UiState.voiceId` (kept valid as voices come and go: a removed voice's
   neighbour is selected). The Voice panel shows only that voice's controls; the
   Sequence panel shows its sequence(s).
+- Session menu: a native popover like the MIDI one (`#session-pop`); notices are one
+  fixed element at the bottom centre (`#session-notice`, `role=status`), hidden after 9 s
+  unless they carry an action.
 - Remembered per browser (localStorage, try/catch): `mkwavez.theme` (only once
   toggled; default dark, applied before first paint by an inline script in
   index.html), `mkwavez.timelineView` (Waveform / Spectral / both) and `mkwavez.midi`
@@ -245,8 +299,9 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   remapped voice windows always land together, and fresh tables' mip sets (built
   synchronously, up to 128) precede the wavetables that reference them (the model emits
   'timeline', 'wavetables', 'voices' in that order).
-- The bridge reconciles: it tracks which table/voice/sequence ids the worklet has and
-  sends adds/removes on each model topic. Undo that restores evicted tables simply
+- The bridge reconciles: it tracks which table/voice/sequence ids the worklet has (tables
+  with the data array sent, so a restored / imported session that reuses an id with other
+  data is re-sent) and sends adds/removes on each model topic. Undo that restores evicted tables simply
   re-sends them. Bulk backlogs (e.g. 4096 at audio start) arrive in 48-table chunks.
 - The engine tracks playing tables by table id, not wavetable index: each control
   block resolves the voice's mix (≤ 4 tables + weights, `resolveMix`, the same code
@@ -377,5 +432,6 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   ternaries; some presets use JS array idioms like `[...Array(n)].reduce`, which would
   need a `sum(k, n, expr)` builtin or similar). Formula recipes store the expression
   text, so tables still carry provenance.
-- Cross-version determinism of re-rendering is not guaranteed yet (no recipe/version
-  tag); M5 save/load should store sample data alongside recipes.
+- Cross-version determinism of re-rendering is not guaranteed (no recipe/version tag), so
+  sessions store samples except for `basic` / `pulse` waveforms verified bit-exact at save
+  time (with a hash checked at load); exported files always carry samples.
