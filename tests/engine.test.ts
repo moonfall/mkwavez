@@ -5,15 +5,17 @@ import { generateBasic } from '../src/core/generators';
 import { buildMipSet } from '../src/core/mipmap';
 import { emptySteps, type SequenceData } from '../src/core/sequence';
 import { DEFAULT_VOICE, type VoiceParams } from '../src/core/voice';
+import { make2D, makeRows, type Interp } from '../src/core/wavetable';
+import { packIds, packWavetable } from '../src/core/wavetablePlayback';
 
 const SR = 48000;
 
-function setup(interp: 'blend' | 'step' = 'blend') {
+function setup(interp: Interp = 'blend') {
   const e = new SynthEngine(SR);
   const waves = ['sine', 'saw', 'square'] as const;
   waves.forEach((w, i) => e.addTable(i + 1, buildMipSet(generateBasic(w, 0).data)));
-  e.setWavetable(0, Int32Array.from([1, 2, 3]));
-  const voice: VoiceParams = { ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 0, windowEnd: 2, interp };
+  e.setWavetable(0, packIds([1, 2, 3], interp));
+  const voice: VoiceParams = { ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 0, windowEnd: 2 };
   e.setVoice(voice);
   const steps = emptySteps();
   steps[0] = 0;
@@ -69,12 +71,12 @@ describe('SynthEngine', () => {
 });
 
 describe('SynthEngine robustness', () => {
-  function pair(interp: 'blend' | 'step') {
+  function pair(interp: Interp) {
     const mk = () => {
       const e = new SynthEngine(SR);
       (['sine', 'saw', 'square', 'tri'] as const).forEach((w, i) => e.addTable(i + 1, buildMipSet(generateBasic(w, 0).data)));
-      e.setWavetable(0, Int32Array.from([1, 2, 3, 4]));
-      e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 1, windowEnd: 3, interp, lfoRate: 3, lfoDepth: 1, sustain: 1 });
+      e.setWavetable(0, packIds([1, 2, 3, 4], interp));
+      e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 1, windowEnd: 3, lfoRate: 3, lfoDepth: 1, sustain: 1 });
       e.noteOn(1, 220, SR * 10);
       return e;
     };
@@ -89,8 +91,8 @@ describe('SynthEngine robustness', () => {
       expect(ob).toEqual(oa);
       // Evict table 1 (index 0): wavetable re-indexes, window shifts by one (atomically).
       b.removeTables([1]);
-      b.setWavetable(0, Int32Array.from([2, 3, 4]));
-      b.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 0, windowEnd: 2, interp, lfoRate: 3, lfoDepth: 1, sustain: 1 });
+      b.setWavetable(0, packIds([2, 3, 4], interp));
+      b.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 0, windowEnd: 2, lfoRate: 3, lfoDepth: 1, sustain: 1 });
       expect(render(b, 8192)).toEqual(render(a, 8192));
     });
   }
@@ -100,7 +102,7 @@ describe('SynthEngine robustness', () => {
     render(a, 1000);
     render(b, 1000);
     // Point b at a different table mid-cycle: the rest of the current cycle must match a.
-    b.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 0, windowEnd: 0, interp: 'step', lfoRate: 3, lfoDepth: 1, sustain: 1 });
+    b.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 0, windowEnd: 0, lfoRate: 3, lfoDepth: 1, sustain: 1 });
     const oa = render(a, 40);
     const ob = render(b, 40); // 220 Hz cycle = ~218 samples; 40 samples stay within it only if not at a wrap
     expect(ob).toEqual(oa);
@@ -110,7 +112,7 @@ describe('SynthEngine robustness', () => {
     const e = setup();
     e.setTransport(true, 132);
     render(e, 2048);
-    e.setWavetable(0, Int32Array.from([99, 98, 97]));
+    e.setWavetable(0, packIds([99, 98, 97]));
     const out = render(e, 2048);
     expect(rms(out)).toBeGreaterThan(0.01);
   });
@@ -118,7 +120,7 @@ describe('SynthEngine robustness', () => {
   it('removeVoice fades out (no click) and then frees the voice', () => {
     const e = new SynthEngine(SR);
     e.addTable(1, buildMipSet(generateBasic('sine', 0).data));
-    e.setWavetable(0, Int32Array.from([1]));
+    e.setWavetable(0, packIds([1]));
     e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', sustain: 1, level: 1 });
     e.noteOn(1, 110, SR);
     const before = render(e, SR / 4);
@@ -128,6 +130,118 @@ describe('SynthEngine robustness', () => {
     expect(Math.abs(after[after.length - 1])).toBeLessThan(1e-4);
     expect(e.voiceCount).toBe(0);
   });
+});
+
+describe('SynthEngine on 2D / Rows wavetables', () => {
+  const WAVES = ['sine', 'saw', 'square', 'tri'] as const;
+  const still = { lfoDepth: 0, lfoDepthY: 0, sustain: 1, attack: 0.001, level: 1 };
+  /** An engine with tables 1..4 and a voice on wavetable 0 holding one note. */
+  function eng(wt: Parameters<SynthEngine['setWavetable']>[1], patch: Partial<VoiceParams>) {
+    const e = new SynthEngine(SR);
+    WAVES.forEach((w, i) => e.addTable(i + 1, buildMipSet(generateBasic(w, 0).data)));
+    e.setWavetable(0, wt);
+    e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', ...still, ...patch });
+    e.noteOn(1, 220, SR * 10);
+    return e;
+  }
+
+  it('2D Blend output is the bilinear mix of the four cells', () => {
+    const grid = packWavetable(make2D(0, 'g', 2, 2, [1, 2, 3, 4]));
+    const [px, py] = [0.3, 0.8];
+    const out = render(eng(grid, { windowEnd: 1, windowEndY: 1, position: px, positionY: py }), 4096);
+    const weights = [(1 - px) * (1 - py), px * (1 - py), (1 - px) * py, px * py];
+    const ref = new Float64Array(4096);
+    weights.forEach((w, k) => {
+      const one = render(eng(packIds([k + 1]), {}), 4096);
+      for (let i = 0; i < ref.length; i++) ref[i] += w * one[i];
+    });
+    let err = 0;
+    for (let i = 0; i < ref.length; i++) err = Math.max(err, Math.abs(out[i] - ref[i]));
+    expect(rms(out)).toBeGreaterThan(0.01);
+    expect(err).toBeLessThan(1e-6);
+    const st = eng(grid, { windowEnd: 1, windowEndY: 1, position: px, positionY: py }).status(emptyStatus());
+    expect(st.voices[0].index).toBeCloseTo(px);
+    expect(st.voices[0].y).toBeCloseTo(py);
+  });
+
+  it('Rows Blend aligns positions proportionally between rows', () => {
+    // Row 0: sine, saw, square; row 1: tri. u = 0.5 → saw (row 0), tri (row 1).
+    const rows = packWavetable(makeRows(0, 'r', [[1, 2, 3], [4]]));
+    const out = render(eng(rows, { windowStartY: 0, windowEndY: 1, position: 0.5, positionY: 0.25 }), 2048);
+    const saw = render(eng(packIds([2]), {}), 2048);
+    const tri = render(eng(packIds([4]), {}), 2048);
+    let err = 0;
+    for (let i = 0; i < out.length; i++) err = Math.max(err, Math.abs(out[i] - (0.75 * saw[i] + 0.25 * tri[i])));
+    expect(err).toBeLessThan(1e-6);
+  });
+
+  it('2D Step plays one cell and switches only on the phase wrap', () => {
+    const grid = packWavetable(make2D(0, 'g', 2, 2, [1, 2, 3, 4], { interp: 'step' }));
+    const p = { windowEnd: 1, windowEndY: 1, position: 0, positionY: 0 };
+    const a = eng(grid, p);
+    const b = eng(grid, p);
+    const sine = eng(packIds([1]), {});
+    expect(render(a, 1000)).toEqual(render(sine, 1000));
+    render(b, 1000);
+    // Move b's position to the far cell (tri) mid-cycle: unchanged until the wrap.
+    b.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', ...still, ...p, position: 1, positionY: 1 });
+    const cycle = SR / 220;
+    const phase0 = (1000 * 220) / SR - Math.floor((1000 * 220) / SR);
+    const toWrap = Math.floor((1 - phase0) * cycle);
+    const oa = render(a, toWrap - 1);
+    const ob = render(b, toWrap - 1);
+    expect(ob).toEqual(oa);
+    // After a wrap (the target is picked up at the next control block) b plays the tri cell.
+    render(a, 400);
+    const after = render(b, 400);
+    const sq = eng(packIds([4]), {});
+    render(sq, 1000 + toWrap - 1);
+    const sqOut = render(sq, 400);
+    let err = 0;
+    for (let i = 300; i < 400; i++) err = Math.max(err, Math.abs(after[i] - sqOut[i]));
+    expect(err).toBeLessThan(1e-6);
+  });
+
+  /** Largest sample-to-sample step. */
+  const maxStep = (x: Float32Array) => {
+    let m = 0;
+    for (let i = 1; i < x.length; i++) m = Math.max(m, Math.abs(x[i] - x[i - 1]));
+    return m;
+  };
+
+  for (const change of ['window', 'table', 'wavetable'] as const) {
+    it(`a ${change} change crossfades (no discontinuity)`, () => {
+      // Two tables in antiphase: a hard switch would jump by up to twice the amplitude.
+      const sin = new Float32Array(2048).map((_, i) => Math.sin((2 * Math.PI * i) / 2048));
+      const neg = sin.map((v) => -v);
+      const e = new SynthEngine(SR);
+      e.addTable(1, buildMipSet(sin));
+      e.addTable(2, buildMipSet(neg));
+      e.setWavetable(0, packWavetable(make2D(0, 'g', 2, 2, [1, 2, 1, 2])));
+      e.setWavetable(5, packIds([2]));
+      e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', ...still, windowEnd: 1, windowEndY: 1, position: 0, positionY: 0 });
+      e.noteOn(1, 110, SR * 10);
+      const before = render(e, 4096 + 100); // ~ a sine peak region
+      if (change === 'window') e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', ...still, windowStart: 1, windowEnd: 1, windowEndY: 1, position: 0, positionY: 0 });
+      else if (change === 'table') e.setWavetable(0, packWavetable(make2D(0, 'g', 2, 2, [2, 2, 2, 2])));
+      else e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', ...still, wavetableId: 5 });
+      const after = render(e, 2048);
+      const amp = Math.max(...before.map(Math.abs));
+      const joined = new Float32Array(before.length + after.length);
+      joined.set(before);
+      joined.set(after, before.length);
+      expect(maxStep(joined)).toBeLessThan(maxStep(before) * 2 + (2 * amp) / 50);
+      // It did switch: the output is now inverted relative to the continued sine.
+      const ref = new SynthEngine(SR);
+      ref.addTable(1, buildMipSet(sin));
+      ref.setWavetable(0, packIds([1]));
+      ref.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', ...still });
+      ref.noteOn(1, 110, SR * 10);
+      render(ref, before.length);
+      const r = render(ref, 2048);
+      for (let i = 200; i < 2048; i += 97) expect(after[i]).toBeCloseTo(-r[i], 5);
+    });
+  }
 });
 
 describe('Adsr', () => {

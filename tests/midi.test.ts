@@ -23,6 +23,7 @@ import {
 import { buildMipSet } from '../src/core/mipmap';
 import { emptySteps } from '../src/core/sequence';
 import { DEFAULT_VOICE, type VoiceParams } from '../src/core/voice';
+import { packIds } from '../src/core/wavetablePlayback';
 
 const SR = 48000;
 
@@ -216,7 +217,7 @@ describe('CC map', () => {
   it('assigning a controller moves it from any other parameter', () => {
     let m = assignCc(DEFAULT_CC_MAP, 'lfoDepth', 74);
     m = assignCc(m, 'level', 74);
-    expect(m).toEqual({ position: 1, lfoDepth: -1, lfoRate: -1, level: 74 });
+    expect(m).toEqual({ position: 1, positionY: -1, lfoDepth: -1, lfoRate: -1, level: 74 });
     m = assignCc(m, 'position', -1);
     expect(m.position).toBe(-1);
     expect(assignCc(m, 'lfoRate', 120).lfoRate).toBe(-1); // channel-mode CCs can't be assigned
@@ -232,7 +233,7 @@ describe('CC map', () => {
 
   it('normalizes untrusted stored maps', () => {
     expect(normalizeCcMap(null)).toEqual(DEFAULT_CC_MAP);
-    expect(normalizeCcMap({ position: 7, level: 7, lfoRate: 'x', bogus: 3 })).toEqual({ position: -1, lfoDepth: -1, lfoRate: -1, level: 7 });
+    expect(normalizeCcMap({ position: 7, level: 7, lfoRate: 'x', bogus: 3 })).toEqual({ position: -1, positionY: -1, lfoDepth: -1, lfoRate: -1, level: 7 });
   });
 });
 
@@ -241,7 +242,7 @@ describe('CC map', () => {
 function engine(patch: Partial<VoiceParams> = {}) {
   const e = new SynthEngine(SR);
   e.addTable(1, buildMipSet(generateBasic('sine', 0).data));
-  e.setWavetable(0, Int32Array.from([1]));
+  e.setWavetable(0, packIds([1]));
   e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', level: 1, sustain: 1, attack: 0.001, release: 0.01, lfoDepth: 0, ...patch });
   return e;
 }
@@ -413,7 +414,7 @@ describe('SynthEngine MIDI', () => {
 
 function controller(store?: SettingsStore) {
   const m = new AppModel();
-  m.addTables([generateBasic('sine', 0), generateBasic('saw', 0)], 'single');
+  m.addTables([generateBasic('sine', 0), generateBasic('saw', 0)]);
   m.addVoice();
   m.addVoice();
   const sent: MidiVoiceEvent[] = [];

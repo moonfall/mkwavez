@@ -10,6 +10,7 @@ import { noteFreq, type SequenceData, stepSamples } from '../sequence';
 import type { TableId } from '../table';
 import { DEFAULT_VOICE, modulatedPosition, type VoiceParams } from '../voice';
 import type { WavetableId } from '../wavetable';
+import { Mix, resolveMix, type PackedWavetable } from '../wavetablePlayback';
 import { Adsr } from './adsr';
 import { NoteStack } from './noteStack';
 
@@ -21,8 +22,9 @@ export const REMOVE_RELEASE_SEC = 0.012;
 /** Pitch-bend smoothing time constant (one-pole per control block, ramped within it). */
 export const BEND_SMOOTH_SEC = 0.004;
 
-const EMPTY_IDS = new Int32Array(0);
 const IDLE = 0;
+/** Tables a voice can be crossfading at once: this block's mix (<= 4) plus the previous one fading out. */
+const MAX_LIVE = 8;
 
 class VoiceRuntime {
   params: VoiceParams;
@@ -41,18 +43,34 @@ class VoiceRuntime {
   bendSemis = 0;
   bendFrom = 1;
   bendTo = 1;
-  /** Modulated position 0..1 and float index into the wavetable (for the UI). */
+  /** LFO on the Y position. */
+  lfoPhaseY: number;
+  /** Modulated positions 0..1 and the coordinates they resolve to (for the UI). */
   pos = 0;
+  posY = 0;
   index = 0;
-  // Resolved tables for this control block, tracked by table id (not wavetable index)
-  // so a wavetable re-index (eviction) never changes what is playing.
+  indexY = 0;
   mipLevel = 0;
-  idA: TableId = -1;
-  idB: TableId = -1;
-  tableA: MipSet | null = null;
-  tableB: MipSet | null = null;
-  frac = 0;
-  fracPrev = 0;
+  /** Interpolation of the voice's wavetable at the last resolve. */
+  step = false;
+  /**
+   * Tables being mixed, tracked by table id (not wavetable index) so a wavetable re-index
+   * (eviction) never changes what is playing. Each entry's weight ramps linearly from
+   * w0 (block start) to w1 (block end): a table entering the mix ramps up from 0, one
+   * leaving ramps down to 0, so any window / table / position change is click-free.
+   */
+  n = 0;
+  ids = new Int32Array(MAX_LIVE);
+  tabs: (MipSet | null)[] = new Array<MipSet | null>(MAX_LIVE).fill(null);
+  w0 = new Float64Array(MAX_LIVE);
+  w1 = new Float64Array(MAX_LIVE);
+  /** Double buffers for building the next block's entries without allocating. */
+  nIds = new Int32Array(MAX_LIVE);
+  nTabs: (MipSet | null)[] = new Array<MipSet | null>(MAX_LIVE).fill(null);
+  nW0 = new Float64Array(MAX_LIVE);
+  nW1 = new Float64Array(MAX_LIVE);
+  readonly mix = new Mix();
+  readonly win = { x0: 0, x1: 0, y0: 0, y1: 0 };
   /** Step mode: the held table (kept until the oscillator wraps) and the pending target. */
   heldId: TableId = -1;
   heldTable: MipSet | null = null;
@@ -63,6 +81,7 @@ class VoiceRuntime {
   constructor(p: VoiceParams, sampleRate: number) {
     this.params = p;
     this.lfoPhase = p.lfoPhase;
+    this.lfoPhaseY = p.lfoPhaseY;
     this.env.configure(p.attack, p.decay, p.sustain, p.release, sampleRate);
   }
 }
@@ -71,14 +90,18 @@ export interface EngineStatus {
   /** Absolute sequencer step counter (-1 before the first step). */
   step: number;
   playing: boolean;
-  /** `note`: the MIDI note a voice plays (top of its held stack), or -1. */
-  voices: { id: number; pos: number; index: number; env: number; note: number }[];
+  /**
+   * Per voice: modulated positions (pos, posY: 0..1), the coordinates they resolve to in
+   * the wavetable (index = x along the row, y = row; the chosen cell in Step), envelope
+   * level, and `note`: the MIDI note it plays (top of its held stack), or -1.
+   */
+  voices: { id: number; pos: number; posY: number; index: number; y: number; env: number; note: number }[];
 }
 
 export class SynthEngine {
   readonly sampleRate: number;
   private tables = new Map<TableId, MipSet>();
-  private wavetables = new Map<WavetableId, Int32Array>();
+  private wavetables = new Map<WavetableId, PackedWavetable>();
   private voices: VoiceRuntime[] = [];
   private sequences: SequenceData[] = [];
   private playing = false;
@@ -111,8 +134,8 @@ export class SynthEngine {
     return this.tables.size;
   }
 
-  setWavetable(id: WavetableId, ids: Int32Array): void {
-    this.wavetables.set(id, ids);
+  setWavetable(id: WavetableId, wt: PackedWavetable): void {
+    this.wavetables.set(id, wt);
   }
 
   removeWavetable(id: WavetableId): void {
@@ -133,10 +156,6 @@ export class SynthEngine {
     }
     v.params = p;
     v.env.configure(p.attack, p.decay, p.sustain, p.release, this.sampleRate);
-    if (p.interp === 'blend') {
-      v.heldId = -1;
-      v.heldTable = null;
-    }
   }
 
   /** Fade the voice out with a short release, then drop it (see control()). */
@@ -184,7 +203,7 @@ export class SynthEngine {
     v.vel = 1;
     v.gateRemaining = Math.max(1, Math.round(gateSamples));
     v.env.gateOn();
-    this.resolve(v);
+    this.resolvePitch(v);
   }
 
   // ---- MIDI (events already routed to a voice; see core/midi.ts) ----
@@ -203,7 +222,7 @@ export class SynthEngine {
     v.vel = velocityGain(velocity);
     v.gateRemaining = 0;
     v.env.gateOn();
-    this.resolve(v);
+    this.resolvePitch(v);
   }
 
   /**
@@ -222,7 +241,7 @@ export class SynthEngine {
     } else if (wasTop) {
       v.freq = midiNoteFreq(v.notes.top, v.params.octave);
       v.vel = velocityGain(v.notes.topVelocity);
-      this.resolve(v);
+      this.resolvePitch(v);
     }
   }
 
@@ -269,10 +288,12 @@ export class SynthEngine {
     out.voices.length = this.voices.length;
     for (let i = 0; i < this.voices.length; i++) {
       const v = this.voices[i];
-      const o = out.voices[i] ?? (out.voices[i] = { id: 0, pos: 0, index: 0, env: 0, note: -1 });
+      const o = out.voices[i] ?? (out.voices[i] = { id: 0, pos: 0, posY: 0, index: 0, y: 0, env: 0, note: -1 });
       o.id = v.params.id;
       o.pos = v.pos;
-      o.index = v.params.interp === 'step' ? Math.round(v.index) : v.index;
+      o.posY = v.posY;
+      o.index = v.index;
+      o.y = v.indexY;
       o.env = v.env.value;
       o.note = v.notes.top;
     }
@@ -328,6 +349,8 @@ export class SynthEngine {
     for (const v of this.voices) {
       v.lfoPhase += (2 * Math.PI * v.params.lfoRate * blockLen) / this.sampleRate;
       if (v.lfoPhase > 2 * Math.PI) v.lfoPhase -= 2 * Math.PI;
+      v.lfoPhaseY += (2 * Math.PI * v.params.lfoRateY * blockLen) / this.sampleRate;
+      if (v.lfoPhaseY > 2 * Math.PI) v.lfoPhaseY -= 2 * Math.PI;
       // Pitch bend: one-pole per block, ramped linearly across it in renderVoiceSample.
       if (v.bendSemis !== v.bendTarget || v.bendFrom !== v.bendTo) {
         v.bendSemis += (v.bendTarget - v.bendSemis) * this.bendCoef;
@@ -339,58 +362,110 @@ export class SynthEngine {
     }
   }
 
-  /** Recompute position, mip level and table pointers for a voice. */
+  /** Mip level for the voice's current pitch (a new note mid-block keeps the block's mix). */
+  private resolvePitch(v: VoiceRuntime): void {
+    v.mipLevel = mipLevelFor(v.freq * Math.max(v.bendFrom, v.bendTo), this.sampleRate);
+    if (v.n === 0) this.resolve(v);
+  }
+
+  /** Recompute positions, mip level and this block's table mix for a voice. */
   private resolve(v: VoiceRuntime): void {
     const p = v.params;
-    const ids = this.wavetables.get(p.wavetableId) ?? EMPTY_IDS;
+    const wt = this.wavetables.get(p.wavetableId);
     v.pos = modulatedPosition(p.position, p.lfoDepth, v.lfoPhase);
+    v.posY = modulatedPosition(p.positionY, p.lfoDepthY, v.lfoPhaseY);
     v.mipLevel = mipLevelFor(v.freq * Math.max(v.bendFrom, v.bendTo), this.sampleRate);
-    if (ids.length === 0) {
-      // Nothing to address: keep whatever was playing (fades with the envelope).
-      v.index = 0;
-      return;
-    }
-    const max = ids.length - 1;
-    let a = Math.max(0, Math.min(max, p.windowStart));
-    let b = Math.max(0, Math.min(max, p.windowEnd));
-    if (a > b) {
-      const t = a;
-      a = b;
-      b = t;
-    }
-    const f = a + v.pos * (b - a);
-    v.index = f;
-    if (p.interp === 'step') {
-      v.targetId = ids[Math.round(f)];
+    // The previous block's end weights are this block's start weights.
+    this.hold(v);
+    if (!wt) return;
+    const win = v.win;
+    win.x0 = p.windowStart;
+    win.x1 = p.windowEnd;
+    win.y0 = p.windowStartY;
+    win.y1 = p.windowEndY;
+    v.step = wt.interp === 'step';
+    const mix = resolveMix(wt, win, v.pos, v.posY, v.step, v.mix);
+    if (mix.n === 0) return; // nothing to address: keep whatever was playing
+    v.index = mix.x;
+    v.indexY = mix.y;
+    if (v.step) {
+      v.targetId = mix.ids[0];
       if (v.heldId < 0) v.heldId = v.targetId;
       // Late-arriving table: pick it up; otherwise keep the previous pointer.
-      if (!v.heldTable || v.heldId !== v.idA) {
-        v.heldTable = this.tables.get(v.heldId) ?? v.heldTable;
-        v.idA = v.idB = v.heldId;
-      }
-      v.tableA = v.tableB = v.heldTable;
-      v.frac = v.fracPrev = 0;
+      const t = this.tables.get(v.heldId);
+      if (t) v.heldTable = t;
+      if (!v.heldTable) return;
+      for (let k = 1; k < v.n; k++) v.tabs[k] = null;
+      v.n = 1;
+      v.ids[0] = v.heldId;
+      v.tabs[0] = v.heldTable;
+      v.w0[0] = v.w1[0] = 1;
       return;
     }
-    const i = Math.floor(f);
-    const j = Math.min(i + 1, b);
-    const idA = ids[i];
-    const idB = ids[j];
-    const frac = f - i;
-    // Ramp the crossfade only while the pair is unchanged (by table id).
-    v.fracPrev = idA === v.idA && idB === v.idB ? v.frac : frac;
-    v.frac = frac;
-    // A table that has not arrived yet holds the previous pointer instead of going silent.
-    const tA = this.tables.get(idA);
-    const tB = this.tables.get(idB);
-    if (tA) {
-      v.tableA = tA;
-      v.idA = idA;
+    v.heldId = v.targetId = -1;
+    v.heldTable = null;
+    // Tables that haven't arrived yet drop out (the rest renormalised); none: hold.
+    let total = 0;
+    let missing = false;
+    for (let k = 0; k < mix.n; k++) {
+      if (this.tables.has(mix.ids[k])) total += mix.w[k];
+      else missing = true;
     }
-    if (tB) {
-      v.tableB = tB;
-      v.idB = idB;
+    if (total <= 0) return;
+    const norm = missing ? 1 / total : 1;
+    const first = v.n === 0;
+    let m = 0;
+    // Entries already playing ramp from their weight to the new one (0 if leaving).
+    for (let k = 0; k < v.n; k++) {
+      const id = v.ids[k];
+      let w = 0;
+      for (let j = 0; j < mix.n; j++) if (mix.ids[j] === id) w = mix.w[j] * norm;
+      if (w === 0 && v.w0[k] === 0) continue;
+      v.nIds[m] = id;
+      v.nTabs[m] = v.tabs[k];
+      v.nW0[m] = v.w0[k];
+      v.nW1[m] = w;
+      m++;
     }
+    // New entries ramp up from 0 (start at their weight on the voice's first resolve).
+    for (let j = 0; j < mix.n && m < MAX_LIVE; j++) {
+      const id = mix.ids[j];
+      const t = this.tables.get(id);
+      if (!t) continue;
+      let known = false;
+      for (let k = 0; k < m; k++) if (v.nIds[k] === id) known = true;
+      if (known) continue;
+      const w = mix.w[j] * norm;
+      v.nIds[m] = id;
+      v.nTabs[m] = t;
+      v.nW0[m] = first ? w : 0;
+      v.nW1[m] = w;
+      m++;
+    }
+    this.swap(v, m);
+  }
+
+  /** Keep the current mix without ramping (block start = previous block end). */
+  private hold(v: VoiceRuntime): void {
+    for (let k = 0; k < v.n; k++) v.w0[k] = v.w1[k];
+  }
+
+  private swap(v: VoiceRuntime, m: number): void {
+    const ids = v.ids;
+    const tabs = v.tabs;
+    const w0 = v.w0;
+    const w1 = v.w1;
+    v.ids = v.nIds;
+    v.tabs = v.nTabs;
+    v.w0 = v.nW0;
+    v.w1 = v.nW1;
+    v.nIds = ids;
+    v.nTabs = tabs;
+    v.nW0 = w0;
+    v.nW1 = w1;
+    for (let k = 0; k < MAX_LIVE; k++) v.nTabs[k] = null;
+    for (let k = m; k < MAX_LIVE; k++) v.tabs[k] = null;
+    v.n = m;
   }
 
   private renderVoiceSample(v: VoiceRuntime, blockT: number, sr: number): number {
@@ -400,24 +475,19 @@ export class SynthEngine {
     v.gain += (target - v.gain) * 0.002;
 
     let out = 0;
-    const A = v.tableA ?? v.tableB;
-    const B = v.tableB ?? v.tableA;
-    if (e > 0 && A && B) {
+    if (e > 0 && v.n > 0) {
       const off = MIP_OFFSETS[v.mipLevel];
       const len = MIP_LENGTHS[v.mipLevel];
       const x = v.phase * len;
       const k = x | 0;
       const fr = x - k;
-      const k2 = k + 1 === len ? 0 : k + 1;
-      const a0 = A[off + k];
-      const va = a0 + (A[off + k2] - a0) * fr;
-      if (A === B) {
-        out = va;
-      } else {
-        const b0 = B[off + k];
-        const vb = b0 + (B[off + k2] - b0) * fr;
-        const t = v.fracPrev + (v.frac - v.fracPrev) * blockT;
-        out = va + (vb - va) * t;
+      const k1 = off + k;
+      const k2 = k + 1 === len ? off : k1 + 1;
+      for (let j = 0; j < v.n; j++) {
+        const T = v.tabs[j]!;
+        const a0 = T[k1];
+        const w = v.w0[j] + (v.w1[j] - v.w0[j]) * blockT;
+        out += (a0 + (T[k2] - a0) * fr) * w;
       }
       out *= e * v.gain;
     }
@@ -425,11 +495,16 @@ export class SynthEngine {
     v.phase += (v.freq * (v.bendFrom + (v.bendTo - v.bendFrom) * blockT)) / sr;
     if (v.phase >= 1) {
       v.phase -= Math.floor(v.phase);
-      if (v.params.interp === 'step' && v.targetId >= 0 && v.heldId !== v.targetId) {
+      if (v.step && v.targetId >= 0 && v.heldId !== v.targetId) {
         const t = this.tables.get(v.targetId);
         if (t) {
-          v.heldId = v.idA = v.idB = v.targetId;
-          v.heldTable = v.tableA = v.tableB = t;
+          v.heldId = v.targetId;
+          v.heldTable = t;
+          for (let j = 1; j < v.n; j++) v.tabs[j] = null;
+          v.n = 1;
+          v.ids[0] = v.heldId;
+          v.tabs[0] = t;
+          v.w0[0] = v.w1[0] = 1;
         }
       }
     }

@@ -262,11 +262,12 @@ export class MidiRouter {
 
 // ---- CC → parameter map ----
 
-export const CC_PARAMS = ['position', 'lfoDepth', 'lfoRate', 'level'] as const;
+export const CC_PARAMS = ['position', 'positionY', 'lfoDepth', 'lfoRate', 'level'] as const;
 export type CcParam = (typeof CC_PARAMS)[number];
 
 export const CC_PARAM_LABELS: Readonly<Record<CcParam, string>> = {
-  position: 'Position',
+  position: 'Position X',
+  positionY: 'Position Y',
   lfoDepth: 'LFO depth',
   lfoRate: 'LFO rate',
   level: 'Level',
@@ -275,7 +276,8 @@ export const CC_PARAM_LABELS: Readonly<Record<CcParam, string>> = {
 /** Parameter → controller number (0..119), or -1 = unassigned. */
 export type CcMap = Readonly<Record<CcParam, number>>;
 
-export const DEFAULT_CC_MAP: CcMap = { position: CC_MOD_WHEEL, lfoDepth: -1, lfoRate: -1, level: -1 };
+/** CC 1 (mod wheel) drives position X; position Y (2D / Rows wavetables) is unassigned until learned. */
+export const DEFAULT_CC_MAP: CcMap = { position: CC_MOD_WHEEL, positionY: -1, lfoDepth: -1, lfoRate: -1, level: -1 };
 
 const validCc = (cc: unknown): number =>
   typeof cc === 'number' && Number.isInteger(cc) && cc >= 0 && cc <= CC_MAX_ASSIGNABLE ? cc : -1;
@@ -296,7 +298,7 @@ export function assignCc(map: CcMap, param: CcParam, cc: number): CcMap {
 export function normalizeCcMap(x: unknown): CcMap {
   if (!x || typeof x !== 'object') return DEFAULT_CC_MAP;
   const o = x as Record<string, unknown>;
-  let map: CcMap = { position: -1, lfoDepth: -1, lfoRate: -1, level: -1 };
+  let map: CcMap = { position: -1, positionY: -1, lfoDepth: -1, lfoRate: -1, level: -1 };
   for (const p of CC_PARAMS) if (p in o) map = assignCc(map, p, validCc(o[p]));
   return map;
 }
