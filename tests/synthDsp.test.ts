@@ -170,7 +170,7 @@ describe('pitch math', () => {
 
   const voice = (synth: Partial<SynthParams>): VoiceParams => ({ ...DEFAULT_VOICE, id: 1, name: 'V1', type: 'synth', synth: { ...DEFAULT_SYNTH, ...synth } });
   const tables = new Map();
-  const ctl = (bend: number, blockLen: number, glideCoef: (s: number) => number): SynthControl => ({ bend, blockLen, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1 });
+  const ctl = (bend: number, blockLen: number, glideCoef: (s: number) => number): SynthControl => ({ bend, blockLen, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1, beat: -1 });
 
   it('oscillator increments follow octave / coarse / fine, sub is 1 or 2 octaves below A', () => {
     const sv = new SynthVoice(SR, 1, 64);
@@ -461,9 +461,9 @@ describe('review fixes', () => {
     expect(syn.fenv.stage).toBe(0);
   });
 
-  it('ring modulation and FM take one mip level fewer harmonics', () => {
+  it('ring modulation takes one mip level fewer harmonics; FM drops them by the sideband width', () => {
     const tables = new Map();
-    const c: SynthControl = { bend: 0, blockLen: 64, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1 };
+    const c: SynthControl = { bend: 0, blockLen: 64, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1, beat: -1 };
     const lv = (synth: Partial<SynthParams>) => {
       const p: VoiceParams = { ...DEFAULT_VOICE, id: 1, name: 'V1', type: 'synth', synth: { ...DEFAULT_SYNTH, mods: [], ...synth } };
       const sv = new SynthVoice(SR, 1, 64);
@@ -473,6 +473,11 @@ describe('review fixes', () => {
     };
     const [a0, b0] = lv({});
     expect(lv({ ringLevel: 0.5 })).toEqual([a0 + 1, b0 + 1]);
-    expect(lv({ fm: 0.5 })).toEqual([a0 + 1, b0]);
+    const [aFm] = lv({ fm: 1 });
+    expect(aFm).toBeGreaterThan(a0);
+    expect(lv({ fm: 1 })[1]).toBe(b0);
+    // Carson's rule: a bigger index takes more harmonics away.
+    expect(lv({ fm: 0.05 })[0]).toBeLessThanOrEqual(aFm);
+    expect(lv({ fm: 0.05 })[0]).toBe(a0);
   });
 });

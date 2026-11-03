@@ -221,8 +221,11 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   SYNTH_RANGES; `normalizeSynth` validates untrusted data (missing fields → the Init
   patch's, so new fields need no schema bump; unknown fields kept).
 - **Voice presets** (core/presets.ts) — `{ id, name, sound }`, sound = synth block + osc A
-  source + amp ADSR + octave + level. Factory presets reference the built-in wavetables
-  with "whole wavetable" windows (clamped on apply). User presets live in
+  source + amp ADSR + octave + level, plus `aRef` / `bRef` wavetable references (a
+  built-in by kind; your wavetable by name + shape — ids are per session and only a hint).
+  `resolvePresetWavetable` finds them on apply; one that isn't in the session falls back to
+  Last batch with a notice (and an import warns how many presets that affects). Factory
+  presets reference built-ins with "whole wavetable" windows (clamped on apply). User presets live in
   `AppModel.voicePresets` (topic 'presets'), saved in the session meta (`voicePresets`,
   optional: older sessions have none) and exported as `{ format: 'mkwavez-presets',
   version: 1, presets }` JSON. Applying = one `updateVoice` (undoable).
@@ -557,8 +560,9 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
 - Control block (64 samples): glide (one-pole on the pitch, ~98% after the glide time),
   pitch envelope and mod envelope (stepped per block), LFOs, the matrix (sources →
   destinations, `applyMatrix`), then block-end phase increments (pitch + bend × range / 2
-  + tuning + pitch env + matrix), unison detune ratios / stereo gains, mip levels (one level
-  fewer harmonics with ring mod on both oscillators and with FM on A), both table mixes
+  + tuning + pitch env + matrix), unison copy weights / detune ratios / stereo gains, mip
+  levels (ring mod: one level fewer harmonics on both oscillators; FM: A's level keeps
+  every harmonic plus the Carson sidebands, (2π·1.5·fm + 1)·f_B, under the limit), both table mixes
   (WtOsc.resolve: the same crossfaded, id-tracked mixes as the Simple voice), the block
   part of the log cutoff (knob + key tracking + velocity + matrix; one-pole smoothed),
   resonance, levels, pan and gain targets. Per sample everything is ramped linearly
@@ -567,15 +571,22 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
 - Per sample: osc B copies (FM source: B's first copy), osc A copies at phase + FM, mixer
   (A, B, ring A × B, sub with polyBLEP square, seeded white / pink noise), drive, filter
   (two ZDF SVF cores; LP24 = Butterworth first stage + resonant second), saturation, amp,
-  soft limiter (linear to ±1, < ±2), width (mid / side). While unison copies are spread the
-  voice is stereo (a second filter); otherwise mono. Hard sync restarts A's copies at B's
-  first copy's wrap (at the fractional position). Denormal-range filter / pink state is
-  flushed per block.
-- CPU guard: per control block the engine counts the unison copies of sounding Synth
-  voices; over `UNISON_BUDGET` (32) every voice's copies are scaled down (≥ 1) and
-  `status.unisonLimited` is set. Bench (`npm run bench`, node, this machine): 8 Synth
+  width (mid / side), soft limiter (linear to ±1, < ±2). While unison copies are spread the
+  voice is stereo (a second filter, which starts from the first one's state; back to mono
+  once the copies are gone and both filters agree). Unison copies have fixed places (copy 0
+  at the centre pitch and pan, then +detune / left, −detune / right, +½ detune): a count
+  change never moves the copies that stay, and copies fade in / out over 10 ms (weights
+  towards 1/√n). Hard sync: copy 0 of B (the centre copy) restarts A's copies at the
+  fraction of the sample past its wrap (and A isn't advanced again that sample).
+  Tempo-synced LFOs that don't retrigger are locked to the transport position (cycles from
+  beat 0) while it plays. Denormal-range filter / pink state is flushed per block.
+- CPU guard: per control block the engine counts the unison copies of Synth voices holding
+  a note (release tails don't count); over `UNISON_BUDGET` (32) it limits — copies are
+  scaled to ¾ of the budget (≥ 1 per oscillator; they fade, never cut) until the count
+  falls to ¾ of it (hysteresis) — and `status.unisonLimited` is set. Bench (`npm run bench`, node, this machine): 8 Synth
   voices ≈ 0.24 ms per 128-sample quantum (9% of real time at 48 kHz); the worst case
-  (unison 4 + 4 on all 8, FM, sync, spread; guarded) ≈ 0.43 ms (16%).
+  (unison 4 + 4 on all 8, FM, sync, spread; guarded) ≈ 0.27 ms (10%).
+
 - Determinism: noise and modulation randomness (S&H, smooth random, per-note random) come
   from per-voice PRNGs seeded from the voice id.
 

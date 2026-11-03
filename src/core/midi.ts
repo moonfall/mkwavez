@@ -132,6 +132,24 @@ export class MidiRouter {
   private held = new Map<number, number>();
   /** bendKey(source, channel) → the voice that channel's wheel is bending, and by how much. */
   private bent = new Map<number, { voiceId: number; semitones: number }>();
+  /**
+   * The same for the mod wheel and channel pressure (Synth voice matrix sources): what each
+   * channel's controller holds on which voice, so routing changes, CC 121 and lost inputs
+   * reset them like the bend.
+   */
+  private held2: Record<'mod' | 'pressure', Map<number, { voiceId: number; value: number }>> = { mod: new Map(), pressure: new Map() };
+
+  private track(kind: 'mod' | 'pressure', source: number, channel: number, v: number, value: number): MidiVoiceEvent[] {
+    const k = MidiRouter.bendKey(source, channel);
+    const map = this.held2[kind];
+    const prev = map.get(k);
+    const out: MidiVoiceEvent[] = [];
+    if (prev && prev.voiceId !== v) out.push({ type: kind, voiceId: prev.voiceId, value: 0 });
+    if (value > 0) map.set(k, { voiceId: v, value });
+    else map.delete(k);
+    out.push({ type: kind, voiceId: v, value });
+    return out;
+  }
 
   private static bendKey(source: number, channel: number): number {
     return source * 16 + channel - 1;
@@ -190,27 +208,37 @@ export class MidiRouter {
         const v = targetVoice(msg.channel, routing);
         if (v === null) return [];
         // The mod wheel is also a mod matrix source (whatever the CC map does with it).
-        if (msg.cc === CC_MOD_WHEEL) return [{ type: 'cc', voiceId: v, cc: msg.cc, value: msg.value }, { type: 'mod', voiceId: v, value: msg.value / 127 }];
+        if (msg.cc === CC_MOD_WHEEL) return [{ type: 'cc', voiceId: v, cc: msg.cc, value: msg.value }, ...this.track('mod', source, msg.channel, v, msg.value / 127)];
         return [{ type: 'cc', voiceId: v, cc: msg.cc, value: msg.value }];
       }
       case 'pressure': {
         const v = targetVoice(msg.channel, routing);
-        return v === null ? [] : [{ type: 'pressure', voiceId: v, value: msg.value }];
+        return v === null ? [] : this.track('pressure', source, msg.channel, v, msg.value);
       }
 
     }
   }
 
   /**
-   * Reset all controllers (CC 121): recentre the channel's pitch bend. Mapped CCs set
-   * stored voice parameters (like moving a slider), so they are not reset.
+   * Reset all controllers (CC 121): recentre the channel's pitch bend and zero its mod
+   * wheel / pressure sources. Mapped CCs set stored voice parameters (like moving a slider),
+   * so they are not reset.
    */
   private resetControllers(channel: number, source: number): MidiVoiceEvent[] {
     const k = MidiRouter.bendKey(source, channel);
+    const out: MidiVoiceEvent[] = [];
     const prev = this.bent.get(k);
-    if (!prev) return [];
-    this.bent.delete(k);
-    return [{ type: 'bend', voiceId: prev.voiceId, semitones: 0 }];
+    if (prev) {
+      this.bent.delete(k);
+      out.push({ type: 'bend', voiceId: prev.voiceId, semitones: 0 });
+    }
+    for (const kind of ['mod', 'pressure'] as const) {
+      const h = this.held2[kind].get(k);
+      if (!h) continue;
+      this.held2[kind].delete(k);
+      out.push({ type: kind, voiceId: h.voiceId, value: 0 });
+    }
+    return out;
   }
 
   /**
@@ -229,6 +257,20 @@ export class MidiRouter {
       } else {
         this.bent.set(k, { voiceId: v, semitones: b.semitones });
         out.push({ type: 'bend', voiceId: v, semitones: b.semitones });
+      }
+    }
+    // Mod wheel / pressure move with the channel the same way.
+    for (const kind of ['mod', 'pressure'] as const) {
+      const map = this.held2[kind];
+      for (const [k, h] of [...map]) {
+        const v = targetVoice((k % 16) + 1, routing);
+        if (v === h.voiceId) continue;
+        out.push({ type: kind, voiceId: h.voiceId, value: 0 });
+        if (v === null) map.delete(k);
+        else {
+          map.set(k, { voiceId: v, value: h.value });
+          out.push({ type: kind, voiceId: v, value: h.value });
+        }
       }
     }
     return out;
@@ -264,6 +306,13 @@ export class MidiRouter {
       this.bent.delete(k);
       out.push({ type: 'bend', voiceId: b.voiceId, semitones: 0 });
     }
+    for (const kind of ['mod', 'pressure'] as const) {
+      for (const [k, h] of [...this.held2[kind]]) {
+        if (Math.floor(k / 16) !== source) continue;
+        this.held2[kind].delete(k);
+        out.push({ type: kind, voiceId: h.voiceId, value: 0 });
+      }
+    }
     return out;
   }
 
@@ -272,7 +321,12 @@ export class MidiRouter {
     const out: MidiVoiceEvent[] = this.voicesOff(new Set(this.held.values()));
     for (const v of new Set([...this.bent.values()].map((b) => b.voiceId))) out.push({ type: 'bend', voiceId: v, semitones: 0 });
     this.bent.clear();
+    for (const kind of ['mod', 'pressure'] as const) {
+      for (const v of new Set([...this.held2[kind].values()].map((h) => h.voiceId))) out.push({ type: kind, voiceId: v, value: 0 });
+      this.held2[kind].clear();
+    }
     return out;
+
   }
 }
 

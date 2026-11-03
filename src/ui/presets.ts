@@ -93,9 +93,11 @@ export function buildPresetControls(model: AppModel, voice: () => VoiceParams | 
     const v = voice();
     const p = find(pick.value);
     if (v && p) {
-      model.applyPreset(v.id, p.sound);
+      const notice = model.notice;
+      model.applyPreset(v.id, p.sound, p.name);
       chosen = pick.value.startsWith('u:') ? p.id : '';
-      notify(`${v.name}: ${p.name}`);
+      // applyPreset may have explained a missing wavetable; don't cover that.
+      if (model.notice === notice) notify(`${v.name}: ${p.name}`);
     }
     pick.value = '';
   });
@@ -106,8 +108,12 @@ export function buildPresetControls(model: AppModel, voice: () => VoiceParams | 
     file.value = '';
     if (!f) return;
     try {
-      const n = model.importPresets(parsePresetsFile(await f.text()));
-      notify(n ? `Imported ${n} preset${n === 1 ? '' : 's'}` : 'No presets imported (the list is full or the file is empty)');
+      const list = parsePresetsFile(await f.text());
+      const missing = model.presetsMissingWavetables(list);
+      const n = model.importPresets(list);
+      const warn = missing ? ` — ${missing} use${missing === 1 ? 's' : ''} wavetables this session doesn't have (they'll play Last batch)` : '';
+      notify(n ? `Imported ${n} preset${n === 1 ? '' : 's'}${warn}` : 'No presets imported (the list is full or the file is empty)');
+
     } catch (e) {
       notify(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
     }

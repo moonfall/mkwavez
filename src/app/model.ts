@@ -9,7 +9,8 @@ import type { ModelState } from '../core/session';
 import { DEFAULT_STEP_LENGTH, emptySteps, isStepLength, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
-import { MAX_USER_PRESETS, presetPatch, soundOf as presetSoundOf, type PresetSound, type VoicePreset } from '../core/presets';
+import { MAX_USER_PRESETS, presetPatch, resolvePresetWavetable, soundOf as presetSoundOf, type PresetSound, type VoicePreset } from '../core/presets';
+
 import { DEFAULT_SYNTH, SYNTH_AMP_DEFAULTS, type VoiceType } from '../core/synth';
 
 import {
@@ -32,6 +33,7 @@ import {
   composeMaps,
   duplicateWavetable,
   FIRST_USER_WAVETABLE_ID,
+  LAST_BATCH_WAVETABLE_ID,
   moveSlot,
   newWavetable,
   normalizeWrite,
@@ -409,6 +411,12 @@ export class AppModel {
    * Switching wavetable (without an explicit window) selects the whole new wavetable.
    */
   updateVoice(id: number, patch: VoicePatch, opts: { undo?: boolean } = {}): void {
+    // A wavetable that doesn't exist is ignored (never an empty undo step).
+    if (patch.wavetableId !== undefined && !this.wavetable(patch.wavetableId)) {
+      const { wavetableId: _w, ...rest } = patch;
+      patch = rest;
+    }
+    if (!this.voice(id) || !Object.keys(patch).length) return;
     const windowEdit = WINDOW_KEYS.some((k) => k in patch);
     const v0 = this.voice(id);
     // Switching wavetable is an undo step (undo puts the voice back, window and all).
@@ -485,18 +493,41 @@ export class AppModel {
 
   // ---- voice presets ----
 
-  /** Apply a preset's sound to a voice (it becomes a Synth voice). One undo step. */
-  applyPreset(voiceId: number, sound: PresetSound): void {
+  /**
+   * Apply a preset's sound to a voice (it becomes a Synth voice). One undo step. Its
+   * wavetables are found by reference (built-in kind, or your wavetable's name + shape);
+   * one that isn't in this session falls back to Last batch, with a notice.
+   */
+  applyPreset(voiceId: number, sound: PresetSound, name = 'Preset'): void {
     if (!this.voice(voiceId)) return;
-    this.updateVoice(voiceId, presetPatch(sound));
+    const missing: string[] = [];
+    const fallback = this.wavetable(LAST_BATCH_WAVETABLE_ID)!;
+    const pick = (id: number, ref: PresetSound['aRef'], osc: string) => {
+      const wt = resolvePresetWavetable(this.wavetables, id, ref);
+      if (wt) return wt.id;
+      missing.push(`osc ${osc} (“${ref?.name ?? `#${id}`}”)`);
+      return fallback.id;
+    };
+    const aId = pick(sound.a.wavetableId, sound.aRef, 'A');
+    const bId = pick(sound.synth.b.wavetableId, sound.bRef, 'B');
+    const patch = presetPatch({ ...sound, a: { ...sound.a, wavetableId: aId }, synth: { ...sound.synth, b: { ...sound.synth.b, wavetableId: bId } } });
+    this.updateVoice(voiceId, patch);
     this.endGesture();
+    if (missing.length) this.setNotice(`${name}: wavetable not in this session for ${missing.join(' and ')} — playing Last batch instead.`);
+  }
+
+  /** How many of these presets refer to a wavetable this session doesn't have. */
+  presetsMissingWavetables(list: readonly VoicePreset[]): number {
+    return list.filter(
+      (p) => !resolvePresetWavetable(this.wavetables, p.sound.a.wavetableId, p.sound.aRef) || !resolvePresetWavetable(this.wavetables, p.sound.synth.b.wavetableId, p.sound.bRef),
+    ).length;
   }
 
   /** Save a voice's sound as a user preset (name trimmed, made unique). */
   savePreset(voiceId: number, name: string): VoicePreset | null {
     const v = this.voice(voiceId);
     if (!v || this.voicePresets.length >= MAX_USER_PRESETS) return null;
-    const p: VoicePreset = { id: this.presetId(), name: this.presetName(name), sound: presetSoundOf(v) };
+    const p: VoicePreset = { id: this.presetId(), name: this.presetName(name), sound: presetSoundOf(v, (id) => this.wavetable(id)) };
     this.voicePresets = [...this.voicePresets, p];
     this.emit('presets');
     return p;

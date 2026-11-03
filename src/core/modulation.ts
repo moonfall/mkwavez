@@ -165,9 +165,11 @@ export function applyMatrix(slots: readonly ModSlot[], src: ArrayLike<number>, d
 
 /** Reflect a position back into [0, 1] (as the Simple voice's LFO does at the window edges). */
 export function reflect01(p: number): number {
-  let x = Math.abs(p);
+  if (!Number.isFinite(p)) return 0;
+  // Triangle fold: any distance past an edge folds back (…, 2.3 → 0.3, −1.2 → 0.8).
+  let x = Math.abs(p) % 2;
   if (x > 1) x = 2 - x;
-  return x < 0 ? 0 : x > 1 ? 1 : x;
+  return x;
 }
 
 /**

@@ -165,6 +165,7 @@ export class SynthEngine {
     wheel: 0,
     pressure: 0,
     unisonScale: 1,
+    beat: -1,
   };
   /** CPU guard: unison copies were reduced in the last control block. */
   unisonLimited = false;
@@ -492,15 +493,23 @@ export class SynthEngine {
     if (this.voices.some((v) => v.removing && v.env.stage === IDLE)) {
       this.voices = this.voices.filter((v) => !(v.removing && v.env.stage === IDLE));
     }
-    // CPU guard: total unison copies of the sounding Synth voices.
+    // CPU guard: unison copies of the Synth voices holding a note (release tails don't
+    // count: they would make every note-on look like two voices). With hysteresis: on above
+    // the budget, then scaled to 3/4 of it until the count falls that low (so it doesn't
+    // flap); the voices fade copies in / out, never cut them.
     let copies = 0;
     for (const v of this.voices) {
-      if (!v.syn || v.params.type !== 'synth' || v.env.stage === IDLE) continue;
+      if (!v.syn || v.params.type !== 'synth' || (!v.notes.size && v.gateRemaining <= 0)) continue;
       const s = v.params.synth;
       copies += s.aUnison + (s.bLevel > 0 || s.ringLevel > 0 || s.fm > 0 || s.sync ? s.bUnison : 0);
     }
-    this.ctl.unisonScale = copies > UNISON_BUDGET ? UNISON_BUDGET / copies : 1;
-    this.unisonLimited = copies > UNISON_BUDGET;
+    const low = UNISON_BUDGET * 0.75;
+    if (copies > UNISON_BUDGET) this.unisonLimited = true;
+    else if (copies <= low) this.unisonLimited = false;
+    this.ctl.unisonScale = this.unisonLimited ? Math.min(1, low / copies) : 1;
+    // Transport position in beats (tempo-synced LFOs lock to it).
+    this.ctl.beat = this.playing && this.tick >= 0 && this.eighthLen > 0 ? (Math.floor(this.tick / TICKS_PER_EIGHTH) + Math.min(1, Math.max(0, 1 - this.toNext / this.eighthLen))) / 2 : -1;
+
     for (const v of this.voices) {
       v.lfoPhase += (2 * Math.PI * v.params.lfoRate * blockLen) / this.sampleRate;
       if (v.lfoPhase > 2 * Math.PI) v.lfoPhase -= 2 * Math.PI;

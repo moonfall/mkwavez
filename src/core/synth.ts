@@ -268,7 +268,15 @@ export const SYNTH_RANGES: Readonly<Partial<Record<keyof SynthParams, readonly [
 };
 
 
+/**
+ * Matrix of saved data without one (a session from before the matrix): all slots empty, so
+ * an existing voice keeps sounding as it did. (The default route LFO 1 → A position is only
+ * for new voices and the Init preset: DEFAULT_SYNTH.)
+ */
+export const EMPTY_MODS: readonly ModSlot[] = Array.from({ length: MOD_SLOTS }, () => EMPTY_SLOT);
+
 const ENUMS: Readonly<Partial<Record<keyof SynthParams, readonly string[]>>> = {
+
   subWave: SUB_WAVES,
   noiseType: NOISE_TYPES,
   filterMode: FILTER_MODES,
@@ -341,7 +349,7 @@ export function normalizeSynth(raw: unknown, fallbackSource: OscSource = DEFAULT
     const v = o[k];
     if (k === 'b') out.b = normalizeSource(v, fallbackSource);
     else if (k === 'lfos') out.lfos = Array.from({ length: LFO_COUNT }, (_, i) => normalizeLfo(Array.isArray(v) ? v[i] : undefined, DEFAULT_SYNTH.lfos[i]));
-    else if (k === 'mods') out.mods = Array.isArray(v) ? Array.from({ length: MOD_SLOTS }, (_, i) => normalizeSlot(v[i])) : DEFAULT_SYNTH.mods;
+    else if (k === 'mods') out.mods = Array.isArray(v) ? Array.from({ length: MOD_SLOTS }, (_, i) => normalizeSlot(v[i])) : EMPTY_MODS;
 
     else if (typeof def === 'number') out[k] = clampNum(v, def, SYNTH_RANGES[k]);
     else if (typeof def === 'boolean') out[k] = typeof v === 'boolean' ? v : def;

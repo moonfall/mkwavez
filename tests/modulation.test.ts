@@ -22,7 +22,7 @@ import { pitchFreq, SynthVoice, type SynthControl } from '../src/core/engine/syn
 import { generateBasic } from '../src/core/generators';
 import { assignCc, ccPatch, DEFAULT_CC_MAP, MidiRouter, parseMidi } from '../src/core/midi';
 import { buildMipSet } from '../src/core/mipmap';
-import { DEFAULT_SYNTH, normalizeSynth, type SynthParams } from '../src/core/synth';
+import { DEFAULT_SYNTH, EMPTY_MODS, normalizeSynth, type SynthParams } from '../src/core/synth';
 import { DEFAULT_VOICE, type VoiceParams } from '../src/core/voice';
 import { packIds } from '../src/core/wavetablePlayback';
 
@@ -94,7 +94,9 @@ describe('mod matrix', () => {
     expect(reflect01(0.3)).toBe(0.3);
     expect(reflect01(-0.2)).toBe(0.2);
     expect(reflect01(1.25)).toBe(0.75);
-    expect(reflect01(9)).toBe(0);
+    expect(reflect01(9)).toBe(1);
+    expect(reflect01(2.3)).toBeCloseTo(0.3, 12);
+    expect(reflect01(-3.25)).toBeCloseTo(0.75, 12);
   });
 });
 
@@ -116,6 +118,7 @@ const ctl = (o: Partial<SynthControl> = {}): SynthControl => ({
   wheel: 0,
   pressure: 0,
   unisonScale: 1,
+  beat: -1,
   ...o,
 });
 const voice = (synth: Partial<SynthParams>, id = 1): VoiceParams => ({
@@ -313,6 +316,8 @@ describe('modulation params from untrusted data', () => {
     expect(s.mods[1]).toEqual({ src: 'none', dst: 'pan', amt: 0.2 });
     expect(s.mods[2]).toEqual({ src: 'none', dst: 'none', amt: 0 });
     expect(s.mMode).toBe('ad');
-    expect(normalizeSynth({}).mods).toEqual(DEFAULT_SYNTH.mods);
+    // Saved before the matrix existed: all slots empty (an existing voice must not start sweeping).
+    expect(normalizeSynth({}).mods).toEqual(EMPTY_MODS);
+    expect(normalizeSynth({}).mods.every((m) => m.src === 'none')).toBe(true);
   });
 });

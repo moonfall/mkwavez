@@ -14,12 +14,17 @@
  * allocation; deterministic (the noise PRNG is seeded per voice).
  */
 import { BEND_RANGE_SEMITONES } from '../midi';
+import { MIP_HARMONICS, MIP_NYQUIST_FRACTION } from '../constants';
 import { MIP_LEVELS, mipLevelFor, type MipSet } from '../mipmap';
+
 import { deriveSeed, Prng } from '../prng';
 import {
   applyMatrix,
   DST_INDEX,
   LFO_COUNT,
+  LFO_DIV_BEATS,
+  LFO_RATE_MAX_HZ,
+
   lfoRateHz,
   lfoWave,
   MOD_CUTOFF_OCTAVES,
@@ -65,10 +70,21 @@ export interface SynthControl {
   pressure: number;
   /** CPU guard: unison copies are scaled by this (≤ 1) when the engine is over budget. */
   unisonScale: number;
+  /** Transport position in beats (quarter notes since Play), or −1 when stopped. */
+  beat: number;
 }
 
 /** Golden-ratio phase offsets for unison copies (deterministic, evenly spread). */
 const UNISON_PHASE = 0.381966;
+/**
+ * Fixed places of unison copies 0..3, as a fraction of the detune (± cents) and of the
+ * stereo spread: copy 0 stays at the centre pitch and pan, the others take the outer
+ * places, so a copy never moves when the count changes.
+ */
+const UNISON_PLACE = [0, 1, -1, 0.5] as const;
+const UNISON_PAN = [0, -1, 1, 0.5] as const;
+/** Unison copies fade in / out over this long (count changes, CPU guard). */
+export const UNISON_FADE_SEC = 0.01;
 
 const D = DST_INDEX;
 const S = SRC_INDEX;
@@ -126,11 +142,24 @@ export class SynthVoice {
   private readonly gAR = new Float64Array(MAX_UNISON).fill(1);
   private readonly gBL = new Float64Array(MAX_UNISON).fill(1);
   private readonly gBR = new Float64Array(MAX_UNISON).fill(1);
-  /** Copies playing (after the CPU guard). */
+  /**
+   * Copy weights (1/√n for the copies wanted, 0 for the rest) at the block start / end:
+   * copies fade in and out over ~10 ms (UNISON_FADE_SEC), never cut.
+   */
+  private readonly wA0 = new Float64Array(MAX_UNISON);
+  private readonly wA1 = new Float64Array(MAX_UNISON);
+  private readonly wB0 = new Float64Array(MAX_UNISON);
+  private readonly wB1 = new Float64Array(MAX_UNISON);
+  /** Copies rendered this block (wanted or still fading out). */
   uA = 1;
   uB = 1;
-  /** Stereo: unison copies are spread (two filters run). */
+  /** Highest detune ratio among the rendered copies (for the mip level). */
+  private maxRatA = 1;
+  private maxRatB = 1;
+  /** Stereo: unison copies are spread (two filters run; kept until the two filters agree again). */
   stereo = false;
+  /** Copy weights' largest change per block. */
+  private readonly uniStep: number;
   /** Stereo output of the last render() (before pan). */
   outL = 0;
   outR = 0;
@@ -198,6 +227,8 @@ export class SynthVoice {
     this.noise = new Prng(deriveSeed(NOISE_SEED, voiceId));
     this.modRng = new Prng(deriveSeed(MOD_SEED, voiceId));
     this.smooth = 1 - Math.exp(-blockLen / (CONTROL_SMOOTH_SEC * sampleRate));
+    this.uniStep = blockLen / (UNISON_FADE_SEC * sampleRate);
+    this.wA0[0] = this.wA1[0] = this.wB0[0] = this.wB1[0] = 1;
     for (let i = 0; i < LFO_COUNT; i++) {
       this.lfoPhase[i] = lfoPhases?.[i] ?? 0;
       this.lfoCur[i] = this.modRng.bipolar();
@@ -298,8 +329,20 @@ export class SynthVoice {
   private mips(s: SynthParams, incA: number, incB: number): void {
     const sr = this.sampleRate;
     const ring = s.ringLevel > 0 || this.lv1[4] > 1e-4 ? 1 : 0;
-    this.a.mipLevel = Math.min(MIP_LEVELS - 1, mipLevelFor(incA * this.ratA[this.uA - 1] * sr, sr) + Math.max(ring, s.fm > 0 ? 1 : 0));
-    this.b.mipLevel = Math.min(MIP_LEVELS - 1, mipLevelFor(incB * this.ratB[this.uB - 1] * sr, sr) + ring);
+    const fa = incA * this.maxRatA * sr;
+    const fb = incB * this.maxRatB * sr;
+    // FM (Carson's rule): sidebands reach (β + 1)·f_B past each harmonic of A, β = 2π·FM_DEPTH·fm.
+    const side = s.fm > 0 ? (TWO_PI * FM_DEPTH * s.fm + 1) * fb : 0;
+    const limit = MIP_NYQUIST_FRACTION * sr;
+    let la = MIP_LEVELS - 1;
+    for (let l = 0; l < MIP_LEVELS; l++) {
+      if (fa * MIP_HARMONICS[l] + side < limit) {
+        la = l;
+        break;
+      }
+    }
+    this.a.mipLevel = Math.min(MIP_LEVELS - 1, la + ring);
+    this.b.mipLevel = Math.min(MIP_LEVELS - 1, mipLevelFor(fb, sr) + ring);
   }
 
   /**
@@ -345,17 +388,31 @@ export class SynthVoice {
   }
 
   /** Advance the LFOs by one block; their outputs (−1..1 × depth × fade-in) land in lfoOut. */
-  private stepLfos(s: SynthParams, bpm: number, blockLen: number): void {
+  private stepLfos(s: SynthParams, bpm: number, blockLen: number, beat: number): void {
     const dt = blockLen / this.sampleRate;
     for (let i = 0; i < LFO_COUNT; i++) {
       const l = s.lfos[i];
-      // Rate modulation uses the previous block's matrix (an LFO may modulate another's rate).
-      const rate = lfoRateHz(l, bpm) * Math.pow(2, this.dst[D.lfo1Rate + i] * MOD_LFO_RATE_OCTAVES);
-      let ph = this.lfoPhase[i] + rate * dt;
-      if (ph >= 1) {
-        ph -= Math.floor(ph);
-        this.lfoPrev[i] = this.lfoCur[i];
-        this.lfoCur[i] = this.modRng.bipolar();
+      let ph: number;
+      if (l.sync && !l.retrig && beat >= 0) {
+        // Tempo-synced, free-running, transport playing: locked to the bar clock (the
+        // cycle starts on the transport's beat 0, offset by the start phase).
+        const t = beat / LFO_DIV_BEATS[l.div] + l.phase;
+        ph = t - Math.floor(t);
+        if (ph < this.lfoPhase[i]) {
+          this.lfoPrev[i] = this.lfoCur[i];
+          this.lfoCur[i] = this.modRng.bipolar();
+        }
+      } else {
+        // Rate modulation uses the previous block's matrix (an LFO may modulate another's
+        // rate), clamped to ±MOD_LFO_RATE_OCTAVES and the LFO rate range.
+        const m = Math.max(-1, Math.min(1, this.dst[D.lfo1Rate + i]));
+        const rate = Math.min(LFO_RATE_MAX_HZ * 2, Math.max(0, lfoRateHz(l, bpm) * Math.pow(2, m * MOD_LFO_RATE_OCTAVES)));
+        ph = this.lfoPhase[i] + rate * dt;
+        if (ph >= 1) {
+          ph -= Math.floor(ph);
+          this.lfoPrev[i] = this.lfoCur[i];
+          this.lfoCur[i] = this.modRng.bipolar();
+        }
       }
       this.lfoPhase[i] = ph;
       const age = this.lfoAge[i];
@@ -383,7 +440,7 @@ export class SynthVoice {
     }
     this.penv.next();
     this.menv.next();
-    this.stepLfos(s, c.bpm, blockLen);
+    this.stepLfos(s, c.bpm, blockLen, c.beat);
     // Mod matrix: sources → destinations (block rate; the ramps below smooth them).
     const src = this.src;
     src[S.lfo1] = this.lfoOut[0];
@@ -456,33 +513,57 @@ export class SynthVoice {
 
   private gainTarget = 0;
 
-  /** Unison copies per oscillator (after the CPU guard), their detune ratios and stereo gains. */
+  /**
+   * Unison per oscillator: the copies wanted (after the CPU guard), their weights (fading
+   * towards 1/√n or 0, never jumping), detune ratios and stereo gains. Every copy has a
+   * fixed place (UNISON_PLACE): copy 0 stays at the centre pitch and pan, so changing the
+   * count never moves the copies that keep playing.
+   */
   private unison(s: SynthParams, scale: number): void {
     const want = (n: number) => (scale >= 1 ? n : Math.max(1, Math.floor(n * scale)));
-    const uA = want(s.aUnison);
-    const uB = want(s.bUnison);
-    // New copies start spread out from copy 0 (deterministic).
-    for (let i = this.uA; i < uA; i++) this.phA[i] = (this.phA[0] + i * UNISON_PHASE) % 1;
-    for (let i = this.uB; i < uB; i++) this.phB[i] = (this.phB[0] + i * UNISON_PHASE) % 1;
-    this.uA = uA;
-    this.uB = uB;
-    this.spread(uA, s.aDetune, s.aSpread, this.ratA, this.gAL, this.gAR);
-    this.spread(uB, s.bDetune, s.bSpread, this.ratB, this.gBL, this.gBR);
-    this.stereo = (uA > 1 && s.aSpread > 0) || (uB > 1 && s.bSpread > 0);
+    this.uA = this.copies(want(s.aUnison), this.wA0, this.wA1, this.phA);
+    this.uB = this.copies(want(s.bUnison), this.wB0, this.wB1, this.phB);
+    this.maxRatA = this.place(this.uA, s.aDetune, s.aSpread, this.ratA, this.gAL, this.gAR);
+    this.maxRatB = this.place(this.uB, s.bDetune, s.bSpread, this.ratB, this.gBL, this.gBR);
+    const spread = (this.uA > 1 && s.aSpread > 0) || (this.uB > 1 && s.bSpread > 0);
+    if (spread && !this.stereo) {
+      // The right channel takes over the left filter's state: no transient.
+      this.filterR.copyFrom(this.filter);
+      this.stereo = true;
+    } else if (!spread && this.stereo && this.filter.closeTo(this.filterR)) {
+      // Back to mono once both channels have the same input and state.
+      this.stereo = false;
+    }
   }
 
-  /** Copy i of n: detune ±cents and pan ±spread across the copies (outer copies widest), gain 1/√n. */
-  private spread(n: number, cents: number, spread: number, rat: Float64Array, gl: Float64Array, gr: Float64Array): void {
-    const norm = 1 / Math.sqrt(n);
-    for (let i = 0; i < n; i++) {
-      const x = n > 1 ? (2 * i) / (n - 1) - 1 : 0;
-      rat[i] = Math.pow(2, (x * cents) / 1200);
-      const p = x * spread;
-      gl[i] = (p > 0 ? 1 - p : 1) * norm;
-      gr[i] = (p < 0 ? 1 + p : 1) * norm;
+  /** Fade copy weights towards 1/√n (the first n) or 0; returns how many copies to render. */
+  private copies(n: number, w0: Float64Array, w1: Float64Array, ph: Float64Array): number {
+    const target = 1 / Math.sqrt(n);
+    let count = 1;
+    for (let i = 0; i < MAX_UNISON; i++) {
+      const was = w1[i];
+      w0[i] = was;
+      const t = i < n ? target : 0;
+      // New copies start spread out from copy 0 (deterministic phases).
+      if (was === 0 && t > 0) ph[i] = (ph[0] + i * UNISON_PHASE) % 1;
+      w1[i] = was + Math.max(-this.uniStep, Math.min(this.uniStep, t - was));
+      if (w0[i] > 0 || w1[i] > 0) count = i + 1;
     }
-    // Keep the highest ratio last (mip level uses rat[n − 1]).
-    for (let i = n; i < MAX_UNISON; i++) rat[i] = rat[n - 1];
+    return count;
+  }
+
+  /** Detune ratios and pan gains for copies 0..n−1 (fixed places); returns the highest ratio. */
+  private place(n: number, cents: number, spread: number, rat: Float64Array, gl: Float64Array, gr: Float64Array): number {
+    let max = 1;
+    for (let i = 0; i < n; i++) {
+      const x = UNISON_PLACE[i];
+      rat[i] = Math.pow(2, (x * cents) / 1200);
+      if (rat[i] > max) max = rat[i];
+      const p = UNISON_PAN[i] * spread;
+      gl[i] = p > 0 ? 1 - p : 1;
+      gr[i] = p < 0 ? 1 + p : 1;
+    }
+    return max;
   }
 
   /**
@@ -515,8 +596,9 @@ export class SynthVoice {
       let b0 = 0;
       if (this.b.n > 0 && (lb > 0 || lr > 0 || s.fm > 0)) {
         for (let i = 0; i < this.uB; i++) {
-          const v = this.b.read(this.phB[i], t);
-          if (i === 0) b0 = v;
+          const raw = this.b.read(this.phB[i], t);
+          if (i === 0) b0 = raw;
+          const v = raw * (this.wB0[i] + (this.wB1[i] - this.wB0[i]) * t);
           sbL += v * this.gBL[i];
           sbR += v * this.gBR[i];
         }
@@ -528,7 +610,7 @@ export class SynthVoice {
         for (let i = 0; i < this.uA; i++) {
           let ph = this.phA[i] + fmOff;
           ph -= Math.floor(ph);
-          const v = this.a.read(ph, t);
+          const v = this.a.read(ph, t) * (this.wA0[i] + (this.wA1[i] - this.wA0[i]) * t);
           saL += v * this.gAL[i];
           saR += v * this.gAR[i];
         }
@@ -566,35 +648,44 @@ export class SynthVoice {
       const k = this.k0 + (this.k1 - this.k0) * t;
       const mode = FILTER_MODE_INDEX[s.filterMode];
       const amp = e * this.gain;
-      yL = softLimit(driveSample(this.filter.process(driveSample(x, this.driveM), mode, g, k), s.sat) * amp);
+      yL = driveSample(this.filter.process(driveSample(x, this.driveM), mode, g, k), s.sat) * amp;
       if (stereo) {
-        yR = softLimit(driveSample(this.filterR.process(driveSample(xr, this.driveM), mode, g, k), s.sat) * amp);
+        yR = driveSample(this.filterR.process(driveSample(xr, this.driveM), mode, g, k), s.sat) * amp;
         if (s.width !== 1) {
           const m = (yL + yR) * 0.5;
           const d = (yL - yR) * 0.5 * s.width;
           yL = m + d;
           yR = m - d;
         }
-      } else yR = yL;
+        yR = softLimit(yR);
+      }
+      yL = softLimit(yL);
+      if (!stereo) yR = yL;
     }
-    // Advance: unison copies; copy 0's wrap drives Step-mode table switches and hard sync.
+    // Advance: unison copies. Copy 0 (the centre copy, ratio 1) is the master: its wrap
+    // drives Step-mode table switches and hard sync.
+    let synced = false;
     for (let i = 0; i < this.uB; i++) {
-      let ph = this.phB[i] + incB * this.ratB[i];
+      const step = incB * this.ratB[i];
+      let ph = this.phB[i] + step;
       if (ph >= 1) {
         ph -= Math.floor(ph);
         if (i === 0) {
           this.b.wrapped(tables);
           if (s.sync) {
-            // Restart A where it would be if it had started at B's wrap (less aliasing than 0).
-            const frac = incB > 0 ? ph / incB : 0;
+            // Restart A where it would be had it started at B's wrap (less aliasing than
+            // 0): the fraction of this sample after the wrap, at A's own increments.
+            const frac = step > 0 ? ph / step : 0;
             for (let j = 0; j < this.uA; j++) this.phA[j] = (frac * incA * this.ratA[j]) % 1;
             this.a.wrapped(tables);
+            synced = true;
           }
         }
       }
       this.phB[i] = ph;
     }
-    for (let i = 0; i < this.uA; i++) {
+    // After a sync reset A's phases already hold this sample's advance.
+    for (let i = 0; i < this.uA && !synced; i++) {
       let ph = this.phA[i] + incA * this.ratA[i];
       if (ph >= 1) {
         ph -= Math.floor(ph);

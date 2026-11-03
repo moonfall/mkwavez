@@ -6,6 +6,7 @@
  */
 import {
   assignCc,
+  CC_MOD_WHEEL,
   ccPatch,
   DEFAULT_CC_MAP,
   isLearnableCc,
@@ -139,7 +140,9 @@ export class MidiController {
       // LFO targets edit one entry of a list: start from the voice with pending moves applied.
       const cur = this.model.voice(ev.voiceId);
       const pend = this.pending.get(ev.voiceId);
-      const patch = ccPatch(this.settings.cc, ev.cc, ev.value, cur && pend ? applyVoicePatch(cur, pend) : cur);
+      // On a Synth voice the mod wheel is a matrix source: CC 1 doesn't also drive Position X.
+      const map = cur?.type === 'synth' && ev.cc === CC_MOD_WHEEL && this.settings.cc.position === CC_MOD_WHEEL ? { ...this.settings.cc, position: -1 } : this.settings.cc;
+      const patch = ccPatch(map, ev.cc, ev.value, cur && pend ? applyVoicePatch(cur, pend) : cur);
       if (!patch) continue;
       // The engine hears the knob now; the model (sliders, voice/set) catches up once per tick.
       this.out.params(ev.voiceId, patch);

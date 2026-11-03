@@ -224,9 +224,10 @@ switches (the choice is remembered).
   Level, and for Synth voices Cutoff, Resonance, Drive, Filter env amount, Osc A / B mix,
   Sub / Noise level, Glide and LFO 1–3 rate / depth — type a CC number or press Learn and
   move a control (bank select / RPN / NRPN are ignored while learning); remembered. The mod
-  wheel and channel pressure (aftertouch) are also Synth voice matrix sources; a Synth
+  wheel and channel pressure (aftertouch) are Synth voice matrix sources (on a Synth voice CC 1
+  is only the mod wheel, it doesn't also move Position X); a Synth
   voice's bend range is its own (default 2). A held pitch bend follows Omni to a newly
-  selected voice; CC 121 recentres it. Audio starts
+  selected voice (so do the wheel and pressure); CC 121 recentres it and zeroes them. Audio starts
   when you pick an input, or on your first click if the input was remembered (browsers
   only start audio on a gesture). Unsupported browsers / denied permission show a short
   status; the rest of the app is unaffected.

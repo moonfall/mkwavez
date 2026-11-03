@@ -243,16 +243,27 @@ Decisions / deviations:
   loud as before in each channel.
 - LFO rate CC moves turn the LFO's tempo sync off (so the knob is heard).
 - Presets and synth parameters needed no further schema bump: `normalizeSynth` fills
-  missing fields with the Init patch's; `voicePresets` is an optional meta field.
+  missing fields with the Init patch's — except the matrix: saved data without one gets
+  all-empty slots (an existing voice keeps sounding as saved; the LFO 1 → position route
+  is only for new voices and the Init preset). `voicePresets` is an optional meta field.
+- Presets reference wavetables robustly (built-in kind, or your wavetable's name + shape);
+  a missing one plays Last batch, with a notice.
+- On a Synth voice CC 1 is the mod wheel (a matrix source) only: the default CC 1 →
+  Position X mapping applies to Simple voices. Wheel and pressure reset with CC 121, input
+  loss and routing changes (moving to the new target voice, like the bend).
 - Undo restores only the sound of the voice the undone edit changed (live MIDI CC moves on
   other voices survive).
 
 Known gaps:
 - Osc B's window is not drawn in the Timeline / Wavetables views (only osc A's), and the
   Wavetables panel's "used by" lists voices by osc A.
-- No oversampling: hard sync, drive / saturation and high FM amounts alias somewhat at
-  high notes (ring mod and FM drop one mip level to compensate).
-- Unison copies switched on / off by the CPU guard (or a count change) can click.
+- No oversampling: hard sync and drive / saturation alias somewhat at high notes (ring mod
+  drops one mip level; FM drops harmonics by its sideband width).
+- With an even unison count the copies' average pitch / pan sit slightly off centre (copy
+  0 stays at the centre so a count change never moves it).
+- The CPU guard reduces every limited voice's copies alike (to ¾ of the budget), not
+  per-voice priorities.
+
 - Presets don't include the voice's sequence or the Simple-voice LFOs; "copy voice" copies
   everything but id, name and mute (undoable when the target is a Synth voice).
 - No per-step velocity in sequences, so the velocity source is 1 for sequencer notes.

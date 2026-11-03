@@ -44,6 +44,19 @@ export class MultiFilter {
     this.s1 = this.s2 = this.t1 = this.t2 = 0;
   }
 
+  /** Take another channel's state (a second channel starting without a transient). */
+  copyFrom(o: MultiFilter): void {
+    this.s1 = o.s1;
+    this.s2 = o.s2;
+    this.t1 = o.t1;
+    this.t2 = o.t2;
+  }
+
+  /** Whether another channel's state is (almost) the same: both would give the same output. */
+  closeTo(o: MultiFilter, eps = 1e-6): boolean {
+    return Math.abs(this.s1 - o.s1) < eps && Math.abs(this.s2 - o.s2) < eps && Math.abs(this.t1 - o.t1) < eps && Math.abs(this.t2 - o.t2) < eps;
+  }
+
   /** Flush denormal-range state (call once per control block). */
   flush(): void {
     if (Math.abs(this.s1) < 1e-20) this.s1 = 0;
