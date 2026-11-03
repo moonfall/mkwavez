@@ -18,6 +18,7 @@ export * from './formula';
 export * from './formulaPresets';
 export * from './perlin';
 export * from './seed';
+export * from './sequences';
 
 export interface RenderEnv {
   /** Needed only for 'formula' recipes (browser: src/browser/formulaEval.ts). */

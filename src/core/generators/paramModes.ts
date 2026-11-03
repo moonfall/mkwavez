@@ -9,6 +9,7 @@ import type { ParamValue } from '../table';
 import { additiveTable, DEFAULT_ADDITIVE as AD, type AdditiveParams } from './additive';
 import { DEFAULT_DYN, DYN_MAP_LABELS, dynamicalTable } from './dynamical';
 import { DEFAULT_KS, karplusTable } from './karplus';
+import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 
 export interface SeedParam {
   readonly key: string;
@@ -140,6 +141,25 @@ export const PARAM_MODES: readonly ParamModeDef[] = [
     ],
     seeded: (p) => num(p, 'phase') === 2,
     render: (p, seed, index, count) => additiveTable(nums<AdditiveParams>(p, AD), seed, index, count),
+  },
+  {
+    mode: 'numseq',
+    id: 'number-sequences',
+    cat: 'Builders',
+    name: 'Number sequences',
+    about:
+      'Steps per cycle taken from a number sequence (normalised, held or smoothed). A batch advances: ' +
+      'digits / gaps move along the sequence, Collatz starts from the next number, Euclidean adds pulses.',
+    params: [
+      { key: 'source', label: 'Source', min: 0, max: 4, step: 1, value: SQ.source, options: opts(SEQ_SOURCES) },
+      { key: 'steps', label: 'Steps per cycle', min: 2, max: 64, step: 1, value: SQ.steps },
+      { key: 'smoothing', label: 'Smoothing', min: 0, max: 1, step: 0.01, value: SQ.smoothing },
+      { key: 'offset', label: 'Offset', min: 0, max: 255, step: 1, value: SQ.offset },
+      { key: 'advance', label: 'Batch → advance', min: 0, max: 16, step: 1, value: SQ.advance },
+      { key: 'pulses', label: 'Pulses (Euclidean)', min: 1, max: 63, step: 1, value: SQ.pulses },
+    ],
+    seeded: () => false,
+    render: (p, _seed, index) => sequenceTable(nums<SequenceParams>(p, SQ), index),
   },
 ];
 

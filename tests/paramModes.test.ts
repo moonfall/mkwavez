@@ -3,7 +3,11 @@ import { TABLE_SIZE } from '../src/core/constants';
 import {
   additiveAmps,
   DEFAULT_ADDITIVE,
+  DEFAULT_SEQUENCE,
   DYN_MAPS,
+  euclid,
+  sequenceValues,
+  type SequenceParams,
   PARAM_MODES,
   renderRecipe,
   seedBatch,
@@ -84,5 +88,17 @@ describe('parameter modes', () => {
     expect(same(phase(2, 1), phase(2, 2))).toBe(false);
     expect(same(phase(1, 1), phase(1, 2))).toBe(true);
     expect(maxDiff(phase(0, 1), phase(1, 1))).toBeGreaterThan(0.01);
+  });
+
+  it('number sequences: π / e digits, Collatz, prime gaps, Euclidean', () => {
+    const v = (params: Partial<SequenceParams>, i = 0) => sequenceValues({ ...DEFAULT_SEQUENCE, ...params }, i);
+    expect(v({ source: 0, steps: 8 }).join('')).toBe('31415926');
+    expect(v({ source: 0, steps: 4 }, 2).join('')).toBe('4159');
+    expect(v({ source: 1, steps: 8 }).join('')).toBe('27182818');
+    expect(v({ source: 3, steps: 6 })).toEqual([1, 2, 2, 4, 2, 4]);
+    expect(v({ source: 2, steps: 4, offset: 0 }).map((x) => Math.round(2 ** x))).toEqual([27, 82, 41, 124]);
+    expect(v({ source: 4, steps: 8, pulses: 3 }).reduce((s, x) => s + x, 0)).toBe(3);
+    expect(v({ source: 4, steps: 8, pulses: 3 }, 2).reduce((s, x) => s + x, 0)).toBe(5);
+    expect(euclid(5, 16).reduce((s, x) => s + x, 0)).toBe(5);
   });
 });
