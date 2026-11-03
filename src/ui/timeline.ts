@@ -373,7 +373,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   sec.el.addEventListener('keydown', (e) => {
     if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'd') return;
     e.preventDefault();
-    model.copyToEnd(model.selectedId);
+    if (!e.repeat) model.copyToEnd(model.selectedId); // holding the keys copies once
   });
   const invalidate = () => {
     dirtyGrid = dirtyMarkers = true;

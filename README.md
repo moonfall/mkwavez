@@ -27,7 +27,7 @@ The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to overr
 ## GitHub Pages
 
 `.github/workflows/pages.yml` runs `npm ci`, `npm test` and `npm run build` on every push
-to `master` (or by hand: Actions → Deploy to GitHub Pages → Run workflow) and deploys
+to `main` (or by hand: Actions → Deploy to GitHub Pages → Run workflow) and deploys
 `dist/` to `https://<owner>.github.io/<repo>/`, e.g. https://moonfall.github.io/mkwavez/.
 
 - One-time setup: the repo's **Settings → Pages → Source: GitHub Actions**. On free plans

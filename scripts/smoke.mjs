@@ -1097,6 +1097,13 @@ async function timelineCopyChecks(page, tlCount) {
     focused === 'timeline-scroll' && k.n === n0 + 1 && k.copyOf === k.src && k.selected,
     `Ctrl+D in the focused strip copies the selected table to the end (focus ${focused})`,
   );
+  // Auto-repeat (keys held) doesn't add more copies.
+  await M(() =>
+    document
+      .querySelector('#timeline-scroll')
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'd', ctrlKey: true, repeat: true, bubbles: true })),
+  );
+  assert((await tlCount()) === n0 + 1, 'Ctrl+D auto-repeat is ignored');
   await page.click('#undo');
   assert((await tlCount()) === n0, 'undo removes the Ctrl+D copy');
   await page.setViewportSize({ width: 390, height: 844 });
