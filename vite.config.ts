@@ -7,6 +7,7 @@ export default defineConfig({
   },
   // Agent worktrees live under .claude/; keep the dev server out of them.
   server: {
+    allowedHosts: ['fluffy2.10q.ca'],
     watch: { ignored: ['**/.claude/**'] },
   },
   optimizeDeps: {
