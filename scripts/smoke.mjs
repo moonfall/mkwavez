@@ -119,6 +119,7 @@ async function run(label, url, browser) {
   await page.waitForTimeout(300);
   await page.click('#play');
   assert((await page.evaluate(() => window.mkwavez.model.playing)) === false, 'transport stops');
+  await breedWithoutMate(page);
 
   if (SHOTS) {
     await page.setViewportSize({ width: 1200, height: 900 });
@@ -259,7 +260,37 @@ async function mutateChecks(page, tlCount) {
   const n2 = await tlCount();
   await page.waitForTimeout(900);
   assert((await tlCount()) === n2, 'Evolve adds tables until stopped');
+
+  // Evolve pauses while the Mutate tab is hidden, and undo stops it.
+  await page.click('#mutate-evolve');
   await page.click('#tab-seed');
+  n = await tlCount();
+  await page.waitForTimeout(1000);
+  assert((await tlCount()) === n, 'Evolve pauses while the Mutate tab is hidden');
+  await page.click('#tab-mutate');
+  await page.waitForFunction((k) => window.mkwavez.model.timeline.length >= k + 1, n, { timeout: 5000 });
+  await page.click('#undo');
+  assert((await page.getAttribute('#mutate-evolve', 'aria-pressed')) === 'false', 'undo stops Evolve');
+  n = await tlCount();
+  await page.waitForTimeout(900);
+  assert((await tlCount()) === n, 'no Evolve ticks after undo');
+  await page.click('#tab-seed');
+}
+
+/** Breed with no mate available (no voices) must not add tables. */
+async function breedWithoutMate(page) {
+  await page.evaluate(() => {
+    const m = window.mkwavez.model;
+    for (const v of [...m.voices]) m.removeVoice(v.id);
+  });
+  await page.click('#tab-mutate');
+  await page.selectOption('#mutate-op', 'breed');
+  await page.waitForFunction(() => document.querySelector('#mutate-apply1').disabled, null, { timeout: 3000 });
+  const dis = await page.evaluate(() => ['#mutate-apply1', '#mutate-applyN', '#mutate-evolve'].map((s) => document.querySelector(s).disabled));
+  assert(dis.every(Boolean), 'Breed without a mate disables Apply, Apply N and Evolve');
+  await page.selectOption('#mutate-op', 'fold');
+  await page.waitForFunction(() => !document.querySelector('#mutate-apply1').disabled, null, { timeout: 3000 });
+  assert(true, 'other mutations stay enabled without voices');
 }
 
 const browser = await chromium.launch({

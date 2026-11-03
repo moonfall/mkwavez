@@ -119,6 +119,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   const mateSel = h('select', { id: 'mutate-mate-voice', 'aria-label': 'Breed mate pool' });
   mateSel.addEventListener('change', () => {
     mateVoiceId = Number(mateSel.value);
+    dirty = true;
   });
   const mateLabel = h('div', { id: 'mutate-mate', class: 'steps' });
   const breedRow = h(
@@ -155,15 +156,22 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   // ---- state helpers ----
   const source = (): WaveTable | undefined => model.table(model.selectedId);
 
+  /**
+   * Rebuild the mate-voice options only when the voice list or names change (not on
+   * every window move), so an open dropdown isn't closed by table adds / Evolve ticks.
+   */
+  let mateSig = '';
   const renderMateVoices = () => {
     const vs = model.voices;
     if (mateVoiceId === null || !vs.some((v) => v.id === mateVoiceId)) {
       mateVoiceId = vs.find((v) => model.batchTargets.has(v.id))?.id ?? vs[0]?.id ?? null;
     }
-    mateSel.replaceChildren(
-      ...vs.map((v) => h('option', { value: String(v.id) }, `${v.name} (#${v.windowStart + 1}–#${v.windowEnd + 1})`)),
-    );
-    if (mateVoiceId !== null) mateSel.value = String(mateVoiceId);
+    const sig = vs.map((v) => `${v.id}:${v.name}`).join('|');
+    if (sig !== mateSig) {
+      mateSig = sig;
+      mateSel.replaceChildren(...vs.map((v) => h('option', { value: String(v.id) }, v.name)));
+    }
+    if (mateVoiceId !== null && mateSel.value !== String(mateVoiceId)) mateSel.value = String(mateVoiceId);
   };
 
   /** Mate for a given seed: pool = the chosen voice's window, index picked by the seed. */
@@ -176,6 +184,17 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
 
   const syncBreed = () => {
     breedRow.hidden = mutation !== 'breed';
+    syncButtons();
+  };
+
+  /** Breed without a mate (no voice / empty window) would only add near-copies. */
+  const blocked = () => mutation === 'breed' && !mateFor(seed);
+
+  const syncButtons = () => {
+    const noMate = blocked();
+    apply1.disabled = applyN.disabled = !source() || noMate;
+    evolveBtn.disabled = noMate && evolveTimer === null;
+    if (noMate && evolveTimer !== null) stopEvolve();
   };
 
   const updateSteps = () => {
@@ -191,6 +210,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   const newSeed = () => {
     seed = randomSeed();
     seedLabel.textContent = `seed ${hex(seed)}`;
+    dirty = true;
   };
 
   // ---- preview (computed in the frame loop) ----
@@ -218,8 +238,11 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     const idx = model.indexOf(model.selectedId);
     srcLabel.textContent = src ? `#${idx + 1} · id ${src.id} · ${describeRecipe(src.recipe)}` : 'Nothing selected';
     const mate = mutation === 'breed' ? mateFor(seed) : undefined;
-    mateLabel.textContent = mate ? `#${model.indexOf(mate.id) + 1} · id ${mate.id}` : '—';
-    apply1.disabled = applyN.disabled = !src;
+    const mv = mateVoiceId === null ? undefined : model.voice(mateVoiceId);
+    mateLabel.textContent = mate
+      ? `#${model.indexOf(mate.id) + 1} · id ${mate.id} (of #${mv!.windowStart + 1}–#${mv!.windowEnd + 1})`
+      : 'none: no voice window';
+    syncButtons();
     const axis = cssColor('--border');
     const cSrc = cssColor('--text');
     const cPv = cssColor('--new');
@@ -240,7 +263,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   // ---- actions ----
   const applySingle = () => {
     const src = source();
-    if (!src) return;
+    if (!src || blocked()) return;
     const key = currentKey();
     const gen = pv && pvKey === key ? pv : mutateBatch(request(), src, mutation === 'breed' ? mateFor(seed) : undefined)[0];
     model.addTables([gen], 'single', true);
@@ -249,32 +272,40 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
 
   const applyBatch = () => {
     const src = source();
-    if (!src) return;
+    if (!src || blocked()) return;
     const req: MutateRequest = { mutation, amount, seed, mode, count: opts.count() };
     const gen = mutateBatch(req, src, mutation === 'breed' ? mateFor(seed) : undefined);
     model.addTables(gen, 'batch', false);
     newSeed();
   };
 
+  /** Evolve pauses (skips ticks) while the Generate section / Mutate tab isn't showing. */
   const evolveTick = () => {
     const newest = model.timeline.at(-1);
-    if (!newest) return;
+    if (!newest || !opts.active()) return;
     const s = randomSeed();
+    const mate = mutation === 'breed' ? mateFor(s) : undefined;
+    if (mutation === 'breed' && !mate) return;
     const req: MutateRequest = { mutation, amount: Math.min(amount, EVOLVE_MAX_AMOUNT), seed: s, mode: 'single', count: 1 };
-    model.addTables(mutateBatch(req, newest, mutation === 'breed' ? mateFor(s) : undefined), 'single', false);
+    model.addTables(mutateBatch(req, newest, mate), 'single', false);
   };
 
-  const toggleEvolve = () => {
-    if (evolveTimer !== null) {
-      clearInterval(evolveTimer);
+  const setEvolve = (on: boolean) => {
+    if (on === (evolveTimer !== null)) return;
+    if (on) evolveTimer = setInterval(evolveTick, EVOLVE_MS);
+    else {
+      clearInterval(evolveTimer!);
       evolveTimer = null;
-    } else {
-      evolveTimer = setInterval(evolveTick, EVOLVE_MS);
     }
-    const on = evolveTimer !== null;
     evolveBtn.textContent = on ? 'Stop evolving' : 'Evolve';
     evolveBtn.setAttribute('aria-pressed', String(on));
     evolveBtn.classList.toggle('active', on);
+    syncButtons();
+  };
+  const stopEvolve = () => setEvolve(false);
+  const toggleEvolve = () => {
+    if (evolveTimer === null && blocked()) return;
+    setEvolve(evolveTimer === null);
   };
 
   // ---- subscriptions ----
@@ -283,6 +314,8 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     dirty = true;
   });
   model.on('batchTargets', renderMateVoices);
+  // Undo while evolving would be undone again by the next tick: stop instead.
+  model.on('undone', stopEvolve);
   model.on('timeline', () => (dirty = true));
   onThemeChange(() => (dirty = true));
   new ResizeObserver(() => (dirty = true)).observe(el);

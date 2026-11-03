@@ -18,7 +18,8 @@ import {
   type WavetableId,
 } from '../core/wavetable';
 
-export type Topic = 'timeline' | 'selection' | 'voices' | 'sequences' | 'transport' | 'undo' | 'batchTargets';
+/** 'undo' = undo depth changed (any snapshot or undo); 'undone' = an undo was applied. */
+export type Topic = 'timeline' | 'selection' | 'voices' | 'sequences' | 'transport' | 'undo' | 'undone' | 'batchTargets';
 
 export const MAX_VOICES = 8;
 
@@ -291,7 +292,7 @@ export class AppModel {
       const st = s.steps.get(q.id);
       return st ? { ...q, steps: st } : q;
     });
-    this.emit('timeline', 'voices', 'sequences', 'selection', 'undo');
+    this.emit('timeline', 'voices', 'sequences', 'selection', 'undo', 'undone');
   }
 
   clearUndo(): void {

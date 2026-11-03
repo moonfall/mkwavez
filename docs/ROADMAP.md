@@ -22,6 +22,8 @@ step sequences on a shared transport, undo for adds and note edits, unit + smoke
   previous at A; step seeds derived from the Apply seed).
 - Evolve: toggle; every 0.7 s mutates the newest table with the current mutation at
   `min(A, 30%)` and a fresh seed (single add, so following windows extend).
+  It pauses while the Generate section is collapsed or another tab is showing, and
+  Undo stops it (otherwise the next tick would re-add what was undone).
 - Recipes (`op: 'mutate'`) record mutation, amount, batch amount, mode, seed, batch
   index/count and parent id(s); `renderRecipe` reproduces every mutation × mode
   (unit-tested). Window following and batch targets behave as for seed batches;
@@ -29,14 +31,13 @@ step sequences on a shared transport, undo for adds and note edits, unit + smoke
 - **Breed decision:** kept in Mutate as the prototype's magnitude pull, with the
   second parent clearly defined: "Mate from window of" picks a voice; the mate is
   one table from that voice's window chosen by the Apply's seed (one mate for the
-  whole batch, shown in the tab and recorded as `parents[1]`). The M3 Breed tab
+  whole batch, shown in the tab and recorded as `parents[1]`). With no voice to take a
+  mate from, Apply / Apply N / Evolve are disabled for Breed. The M3 Breed tab
   supersedes it with explicit multi-parent selection.
 
 Deferred / known gaps from M2:
 - Each Evolve tick is an undo step, so a long Evolve run pushes older history out of
   the 40-deep undo stack (as in the prototype).
-- Evolve keeps running with the Generate section collapsed or another tab showing;
-  only the button shows its state.
 - Breed of a table with few harmonics (e.g. a sine) borrows the source's
   near-zero-magnitude phases, which are effectively noise — same as the prototype;
   M3's spectral crossover should take phases from a parent explicitly.
