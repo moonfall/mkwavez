@@ -133,7 +133,7 @@ switches (the choice is remembered).
     selected” (the Timeline selection; handy on touch) and “Write head here” (or Alt-click
     a slot). Every edit is undoable.
   - Waveforms in your wavetables are never evicted from the Timeline; once no wavetable
-    holds them they can be again. A wavetable holds at most 4096 slots. The Timeline
+    holds them they can be again. A wavetable of yours holds at most 1024 slots: a Live one that fills up is marked **full** and stops taking new waveforms (they still go into the Timeline). The Timeline
     never holds more than 4096 waveforms: when all of them are used by wavetables, adds
     are refused (the Add buttons are disabled; a notice says which wavetables to clear).
 - **Voice**: one tab per voice (V1, V2 · muted, …, + adds one, × removes the selected

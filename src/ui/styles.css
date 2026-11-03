@@ -2634,3 +2634,15 @@ body.wave-dragging * {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
   cursor: pointer;
 }
+/* A user wavetable at its slot limit (its write head stopped; adds still reach the Timeline). */
+.wt-full {
+  color: var(--danger);
+  font-size: 10px;
+  font-weight: 600;
+}
+span.wte-full {
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 11px;
+}

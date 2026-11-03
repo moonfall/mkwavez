@@ -271,10 +271,17 @@ export interface WavetableEdit {
 }
 
 /**
- * Most slots a user wavetable may hold: growing writes / inserts stop there (a live,
- * growing wavetable pins everything it holds, so it must not grow without bound).
+ * Most slots a user wavetable may hold. A live write that would grow it past this stops
+ * the head (as "stop at the edge"; the add itself still goes into the Timeline), and hand
+ * edits that add slots are refused: a growing wavetable pins everything it holds, so it
+ * must never fill the Timeline and block generation.
  */
-export const MAX_SLOTS = 4096;
+export const MAX_USER_SLOTS = 1024;
+
+/** A user wavetable at MAX_USER_SLOTS that could otherwise grow (variable 1D, Rows). */
+export function isFull(wt: Wavetable): boolean {
+  return !wt.builtin && !wt.fixed && slotCount(wt) >= MAX_USER_SLOTS;
+}
 
 /** Mutable working copy for one edit. */
 class Work {
@@ -296,7 +303,7 @@ class Work {
     this.x = wt.head.x;
     this.y = wt.head.y;
     this.s = wt.write;
-    this.limit = wt.builtin ? Infinity : MAX_SLOTS;
+    this.limit = wt.builtin ? Infinity : MAX_USER_SLOTS;
     this.total = wt.builtin ? 0 : slotCount(wt);
   }
 
@@ -631,11 +638,11 @@ const unchanged = (wt: Wavetable): WavetableEdit => ({ wt, map: null, reset: fal
 /**
  * Whether a target is valid on this wavetable. Built-ins are read-only. 2D grids are
  * replace-only; a fixed 1D line inserts only before an existing slot; `grows` = the edit
- * adds a slot (refused at MAX_SLOTS; a move within the wavetable doesn't grow it).
+ * adds a slot (refused at MAX_USER_SLOTS; a move within the wavetable doesn't grow it).
  */
 export function canTarget(wt: Wavetable, t: SlotTarget, grows = true): boolean {
   if (wt.builtin) return false;
-  const room = !grows || slotCount(wt) < MAX_SLOTS;
+  const room = !grows || slotCount(wt) < MAX_USER_SLOTS;
   if (t.kind === 'slot') return t.y >= 0 && t.y < wt.rows.length && t.x >= 0 && t.x < wt.rows[t.y].length;
   if (t.kind === 'row') return wt.shape === 'rows' && t.y >= 0 && t.y <= wt.rows.length && room;
   if (wt.shape === '2d' || (wt.shape === '1d' && t.y !== 0)) return false;
@@ -752,7 +759,7 @@ export function droppedBy1DResize(wt: Wavetable, len: number): number {
 }
 
 /**
- * 1D size: variable (grows; its slots are kept) or fixed at `len` slots (1..MAX_SLOTS;
+ * 1D size: variable (grows; its slots are kept) or fixed at `len` slots (1..MAX_USER_SLOTS;
  * default: the current count, at least 1): shrinking drops slots from the end, growing
  * appends empty ones. Write settings are re-normalized (fixed: wrap / stop; variable:
  * stop / grow); a head that can no longer write restarts at the line start.
@@ -760,7 +767,7 @@ export function droppedBy1DResize(wt: Wavetable, len: number): number {
 export function resize1D(wt: Wavetable, fixed: boolean, len?: number): WavetableEdit {
   if (wt.shape !== '1d' || wt.builtin) return unchanged(wt);
   const L = wt.rows[0].length;
-  const n = fixed ? Math.max(1, Math.min(MAX_SLOTS, Math.round(len ?? L))) : L;
+  const n = fixed ? Math.max(1, Math.min(MAX_USER_SLOTS, Math.round(len ?? L))) : L;
   if (fixed === wt.fixed && n === L) return unchanged(wt);
   const w = new Work(wt);
   if (n < L) {
@@ -821,19 +828,19 @@ export function newWavetable(id: WavetableId, name: string, shape: WavetableShap
 
 /**
  * An editable copy (frozen: a snapshot until made live): same shape, slots, settings and
- * head; it pins its waveforms. Copies over MAX_SLOTS keep the newest slots / rows.
+ * head; it pins its waveforms. Copies over MAX_USER_SLOTS keep the newest slots / rows.
  */
 export function duplicateWavetable(wt: Wavetable, id: WavetableId, name: string): Wavetable {
   let rows = wt.rows.map((r) => r.slice());
   let head = wt.head;
-  if (wt.shape === '1d' && rows[0].length > MAX_SLOTS) {
-    const cut = rows[0].length - MAX_SLOTS;
+  if (wt.shape === '1d' && rows[0].length > MAX_USER_SLOTS) {
+    const cut = rows[0].length - MAX_USER_SLOTS;
     rows = [rows[0].slice(cut)];
     head = { x: Math.max(-1, head.x - cut), y: 0 };
   } else if (wt.shape === 'rows') {
     let n = slotCount(wt);
     let cut = 0;
-    while (n > MAX_SLOTS) n -= rows[cut++].length;
+    while (n > MAX_USER_SLOTS) n -= rows[cut++].length;
     if (cut) {
       rows = rows.slice(cut);
       head = { x: head.x, y: Math.max(0, head.y - cut) };

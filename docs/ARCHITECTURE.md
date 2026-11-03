@@ -131,8 +131,10 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   per batch, doesn't pin), Grid (2D 8×8, pins); user wavetables get ids from
   `AppModel.nextWavetableId` (from 16, monotonic, never reused — not even after an undone
   create or a delete; plain data to persist alongside the wavetables), pin, and start Frozen (`newWavetable`; `duplicateWavetable` copies slots, settings and head of any
-  wavetable). Growing writes / inserts stop at `MAX_SLOTS` (4096) slots per user
-  wavetable. A voice whose wavetable disappears (delete, undone create / duplicate) moves
+  wavetable). Growing writes / inserts stop at `MAX_USER_SLOTS` (1024) slots per user
+  wavetable (a Live write past it stops the head, as "stop at the edge", while the add
+  itself still goes into the Timeline; `isFull` marks it "full" in the list, chips and
+  editor), so a growing wavetable never blocks generation. A voice whose wavetable disappears (delete, undone create / duplicate) moves
   to the Timeline (whole window).
 - **Hand edits** (pure functions in `core/wavetable.ts`, each a `WavetableEdit` with the
   follow-axis map, so voice windows follow like on adds): a `SlotTarget` is a slot

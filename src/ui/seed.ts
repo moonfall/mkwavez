@@ -461,7 +461,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const j = currentJob();
     const shown = strip.shown();
     if (!j || !computeOne(j, shown)) return updateStatus();
-    model.addTables([finalTable(j, shown)!], true);
+    if (!model.addTables([finalTable(j, shown)!], true).length) return; // refused (Timeline full): the notice says why
     flash(`Added #${shown + 1} to the Timeline`);
   };
 
@@ -476,7 +476,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         flash(`Batch not added: ${failed.length} of ${j.req.count} waveforms failed (first #${failed[0] + 1}). Fix the formula, or Add shown for single waveforms.`, true);
       return;
     }
-    model.addTables(j.tables.map((_, i) => finalTable(j, i)!), true);
+    if (!model.addTables(j.tables.map((_, i) => finalTable(j, i)!), true).length) return; // refused: keep the seed
     const n = j.req.count;
     if (seedUsesRandomness(j.req.entry, j.req.expr)) {
       newSeed();

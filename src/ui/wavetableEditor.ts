@@ -13,9 +13,10 @@ import {
   cellAt,
   droppedBy1DResize,
   droppedBy2DResize,
+  isFull,
   findSlot,
   MAX_GRID,
-  MAX_SLOTS,
+  MAX_USER_SLOTS,
   moveSlot,
   previewWrites,
   shapeLabel,
@@ -161,7 +162,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
   let listSig = '';
   let springOver: HTMLElement | null = null;
   const renderList = () => {
-    const sig = model.wavetables.map((w) => `${w.id}:${w.name}:${w.live}:${shapeLabel(w)}`).join('|') + `|${host.current()}|${springOver?.dataset.id ?? ''}`;
+    const sig = model.wavetables.map((w) => `${w.id}:${w.name}:${w.live}:${shapeLabel(w)}:${isFull(w)}`).join('|') + `|${host.current()}|${springOver?.dataset.id ?? ''}`;
     if (sig === listSig) return;
     listSig = sig;
     const item = (w: Wavetable) => {
@@ -181,7 +182,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
           },
         },
         svg(GLYPH[w.shape], 16, 16, 'wte-glyph'),
-        h('span', { class: 'wte-item-text' }, h('span', { class: 'wte-item-name' }, w.name), h('span', { class: 'wte-item-meta' }, shapeLabel(w))),
+        h('span', { class: 'wte-item-text' }, h('span', { class: 'wte-item-name' }, w.name), h('span', { class: 'wte-item-meta' }, shapeLabel(w), isFull(w) ? h('span', { class: 'wt-full', title: `Full: ${MAX_USER_SLOTS} slots, the most a wavetable holds. New waveforms still go into the Timeline but not here (the write head stopped); remove slots to make room.` }, ' · full') : null)),
         w.builtin ? svg(LOCK, 11, 12, 'wte-lock', 'Built-in') : null,
         h('span', { class: `wt-dot${w.live ? ' live' : ''}`, title: w.live ? 'Live' : 'Frozen' }),
       );
@@ -242,17 +243,18 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
   nameInput.addEventListener('blur', () => endRename(true));
 
   const shapeEl = h('span', { class: 'wte-shape', id: 'wte-shape' });
+  const fullEl = h('span', { class: 'wt-full wte-full', id: 'wte-full', hidden: true, title: '' }, 'full');
   const sizeText = h('span', { class: 'wte-size-text', id: 'wte-size-text' });
   const sizeSeg = seg('Size', [['variable', 'Variable', 'Grows as waveforms are added'], ['fixed', 'Fixed', 'A fixed number of slots']] as const, 'wte-size', (v) => {
     const wt = cur();
     if (v === 'fixed') model.resizeWavetable1D(wt.id, true, Math.max(1, wt.rows[0].length || 8));
     else model.resizeWavetable1D(wt.id, false);
   });
-  const lenInput = h('input', { type: 'number', class: 'wte-num', id: 'wte-len', min: 1, max: MAX_SLOTS, 'aria-label': 'Slots' });
+  const lenInput = h('input', { type: 'number', class: 'wte-num', id: 'wte-len', min: 1, max: MAX_USER_SLOTS, 'aria-label': 'Slots' });
   const lenBox = h('span', { class: 'wte-dim' }, lenInput, h('span', {}, 'slots'));
   lenInput.addEventListener('change', () => {
     const wt = cur();
-    const n = Math.max(1, Math.min(MAX_SLOTS, Math.round(Number(lenInput.value) || 1)));
+    const n = Math.max(1, Math.min(MAX_USER_SLOTS, Math.round(Number(lenInput.value) || 1)));
     const lost = droppedBy1DResize(wt, n);
     if (lost && !confirm(`Shrinking to ${n} slots drops ${lost} waveform${lost === 1 ? '' : 's'} from the end. Continue?`)) {
       syncHeader();
@@ -331,6 +333,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     nameInput,
     renameBtn,
     shapeEl,
+    fullEl,
     sizeBox,
     h('span', { class: 'grow' }),
     viewSeg.el,
@@ -432,6 +435,8 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     if (!renaming) nameEl.textContent = wt.name;
     nameEl.title = wt.builtin ? 'Built-in (read-only)' : 'Double-click a list entry or use the pencil to rename';
     renameBtn.hidden = !!wt.builtin;
+    fullEl.hidden = !isFull(wt);
+    fullEl.title = `Full: ${MAX_USER_SLOTS} slots, the most a wavetable holds. New waveforms still go into the Timeline but not here (the write head stopped); remove slots to make room.`;
     shapeEl.textContent = wt.shape === '1d' ? '1D' : wt.shape === '2d' ? '2D' : 'Rows';
     const user = !wt.builtin;
     const { w, h: hh } = wavetableDims(wt);
@@ -499,6 +504,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
   const noteText = (wt: Wavetable): string => {
     const p = previewWrites(wt, PREVIEW_N);
     if (wt.builtin) return `Built-in and read-only. Duplicate it to change its settings or edit its slots. ${headText(wt, p.writes)}`;
+    if (isFull(wt)) return `Full: ${MAX_USER_SLOTS} slots, the most a wavetable holds. New waveforms still go into the Timeline but not here (the write head stopped); remove slots to make room.`;
     if (!wt.live) return 'Frozen: new waveforms are not added. Drag waveforms from the Timeline: onto a slot replaces, between slots inserts. Switch to Live to write each new batch at the head.';
     return `${headText(wt, p.writes)} Drag from the Timeline to edit by hand.`;
   };

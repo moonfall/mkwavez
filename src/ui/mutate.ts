@@ -297,7 +297,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     const j = currentJob();
     if (!j) return;
     const i = strip.shown();
-    model.addTables([finalTable(j, i)], true);
+    if (!model.addTables([finalTable(j, i)], true).length) return; // refused (Timeline full): the notice says why
     afterAdd(`Added #${i + 1} to the Timeline (now the source)`);
   };
 
@@ -306,7 +306,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     if (!j) return;
     const tables = Array.from({ length: j.req.count }, (_, i) => finalTable(j, i));
     // Select the last added table (the end of the batch): it becomes the next source.
-    model.addTables(tables, true);
+    if (!model.addTables(tables, true).length) return; // refused: keep the seed
     afterAdd(`Added ${tables.length} waveform${tables.length > 1 ? 's' : ''} to the Timeline (the last is now the source)`);
   };
 

@@ -374,13 +374,13 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const applySingle = () => {
     if (!ready()) return;
     const gen = pv && pvKey === currentKey() ? pv : breedBatch(request('single', 1), parents())[0];
-    model.addTables([gen], true);
+    if (!model.addTables([gen], true).length) return; // refused (Timeline full): keep the seed
     newSeed();
   };
 
   const applyBatch = () => {
     if (!ready() || batchBlocked()) return;
-    model.addTables(breedBatch(request(mode, opts.count()), parents()), false);
+    if (!model.addTables(breedBatch(request(mode, opts.count()), parents()), false).length) return; // refused: keep the seed
     newSeed();
   };
 

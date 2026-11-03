@@ -1,5 +1,5 @@
 import type { VoiceParams } from '../core/voice';
-import { shapeLabel, type Wavetable, type WavetableId } from '../core/wavetable';
+import { isFull, MAX_USER_SLOTS, shapeLabel, type Wavetable, type WavetableId } from '../core/wavetable';
 import { Mix } from '../core/wavetablePlayback';
 import { cssColor, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
@@ -117,7 +117,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
   const chips = h('div', { class: 'wt-chips', role: 'listbox', 'aria-label': 'Wavetables', id: 'wt-chips' });
   let chipSig = '';
   const renderChips = () => {
-    const sig = model.wavetables.map((w) => `${w.id}:${w.name}:${w.live}`).join('|') + `|${current}`;
+    const sig = model.wavetables.map((w) => `${w.id}:${w.name}:${w.live}:${isFull(w)}`).join('|') + `|${current}`;
     if (sig === chipSig) return;
     chipSig = sig;
     chips.replaceChildren(
@@ -129,11 +129,12 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
             role: 'option',
             id: `wt-chip-${w.id}`,
             'aria-selected': String(w.id === current),
-            title: `${w.name} · ${shapeLabel(w)} · ${w.live ? 'Live' : 'Frozen'}`,
+            title: `${w.name} · ${shapeLabel(w)} · ${w.live ? 'Live' : 'Frozen'}${isFull(w) ? ` · full (${MAX_USER_SLOTS} slots): new waveforms aren't added` : ''}`,
             onclick: () => pick(w.id),
           },
           h('span', { class: `wt-dot${w.live ? ' live' : ''}` }),
           w.name,
+          isFull(w) ? h('span', { class: 'wt-full' }, 'full') : null,
         ),
       ),
     );
@@ -171,7 +172,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
     const wt = cur();
     sumName.textContent = wt.name;
     sumName.title = wt.builtin ? 'Built-in (read-only)' : '';
-    sumShape.textContent = shapeLabel(wt);
+    sumShape.textContent = `${shapeLabel(wt)}${isFull(wt) ? ' · full' : ''}`;
     for (const [b, on] of [
       [blendBtn, wt.interp === 'blend'],
       [stepBtn, wt.interp === 'step'],

@@ -172,10 +172,14 @@ async function run(label, url, browser) {
   // Timeline full of waveforms wavetables use: adds are refused with a notice, buttons say so.
   const full = await page.evaluate(() => {
     const m = window.mkwavez.model;
-    const d = m.duplicateWavetable(0);
+    // Four copies of the Timeline (each keeps its newest 1024), then each given a quarter.
+    const ids = m.timeline.map((t) => t.id);
+    const ds = [0, 1, 2, 3].map(() => m.duplicateWavetable(0).id);
+    m.wavetables = m.wavetables.map((w) => (ds.includes(w.id) ? { ...w, rows: [ids.slice(ds.indexOf(w.id) * 1024, (ds.indexOf(w.id) + 1) * 1024)] } : w));
+    m.setWavetableInterp(ds[0], 'step'); // emits 'wavetables'
     const n = m.timeline.length;
     const added = m.addTables([{ data: m.timeline[0].data, recipe: m.timeline[0].recipe }]).length;
-    return { id: d.id, n, added, after: m.timeline.length };
+    return { ids: ds, n, added, after: m.timeline.length };
   });
   await page.waitForTimeout(100);
   const fullUi = await page.evaluate(() => ({
@@ -186,9 +190,9 @@ async function run(label, url, browser) {
     full.n === 4096 && full.added === 0 && full.after === 4096 && String(fullUi.notice).startsWith('Timeline full: all 4096 waveforms') && String(fullUi.copy).startsWith('Timeline full'),
     `Timeline full: add refused, notice shown, Copy to end disabled (${fullUi.notice})`,
   );
-  await page.evaluate((id) => window.mkwavez.model.deleteWavetable(id), full.id);
+  await page.evaluate((ids) => ids.forEach((id) => window.mkwavez.model.deleteWavetable(id)), full.ids);
   await page.waitForTimeout(50);
-  assert(!(await page.isDisabled('#timeline-copy')), 'room again once the wavetable is deleted');
+  assert(!(await page.isDisabled('#timeline-copy')), 'room again once the wavetables are deleted');
   await page.click('#play');
   assert((await page.evaluate(() => window.mkwavez.model.playing)) === false, 'transport stops');
   // Leave eight parents showing (layout / overflow / screenshots).

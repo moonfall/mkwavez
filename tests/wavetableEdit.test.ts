@@ -10,13 +10,14 @@ import {
   droppedBy2DResize,
   duplicateWavetable,
   findSlot,
+  isFull,
   FIRST_USER_WAVETABLE_ID,
   GRID_WAVETABLE_ID,
   LAST_BATCH_WAVETABLE_ID,
   make1D,
   make2D,
   makeRows,
-  MAX_SLOTS,
+  MAX_USER_SLOTS,
   moveSlot,
   newWavetable,
   pinnedIds,
@@ -60,10 +61,10 @@ describe('new / duplicate', () => {
     const tl = { ...builtinWavetables()[TIMELINE_WAVETABLE_ID], rows: [[1, 2, 3]] };
     expect([...pinnedIds([tl])]).toEqual([]);
     expect([...pinnedIds([duplicateWavetable(tl, 21, 'T')])]).toEqual([1, 2, 3]);
-    // Over MAX_SLOTS: the newest slots are kept.
-    const big = make1D(5, 'B', Array.from({ length: MAX_SLOTS + 3 }, (_, i) => i + 1));
+    // Over MAX_USER_SLOTS: the newest slots are kept.
+    const big = make1D(5, 'B', Array.from({ length: MAX_USER_SLOTS + 3 }, (_, i) => i + 1));
     const bd = duplicateWavetable(big, 22, 'B2');
-    expect([bd.rows[0].length, bd.rows[0][0]]).toEqual([MAX_SLOTS, 4]);
+    expect([bd.rows[0].length, bd.rows[0][0]]).toEqual([MAX_USER_SLOTS, 4]);
   });
 });
 
@@ -158,8 +159,8 @@ describe('drag edits per shape', () => {
     expect(followEdit([v], a, e2).map((x) => [x.windowStart, x.windowEnd])).toEqual([[0, 1]]);
   });
 
-  it('growth stops at MAX_SLOTS', () => {
-    const big = make1D(16, 'B', new Array(MAX_SLOTS).fill(1));
+  it('growth stops at MAX_USER_SLOTS', () => {
+    const big = make1D(16, 'B', new Array(MAX_USER_SLOTS).fill(1));
     expect(canTarget(big, gap(0))).toBe(false);
     expect(canTarget(big, slot(0))).toBe(true);
     expect(canTarget(big, gap(5), false)).toBe(true); // a move doesn't grow it
@@ -512,5 +513,37 @@ describe('review fixes', () => {
     expect(findSlot(shifted, 7, { x: 2, y: 0 })).toBeNull();
     const r = makeRows(17, 'R', [[1], [5, 6]]);
     expect(findSlot(r, 6, { x: 0, y: 0 })).toEqual({ x: 1, y: 1 });
+  });
+});
+
+describe('user wavetable slot cap', () => {
+  it('a Live growing 1D wavetable stops at MAX_USER_SLOTS; adds still reach the Timeline', () => {
+    expect(MAX_USER_SLOTS).toBe(1024);
+    const m = new AppModel(4096);
+    const a = m.createWavetable('1d');
+    m.setWavetableLive(a.id, true);
+    for (let i = 0; i < 10; i++) m.addTables(sines(100));
+    expect(m.wavetable(a.id)!.rows[0].length).toBe(1000);
+    expect(isFull(m.wavetable(a.id)!)).toBe(false);
+    m.addTables(sines(100)); // 24 fit, the rest of the batch isn't written here
+    const full = m.wavetable(a.id)!;
+    expect([full.rows[0].length, isFull(full)]).toEqual([MAX_USER_SLOTS, true]);
+    expect(full.rows[0].at(-1)).toBe(m.timeline[1023].id);
+    expect(m.timeline.length).toBe(1100);
+    // Further adds succeed (the head is stopped), the wavetable is unchanged.
+    expect(m.roomFor(8)).toBe(true);
+    expect(m.addTables(sines(8)).length).toBe(8);
+    expect(m.timeline.length).toBe(1108);
+    expect(m.wavetable(a.id)).toBe(full);
+    expect(previewWrites(full, 1).writes).toEqual([]);
+    // Hand edits that would add a slot are refused too; replacing still works.
+    expect(m.placeInWavetable(a.id, { kind: 'gap', x: 0, y: 0 }, m.timeline[1100].id)).toBe(false);
+    expect(m.placeInWavetable(a.id, { kind: 'slot', x: 0, y: 0 }, m.timeline[1100].id)).toBe(true);
+    // Rows too.
+    const r = m.createWavetable('rows');
+    m.setWavetableLive(r.id, true);
+    for (let i = 0; i < 11; i++) m.addTables(sines(100));
+    expect(isFull(m.wavetable(r.id)!)).toBe(true);
+    expect(m.addTables(sines(4)).length).toBe(4);
   });
 });
