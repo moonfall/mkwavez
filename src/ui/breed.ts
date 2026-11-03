@@ -59,6 +59,25 @@ export interface BreedPanelOpts {
 export const parentLetter = (i: number) => String.fromCharCode(65 + i);
 /** Parent colour CSS variable (`--par-0`…`--par-7`; palette in styles.css). */
 const parentVar = (i: number) => `--par-${i % MAX_PARENTS}`;
+interface BreedPrefs {
+  op: string;
+  bias: number;
+  walk: BiasWalk;
+  rate: number;
+  mode: BatchMode;
+}
+
+/** Saved Breed prefs, or null if anything is off (unknown operator, out-of-range values). */
+function parsePrefs(p: Record<string, unknown>): BreedPrefs | null {
+  const num = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= max ? v : null);
+  const bias = num(p.bias, 1);
+  const rate = num(p.rate, 0.5);
+  const op = BREED_OPS.some((o) => o.id === p.op) ? String(p.op) : null;
+  const walk = p.walk === 'path' || p.walk === 'ring' || p.walk === 'weights' ? p.walk : null;
+  const mode = p.mode === 'sweep' || p.mode === 'gen' ? p.mode : null;
+  return bias === null || rate === null || !op || !walk || !mode ? null : { op, bias, walk, rate, mode };
+}
+
 const hex = (s: number) => (s >>> 0).toString(16).padStart(8, '0');
 const pct = (v: number) => {
   const p = v * 100;
@@ -104,6 +123,29 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   let windowVoiceId: number | null = null;
   /** Custom weights by table id (walk 'weights'); default 1. */
   const weights = new Map<TableId, number>();
+
+  // Operator and parameters are saved with the session (UI prefs); parents live in the model.
+  const PREF = 'breed';
+  const prefNow = (): BreedPrefs => ({ op: BREED_OPS[sel].id, bias, walk, rate, mode });
+  const savedPrefs = (): BreedPrefs | null => {
+    const p = ctx.ui.pref<unknown>(PREF, null, (v) => typeof v === 'object' && v !== null);
+    return p ? parsePrefs(p as Record<string, unknown>) : null;
+  };
+  let applying = false;
+  const savePrefs = () => {
+    if (applying) return;
+    const now = prefNow();
+    const old = savedPrefs();
+    if (!old || (Object.keys(now) as (keyof BreedPrefs)[]).some((k) => now[k] !== old[k])) ctx.ui.setPref(PREF, now);
+  };
+  const initial = savedPrefs();
+  if (initial) {
+    sel = BREED_OPS.findIndex((o) => o.id === initial.op);
+    bias = initial.bias;
+    walk = initial.walk;
+    rate = initial.rate;
+    mode = initial.mode;
+  }
 
   const info = () => BREED_OPS[sel];
   const parents = (): WaveTable[] => model.breedParents.map((id) => model.table(id)).filter((t): t is WaveTable => !!t);
@@ -250,6 +292,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     title.title = `${o.hint} · bias 0 = A`;
     seedBox.hidden = !usesSeed();
     syncGuards();
+    savePrefs();
   };
 
   const syncValues = () => {
@@ -258,6 +301,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     relabelCards();
     syncShownLabel();
     syncGuards();
+    savePrefs();
     mainDirty = true;
   };
 
@@ -269,6 +313,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     });
     chips.classList.toggle('show-weights', w === 'weights');
     syncGuards();
+    savePrefs();
     syncShownLabel();
     mainDirty = true;
   };
@@ -336,6 +381,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     relabelCards();
     syncShownLabel();
     syncGuards();
+    savePrefs();
   };
 
   const cardLabel = (i: number) => (mode === 'gen' ? `child ${i + 1}` : `b ${pct(breedBiasAt(request(), i))}`);
@@ -766,6 +812,27 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     thumbsDirty = cardsDirty = mainDirty = chipsDirty = true;
   });
   new ResizeObserver(() => (mainDirty = true)).observe(viewer);
+
+  /** Apply saved prefs (a restored / imported session). */
+  const applyPrefs = (p: BreedPrefs) => {
+    applying = true;
+    const i = BREED_OPS.findIndex((o) => o.id === p.op);
+    if (i !== sel) lib.select(i);
+    bias = p.bias;
+    rate = p.rate;
+    biasInput.value = String(bias);
+    rateInput.value = String(rate);
+    setWalk(p.walk);
+    setMode(p.mode);
+    applying = false;
+    syncParams();
+    syncValues();
+  };
+  ctx.ui.onPrefs(() => {
+    const p = savedPrefs();
+    const now = prefNow();
+    if (p && (Object.keys(now) as (keyof BreedPrefs)[]).some((k) => now[k] !== p[k])) applyPrefs(p);
+  });
 
   setMode(mode);
   setWalk(walk);

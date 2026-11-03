@@ -181,7 +181,8 @@ switches (the choice is remembered).
 - **Session** (transport bar): your work is saved in the browser automatically (IndexedDB,
   a second or two after each change and when the tab is hidden) and restored on reload —
   waveforms, wavetables, voices, sequences, tempo, the selected voice tab and Generate
-  tab; not undo history. The menu shows the autosave status and has **New session**
+  tab, Breed parents and the Breed operator / bias / walk / mutation / batch mode; not
+  undo history. The menu shows the autosave status and has **New session**
   (asks first; clears the autosaved copy), **Export…** (one `.mkwz` file) and
   **Import…** (asks first; replaces the current session). If the browser blocks storage
   (e.g. some private windows) the app runs as usual with autosave off and a notice; a

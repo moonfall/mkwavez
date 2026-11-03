@@ -192,7 +192,7 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   interpolation and user wavetables, stored verbatim so new fields round-trip without
   schema changes; decode validates known fields and keeps unknown ones), voices (all
   params; unknown keys kept, bad values → defaults), sequences, BPM, and UI prefs
-  (`UiState.exportPrefs()`: the selected voice tab, the Generate tab). Not saved: undo
+  (`UiState.exportPrefs()`: the selected voice tab, the Generate tab, the Breed operator, bias, walk, mutation and batch mode; Breed parents are model state). Not saved: undo
   history, transport play state. Theme, timeline view and MIDI settings stay per browser
   in localStorage.
   - Two parts: **meta** (`SessionMeta`, small, JSON-safe, `format` + `version`), rewritten

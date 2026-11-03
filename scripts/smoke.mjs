@@ -194,9 +194,27 @@ async function run(label, url, browser) {
     full.n === 4096 && full.added === 0 && full.after === 4096 && String(fullUi.notice).startsWith('Timeline full: all 4096 waveforms') && String(fullUi.copy).startsWith('Timeline full'),
     `Timeline full: add refused, notice shown, Copy to end disabled (${fullUi.notice})`,
   );
+  const breedFull = await page.evaluate(() => {
+    const m = window.mkwavez.model;
+    m.setBreedParents(m.timeline.slice(-2).map((t) => t.id));
+    const s = document.querySelector('#breed-add-shown');
+    const b = document.querySelector('#breed-add-batch');
+    const r = { s: s.disabled && s.title, b: b.disabled && b.title, note: document.querySelector('#breed-blocked').textContent };
+    // Forced through anyway (stale button): refused, no "Added", no new seed.
+    const seed = document.querySelector('#breed-seed').textContent;
+    const n = m.timeline.length;
+    s.disabled = false;
+    s.click();
+    r.refused = m.timeline.length === n && !document.querySelector('#breed-status').textContent.includes('Added') && document.querySelector('#breed-seed').textContent === seed;
+    return r;
+  });
+  assert(
+    String(breedFull.s).startsWith('Timeline full') && String(breedFull.b).startsWith('Timeline full') && breedFull.note.startsWith('Timeline full') && breedFull.refused,
+    'Timeline full: Breed Add shown / Add +N disabled with the reason; a forced add is refused without "Added" or a new seed',
+  );
   await page.evaluate((ids) => ids.forEach((id) => window.mkwavez.model.deleteWavetable(id)), full.ids);
   await page.waitForTimeout(50);
-  assert(!(await page.isDisabled('#timeline-copy')), 'room again once the wavetables are deleted');
+  assert(!(await page.isDisabled('#timeline-copy')) && !(await page.isDisabled('#breed-add-shown')), 'room again once the wavetables are deleted (Copy to end, Breed)');
   await page.click('#play');
   assert((await page.evaluate(() => window.mkwavez.model.playing)) === false, 'transport stops');
   // Leave eight parents showing (layout / overflow / screenshots).
@@ -1756,7 +1774,7 @@ async function breedChecks(page, tlCount, label) {
   await page.keyboard.press('ArrowLeft');
   assert(await same([t1, t2]), '← moves it back');
   await page.keyboard.press('Alt+ArrowRight');
-  await page.keyboard.press('Shift+ArrowRight');
+  await page.keyboard.press('Control+ArrowRight');
   assert(await same([t1, t2]), 'modified arrows (Alt+← = browser Back) do not reorder');
   const box = async (n) => page.locator(`#breed-parents .br-chip:nth-child(${n})`).boundingBox();
   const a = await box(1);
@@ -2403,6 +2421,17 @@ async function sessionChecks(label, url, browser) {
   assert(wt2.name === 'Saved pad' && wt2.shape === '2d' && wt2.rows.length === 2 && wt2.rows[0].length === 3 && wt2.live, 'user 2D wavetable created, resized, renamed, edited');
   const nextWt = await E(() => window.mkwavez.model.nextWavetableId);
   await page.click('#wt-collapse');
+  // Breed: parents (model) and operator / parameters (UI prefs).
+  const bp = await E(() => {
+    const m = window.mkwavez.model;
+    m.setBreedParents([m.timeline[1].id, m.timeline[3].id]);
+    return [...m.breedParents];
+  });
+  await page.click('#tab-breed');
+  await page.click('#breed-list .gen-entry[data-id="bands"]');
+  await page.fill('#breed-bias', '0.4');
+  await page.click('#breed-walk-ring');
+  await page.click('#breed-mode-gen');
   await page.click('#tab-mutate');
   const before = await snap();
   const n = await E(() => window.mkwavez.model.timeline.length);
@@ -2414,6 +2443,17 @@ async function sessionChecks(label, url, browser) {
     (await page.getAttribute('#tab-mutate', 'aria-selected')) === 'true' && (await page.getAttribute('#voice-tab-2', 'aria-selected')) === 'true',
     'reload restores the Generate tab and the voice tab',
   );
+  await page.click('#tab-breed');
+  assert(
+    JSON.stringify(await E(() => window.mkwavez.model.breedParents)) === JSON.stringify(bp) &&
+      (await page.$$('#breed-parents .br-chip')).length === 2 &&
+      (await page.textContent('#breed-title')) === 'Crossover › Genetic per band' &&
+      (await page.textContent('#breed-bias-val')) === '40%' &&
+      (await page.getAttribute('#breed-walk-ring', 'aria-pressed')) === 'true' &&
+      (await page.getAttribute('#breed-mode-gen', 'aria-pressed')) === 'true',
+    'reload restores the Breed parents, operator, bias, walk and batch mode',
+  );
+  await page.click('#tab-mutate');
   assert((await page.inputValue('#bpm')) === '111' && (await E(() => window.mkwavez.model.undoDepth)) === 0, 'BPM control shows the restored tempo; undo history starts empty');
   assert((await E(() => window.mkwavez.model.nextWavetableId)) === nextWt, 'wavetable id counter restored (deleted ids not reused)');
   await page.click('#wt-edit');
