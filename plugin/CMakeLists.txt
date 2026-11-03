@@ -128,6 +128,7 @@ target_sources(mkwavez PRIVATE
     source/PluginEditor.cpp
     source/PluginProcessor.cpp
     source/State.cpp
+    source/SynthJson.cpp
     source/WavetableView.cpp)
 
 if(MKWAVEZ_WEBVIEW)

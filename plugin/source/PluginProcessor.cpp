@@ -97,7 +97,7 @@ void MkwavezProcessor::handleMidi(SynthEngine& e, const juce::MidiMessage& m) {
         // Mapped controllers (default: mod wheel → position X) patch the engine voice; the
         // parameter keeps its value, so the next move of that parameter takes over again.
         const VoicePatch patch = ccPatch(ccMap, ev.note, ev.velocity);
-        if (patch.mask) e.patchVoice(ev.voiceId, patch);
+        if (!patch.empty()) e.patchVoice(ev.voiceId, patch);
     });
 }
 
@@ -145,20 +145,26 @@ void MkwavezProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
     routing = r;
     if (retarget) router.retarget(routing, [&](const MidiVoiceEvent& ev) { e->applyMidi(ev); });
 
-    // Render up to each MIDI event's sample offset, then apply it (sample-accurate).
+    // Render up to each MIDI event's sample offset, then apply it (sample-accurate). Stereo
+    // (Synth voices pan / spread); a mono bus gets the mid.
+    const bool stereo = buffer.getNumChannels() >= 2;
     float* out = buffer.getWritePointer(0);
+    float* outR = stereo ? buffer.getWritePointer(1) : nullptr;
     int pos = 0;
+    const auto render = [&](int from, int to) {
+        if (to > from) e->process(out + from, to - from, outR ? outR + from : nullptr);
+    };
     for (const auto meta : midi) {
         const int at = juce::jlimit(pos, frames, meta.samplePosition);
-        if (at > pos) e->process(out + pos, at - pos);
+        render(pos, at);
         pos = at;
         if (midiOn) handleMidi(*e, meta.getMessage());
     }
-    if (frames > pos) e->process(out + pos, frames - pos);
+    render(pos, frames);
 
     outGain.setTargetValue(juce::Decibels::decibelsToGain(ptr.gain->load()));
-    outGain.applyGain(out, frames);
-    for (int c = 1; c < buffer.getNumChannels(); ++c) buffer.copyFrom(c, 0, buffer, 0, 0, frames);
+    for (int c = 2; c < buffer.getNumChannels(); ++c) buffer.clear(c, 0, frames);
+    outGain.applyGain(buffer, frames);
 
     publishStatus(*e);
 }

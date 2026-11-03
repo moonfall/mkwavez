@@ -11,7 +11,9 @@ endif()
 add_library(mkwavez_core STATIC
     src/dsp.cpp
     src/engine.cpp
-    src/playback.cpp)
+    src/playback.cpp
+    src/synth_voice.cpp
+    src/wtosc.cpp)
 target_include_directories(mkwavez_core PUBLIC include)
 target_compile_features(mkwavez_core PUBLIC cxx_std_20)
 set_target_properties(mkwavez_core PROPERTIES POSITION_INDEPENDENT_CODE ON)

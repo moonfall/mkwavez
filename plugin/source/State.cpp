@@ -1,5 +1,7 @@
 #include "State.h"
 
+#include "SynthJson.h"
+
 namespace state {
 
 using namespace mkwavez;
@@ -11,7 +13,7 @@ const juce::Identifier DOCUMENT{"document"}, TABLES{"tables"}, TABLE{"table"}, W
 const juce::Identifier version{"version"}, id{"id"}, data{"data"}, name{"name"}, shape{"shape"}, interp{"interp"}, rowStart{"rowStart"},
     ids{"ids"}, wavetableId{"wavetableId"}, windowStart{"windowStart"}, windowEnd{"windowEnd"}, windowStartY{"windowStartY"},
     windowEndY{"windowEndY"}, lfoPhase{"lfoPhase"}, lfoPhaseY{"lfoPhaseY"}, voiceId{"voiceId"}, length{"length"}, steps{"steps"},
-    gate{"gate"}, stepLength{"stepLength"};
+    gate{"gate"}, stepLength{"stepLength"}, type{"type"}, synth{"synth"};
 
 template <typename T>
 juce::MemoryBlock block(const T* p, size_t n) {
@@ -68,6 +70,8 @@ juce::ValueTree toValueTree(const Document& doc) {
         n.setProperty(windowEndY, v.windowEndY, nullptr);
         n.setProperty(lfoPhase, v.lfoPhase, nullptr);
         n.setProperty(lfoPhaseY, v.lfoPhaseY, nullptr);
+        n.setProperty(type, v.type == VoiceType::synth ? "synth" : "simple", nullptr);
+        n.setProperty(synth, juce::JSON::toString(synthjson::encode(v.synth), true), nullptr);
         voices.appendChild(n, nullptr);
     }
     root.appendChild(voices, nullptr);
@@ -126,6 +130,8 @@ bool fromValueTree(const juce::ValueTree& root, Document& out) {
         v.windowEndY = (int) n.getProperty(windowEndY);
         v.lfoPhase = (double) n.getProperty(lfoPhase);
         v.lfoPhaseY = (double) n.getProperty(lfoPhaseY);
+        v.type = n.getProperty(type).toString() == "synth" ? VoiceType::synth : VoiceType::simple;
+        if (n.hasProperty(synth)) v.synth = synthjson::decode(juce::JSON::parse(n.getProperty(synth).toString()));
         doc.voices.push_back(v);
     }
 

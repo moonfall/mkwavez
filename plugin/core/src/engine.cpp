@@ -6,77 +6,27 @@
 namespace mkwavez {
 
 namespace {
-
-constexpr int MAX_LIVE = detail::VoiceRuntime::MAX_LIVE;
-
-inline uint32_t hashId(TableId id) { return (uint32_t) id * 2654435761u; }
-
-} // namespace
+constexpr int TICKS_PER_EIGHTH_ = TICKS_PER_EIGHTH;
+}
 
 SynthEngine::SynthEngine(double sampleRate)
     : sr(sampleRate),
       bendCoef(1 - std::exp(-CONTROL_BLOCK / (BEND_SMOOTH_SEC * sampleRate))),
-      slew(CONTROL_BLOCK / (CROSSFADE_SEC * sampleRate)) {}
-
-// ---- tables: open addressing, linear probing, backward-shift deletion ----
-
-const MipSet* SynthEngine::findTable(TableId id) const {
-    constexpr uint32_t mask = TABLE_CAPACITY - 1;
-    for (uint32_t i = hashId(id) & mask;; i = (i + 1) & mask) {
-        const TableSlot& s = tables[i];
-        if (s.mips == nullptr) return nullptr;
-        if (s.id == id) return s.mips;
-    }
+      slew(CONTROL_BLOCK / (CROSSFADE_SEC * sampleRate)) {
+    typeStep = 1 / (TYPE_FADE_SEC * sampleRate);
+    ctl.tables = &tables;
 }
+
+// ---- tables / wavetables ----
 
 void SynthEngine::addTable(TableId id, const MipSet* mips) {
     if (mips == nullptr) return;
-    constexpr uint32_t mask = TABLE_CAPACITY - 1;
-    for (uint32_t i = hashId(id) & mask;; i = (i + 1) & mask) {
-        TableSlot& s = tables[i];
-        if (s.mips == nullptr) {
-            // Keep the load factor ≤ 3/4 so probes stay short and always terminate.
-            if (tableCount_ >= TABLE_CAPACITY * 3 / 4) {
-                zombie(Retired::table, mips);
-                return;
-            }
-            s.id = id;
-            s.mips = mips;
-            ++tableCount_;
-            return;
-        }
-        if (s.id == id) {
-            if (s.mips != mips) zombie(Retired::table, s.mips);
-            s.mips = mips;
-            return;
-        }
-    }
+    if (const MipSet* old = tables.insert(id, mips)) zombie(Retired::table, old);
 }
 
 void SynthEngine::removeTable(TableId id) {
-    constexpr uint32_t mask = TABLE_CAPACITY - 1;
-    uint32_t i = hashId(id) & mask;
-    for (;; i = (i + 1) & mask) {
-        if (tables[i].mips == nullptr) return;
-        if (tables[i].id == id) break;
-    }
-    zombie(Retired::table, tables[i].mips);
-    tables[i] = {};
-    --tableCount_;
-    // Backward-shift: move later entries of the probe run into the hole.
-    for (uint32_t j = (i + 1) & mask; tables[j].mips != nullptr; j = (j + 1) & mask) {
-        const uint32_t home = hashId(tables[j].id) & mask;
-        // Entry j may move to i if its home is not cyclically within (i, j].
-        const bool between = i <= j ? (home > i && home <= j) : (home > i || home <= j);
-        if (!between) {
-            tables[i] = tables[j];
-            tables[j] = {};
-            i = j;
-        }
-    }
+    if (const MipSet* old = tables.erase(id)) zombie(Retired::table, old);
 }
-
-// ---- wavetables ----
 
 const PackedWavetable* SynthEngine::findWavetable(WavetableId id) const {
     for (int i = 0; i < nWavetables; ++i)
@@ -115,21 +65,22 @@ void SynthEngine::removeWavetable(WavetableId id) {
 
 void SynthEngine::zombie(Retired::Kind kind, const void* ptr) {
     if (ptr == nullptr) return;
-    // Wavetables are only read inside resolve(): nothing holds them between blocks.
+    // Wavetables are only read inside a control block: nothing holds them between blocks.
     if (kind == Retired::wavetable && retired.push({kind, ptr})) return;
     if (nZombies < MAX_ZOMBIES) zombies[(size_t) nZombies++] = {kind, ptr};
-    // else: leaked rather than freed while possibly playing (only on absurd churn).
 }
 
 void SynthEngine::collectZombies() {
     if (nZombies == 0) return;
-    // Pointers voices still play (≤ MAX_VOICES × (MAX_LIVE + 1)), sorted for lookup.
-    const void* live[MAX_VOICES * (MAX_LIVE + 1)];
+    // Pointers voices may still read (Simple osc + Synth A / B), sorted for lookup.
+    constexpr int PER_VOICE = 3 * (WtOsc::MAX_LIVE + 1);
+    const void* live[MAX_VOICES * PER_VOICE];
     int nLive = 0;
+    const auto add = [&](const MipSet* t) { live[nLive++] = t; };
     for (int i = 0; i < nVoices; ++i) {
         const VoiceRuntime& v = *voices[(size_t) i];
-        for (int k = 0; k < v.n; ++k) live[nLive++] = v.tabs[k];
-        if (v.heldTable) live[nLive++] = v.heldTable;
+        v.osc.forEachTable(add);
+        if (v.syn) v.syn->forEachTable(add);
     }
     std::sort(live, live + nLive);
     int kept = 0;
@@ -151,9 +102,7 @@ SynthEngine::VoiceRuntime* SynthEngine::findVoice(int32_t id) {
     return nullptr;
 }
 
-const SynthEngine::VoiceRuntime* SynthEngine::findVoice(int32_t id) const {
-    return const_cast<SynthEngine*>(this)->findVoice(id);
-}
+const SynthEngine::VoiceRuntime* SynthEngine::findVoice(int32_t id) const { return const_cast<SynthEngine*>(this)->findVoice(id); }
 
 const VoiceParams* SynthEngine::voiceParams(int32_t id) const {
     const VoiceRuntime* v = findVoice(id);
@@ -169,8 +118,7 @@ int SynthEngine::voiceIds(int32_t* out, int max) const {
 
 void SynthEngine::setVoice(const VoiceParams& p) {
     if (VoiceRuntime* v = findVoice(p.id)) {
-        v->params = p;
-        v->env.configure(p.attack, p.decay, p.sustain, p.release, sr);
+        applyParams(*v, p);
         return;
     }
     for (int i = 0; i < nVoices; ++i)
@@ -178,14 +126,43 @@ void SynthEngine::setVoice(const VoiceParams& p) {
     if (nVoices == MAX_VOICES) return;
     for (auto& slot : pool) {
         if (slot.used) continue;
-        slot = VoiceRuntime{};
         slot.used = true;
         slot.params = p;
+        slot.env = Adsr{};
+        slot.osc = WtOsc{};
         slot.lfoPhase = p.lfoPhase;
         slot.lfoPhaseY = p.lfoPhaseY;
+        slot.freq = 110;
+        slot.gateRemaining = 0;
+        slot.gain = 0;
+        slot.vel = 1;
+        slot.notes = NoteStack{};
+        slot.bendTarget = slot.bendSemis = 0;
+        slot.bendFrom = slot.bendTo = 1;
+        slot.pos = slot.posY = 0;
+        slot.removing = false;
+        slot.syn.reset();
+        slot.typeMix = 0;
+        slot.wheel = slot.pressure = 0;
         slot.env.configure(p.attack, p.decay, p.sustain, p.release, sr);
+        if (p.type == VoiceType::synth) {
+            slot.syn.emplace(sr, p.id, CONTROL_BLOCK, p.synth);
+            slot.typeMix = 1;
+        }
         voices[(size_t) nVoices++] = &slot;
         return;
+    }
+}
+
+void SynthEngine::applyParams(VoiceRuntime& v, const VoiceParams& p) {
+    const bool wasSynth = v.params.type == VoiceType::synth;
+    v.params = p;
+    v.env.configure(p.attack, p.decay, p.sustain, p.release, sr);
+    if (p.type == VoiceType::synth && (!v.syn || !wasSynth)) {
+        // Becoming a Synth voice: its path starts at the current note, envelopes in step with the gate.
+        if (!v.syn) v.syn.emplace(sr, p.id, CONTROL_BLOCK, p.synth);
+        v.syn->vel = v.notes.size ? v.notes.topVelocity() / 127.0 : 1;
+        v.syn->resync(p, freqPitch(v.freq), v.notes.size > 0 || v.gateRemaining > 0, v.env.stage != Adsr::Idle && v.typeMix > 0);
     }
 }
 
@@ -196,7 +173,16 @@ void SynthEngine::removeVoice(int32_t id) {
     v->gateRemaining = 0;
     const VoiceParams& p = v->params;
     v->env.configure(p.attack, p.decay, p.sustain, REMOVE_RELEASE_SEC, sr);
-    v->env.gateOff();
+    gateOff(*v);
+}
+
+void SynthEngine::gateOff(VoiceRuntime& v) {
+    v.env.gateOff();
+    if (v.syn) v.syn->gateOff(v.params);
+}
+
+void SynthEngine::synthNote(VoiceRuntime& v, double velocity, bool legato, bool retrigger) {
+    if (v.syn) v.syn->noteOn(v.params, freqPitch(v.freq), velocity, legato, retrigger, v.env.stage != Adsr::Idle);
 }
 
 // ---- sequences / transport ----
@@ -227,7 +213,7 @@ void SynthEngine::setTransport(bool play, double newBpm) {
     }
     if (!play && playing)
         for (int i = 0; i < nVoices; ++i)
-            if (!voices[(size_t) i]->notes.size) voices[(size_t) i]->env.gateOff();
+            if (!voices[(size_t) i]->notes.size) gateOff(*voices[(size_t) i]);
     playing = play;
 }
 
@@ -237,6 +223,7 @@ void SynthEngine::noteOn(int32_t voiceId, double freq, double gateSamples) {
     v->freq = freq;
     v->vel = 1;
     v->gateRemaining = std::max<int64_t>(1, (int64_t) std::floor(gateSamples + 0.5));
+    synthNote(*v, 1, false, true);
     v->env.gateOn();
     resolvePitch(*v);
 }
@@ -247,10 +234,12 @@ void SynthEngine::midiNoteOn(int32_t voiceId, int note, int velocity) {
     if (velocity <= 0) return midiNoteOff(voiceId, note);
     VoiceRuntime* v = findVoice(voiceId);
     if (!v) return;
+    const bool legato = v->notes.size > 0;
     v->notes.push(note, velocity);
     v->freq = midiNoteFreq(note, v->params.octave);
     v->vel = velocityGain(velocity);
     v->gateRemaining = 0;
+    synthNote(*v, std::min(127, velocity) / 127.0, legato, true);
     v->env.gateOn();
     resolvePitch(*v);
 }
@@ -261,10 +250,11 @@ void SynthEngine::midiNoteOff(int32_t voiceId, int note) {
     const bool wasTop = v->notes.top() == note;
     if (!v->notes.remove(note)) return;
     if (!v->notes.size) {
-        v->env.gateOff();
+        gateOff(*v);
     } else if (wasTop) {
         v->freq = midiNoteFreq(v->notes.top(), v->params.octave);
         v->vel = velocityGain(v->notes.topVelocity());
+        synthNote(*v, v->notes.topVelocity() / 127.0, true, false);
         resolvePitch(*v);
     }
 }
@@ -274,12 +264,16 @@ void SynthEngine::midiAllNotesOff(int32_t voiceId) {
         VoiceRuntime& v = *voices[(size_t) i];
         if (v.removing || (voiceId >= 0 && v.params.id != voiceId) || !v.notes.size) continue;
         v.notes.clear();
-        v.env.gateOff();
+        gateOff(v);
     }
 }
 
 void SynthEngine::patchVoice(int32_t voiceId, const VoicePatch& patch) {
-    if (VoiceRuntime* v = findVoice(voiceId)) patch.applyTo(v->params);
+    if (VoiceRuntime* v = findVoice(voiceId)) {
+        VoiceParams p = v->params;
+        patch.applyTo(p);
+        applyParams(*v, p);
+    }
 }
 
 void SynthEngine::setPitchBend(int32_t voiceId, double semitones) {
@@ -292,6 +286,13 @@ void SynthEngine::applyMidi(const MidiVoiceEvent& ev) {
         case MidiVoiceEvent::noteOff: return midiNoteOff(ev.voiceId, ev.note);
         case MidiVoiceEvent::allNotesOff: return midiAllNotesOff(ev.voiceId);
         case MidiVoiceEvent::bend: return setPitchBend(ev.voiceId, ev.semitones);
+        case MidiVoiceEvent::mod:
+        case MidiVoiceEvent::pressure:
+            if (VoiceRuntime* v = findVoice(ev.voiceId)) {
+                const double x = std::max(0.0, std::min(1.0, ev.semitones));
+                (ev.type == MidiVoiceEvent::mod ? v->wheel : v->pressure) = x;
+            }
+            return;
         case MidiVoiceEvent::cc: return;
     }
 }
@@ -299,15 +300,28 @@ void SynthEngine::applyMidi(const MidiVoiceEvent& ev) {
 void SynthEngine::status(EngineStatus& out) const {
     out.tick = tick;
     out.playing = playing;
+    out.unisonLimited = unisonLimited;
     out.voiceCount = std::min(nVoices, EngineStatus::MAX);
     for (int i = 0; i < out.voiceCount; ++i) {
         const VoiceRuntime& v = *voices[(size_t) i];
         VoiceStatus& o = out.voices[i];
         o.id = v.params.id;
-        o.pos = v.pos;
-        o.posY = v.posY;
-        o.index = v.index;
-        o.y = v.indexY;
+        if (v.params.type == VoiceType::synth && v.syn) {
+            const SynthVoice& s = *v.syn;
+            o.pos = s.posA;
+            o.posY = s.posYA;
+            o.index = s.a.index;
+            o.y = s.a.indexY;
+            o.posB = s.posB;
+            o.posYB = s.posYB;
+            o.indexB = s.b.index;
+            o.yB = s.b.indexY;
+        } else {
+            o.pos = o.posB = v.pos;
+            o.posY = o.posYB = v.posY;
+            o.index = o.indexB = v.osc.index;
+            o.y = o.yB = v.osc.indexY;
+        }
         o.env = v.env.value;
         o.note = v.notes.top();
     }
@@ -315,10 +329,7 @@ void SynthEngine::status(EngineStatus& out) const {
 
 // ---- audio ----
 
-void SynthEngine::process(float* out, int frames) {
-    // The sequencer clock (as the TS engine): one fractional accumulator per eighth note,
-    // split into TICKS_PER_EIGHTH ticks by thresholds within the eighth; each sequence steps
-    // on the ticks that are multiples of its STEP_TICKS, counted from the transport start.
+void SynthEngine::process(float* out, int frames, float* outR) {
     const double eighth = stepSamples(bpm, sr, StepLength::eighth);
     for (int i = 0; i < frames; ++i) {
         if (ctrlCountdown <= 0) {
@@ -335,7 +346,7 @@ void SynthEngine::process(float* out, int frames) {
                 sub = 0;
                 ++tick;
                 triggerTick();
-            } else if (sub < TICKS_PER_EIGHTH - 1 && toNext <= (eighthLen * (TICKS_PER_EIGHTH - 1 - sub)) / TICKS_PER_EIGHTH) {
+            } else if (sub < TICKS_PER_EIGHTH_ - 1 && toNext <= (eighthLen * (TICKS_PER_EIGHTH_ - 1 - sub)) / TICKS_PER_EIGHTH_) {
                 ++sub;
                 ++tick;
                 triggerTick();
@@ -343,9 +354,25 @@ void SynthEngine::process(float* out, int frames) {
             toNext -= 1;
         }
 
-        double mix = 0;
-        for (int k = 0; k < nVoices; ++k) mix += renderVoiceSample(*voices[(size_t) k], blockT);
-        out[i] = (float) (mix * MASTER_GAIN);
+        double left = 0, right = 0;
+        for (int k = 0; k < nVoices; ++k) {
+            VoiceRuntime& v = *voices[(size_t) k];
+            if (!v.syn || (v.typeMix == 0 && v.params.type != VoiceType::synth)) {
+                const double s = renderVoiceSample(v, blockT);
+                left += s;
+                right += s;
+            } else {
+                double l = 0, r = 0;
+                renderMixed(v, blockT, l, r);
+                left += l;
+                right += r;
+            }
+        }
+        if (outR) {
+            out[i] = (float) (left * MASTER_GAIN);
+            outR[i] = (float) (right * MASTER_GAIN);
+        } else
+            out[i] = (float) ((left + right) * 0.5 * MASTER_GAIN);
     }
 }
 
@@ -364,18 +391,35 @@ void SynthEngine::triggerTick() {
 }
 
 void SynthEngine::control(int blockLen) {
-    // Drop voices whose removal release has finished.
     int k = 0;
     for (int i = 0; i < nVoices; ++i) {
         VoiceRuntime* v = voices[(size_t) i];
         if (v->removing && v->env.stage == Adsr::Idle) {
             v->used = false;
-            v->n = 0;
-            v->heldTable = nullptr;
+            v->osc.clear();
+            v->syn.reset();
         } else
             voices[(size_t) k++] = v;
     }
     nVoices = k;
+
+    // CPU guard: unison copies of the Synth voices holding a note.
+    int copies = 0;
+    for (int i = 0; i < nVoices; ++i) {
+        const VoiceRuntime& v = *voices[(size_t) i];
+        if (!v.syn || v.params.type != VoiceType::synth || (!v.notes.size && v.gateRemaining <= 0)) continue;
+        const SynthParams& s = v.params.synth;
+        copies += s.aUnison + (s.bLevel > 0 || s.ringLevel > 0 || s.fm > 0 || s.sync ? s.bUnison : 0);
+    }
+    const double low = UNISON_BUDGET * 0.75;
+    if (copies > UNISON_BUDGET)
+        unisonLimited = true;
+    else if (copies <= low)
+        unisonLimited = false;
+    ctl.unisonScale = unisonLimited ? std::min(1.0, (double) UNISON_BUDGET / copies) : 1;
+    ctl.beat = playing && tick >= 0 && eighthLen > 0
+                   ? ((double) (tick / TICKS_PER_EIGHTH_) + std::min(1.0, std::max(0.0, 1 - toNext / eighthLen))) / 2
+                   : -1;
 
     for (int i = 0; i < nVoices; ++i) {
         VoiceRuntime& v = *voices[(size_t) i];
@@ -389,14 +433,31 @@ void SynthEngine::control(int blockLen) {
             v.bendFrom = v.bendTo;
             v.bendTo = std::pow(2.0, v.bendSemis / 12);
         }
-        resolve(v);
+        const bool synthOnly = v.params.type == VoiceType::synth && v.typeMix == 1;
+        if (!synthOnly) resolve(v);
+        if (v.syn && (v.params.type == VoiceType::synth || v.typeMix > 0)) controlSynth(v, blockLen);
     }
     collectZombies();
 }
 
+void SynthEngine::controlSynth(VoiceRuntime& v, int blockLen) {
+    const VoiceParams& p = v.params;
+    const SynthParams& s = p.synth;
+    ctl.bend = v.bendSemis;
+    ctl.blockLen = blockLen;
+    ctl.wtA = findWavetable(p.wavetableId);
+    ctl.wtB = findWavetable(s.b.wavetableId);
+    ctl.slew = slew;
+    ctl.gainTarget = p.mute ? 0 : p.level * (1 - s.velAmp + s.velAmp * v.vel);
+    ctl.bpm = bpm;
+    ctl.wheel = v.wheel;
+    ctl.pressure = v.pressure;
+    v.syn->control(p, ctl);
+}
+
 void SynthEngine::resolvePitch(VoiceRuntime& v) {
-    v.mipLevel = mipLevelFor(v.freq * std::max(v.bendFrom, v.bendTo), sr);
-    if (v.n == 0) resolve(v);
+    v.osc.mipLevel = mipLevelFor(v.freq * std::max(v.bendFrom, v.bendTo), sr);
+    if (v.osc.n == 0) resolve(v);
 }
 
 void SynthEngine::resolve(VoiceRuntime& v) {
@@ -404,133 +465,51 @@ void SynthEngine::resolve(VoiceRuntime& v) {
     const PackedWavetable* wt = findWavetable(p.wavetableId);
     v.pos = modulatedPosition(p.position, p.lfoDepth, v.lfoPhase);
     v.posY = modulatedPosition(p.positionY, p.lfoDepthY, v.lfoPhaseY);
-    v.mipLevel = mipLevelFor(v.freq * std::max(v.bendFrom, v.bendTo), sr);
-    // The previous block's end weights are this block's start weights.
-    for (int k = 0; k < v.n; ++k) v.w0[k] = v.w1[k];
+    v.osc.mipLevel = mipLevelFor(v.freq * std::max(v.bendFrom, v.bendTo), sr);
+    v.osc.hold();
     if (!wt) return;
-    v.win = {p.windowStart, p.windowEnd, p.windowStartY, p.windowEndY};
-    v.step = wt->interp == Interp::step;
-    const Mix& mix = resolveMix(*wt, v.win, v.pos, v.posY, v.step, v.mix);
-    if (mix.n == 0) return;
-    v.index = mix.x;
-    v.indexY = mix.y;
-    if (v.step) {
-        v.targetId = mix.ids[0];
-        if (v.heldId < 0) {
-            // Switched from Blend while sounding: keep the mix until the phase wraps.
-            if (v.n > 0) return;
-            v.heldId = v.targetId;
-        }
-        if (const MipSet* t = findTable(v.heldId)) v.heldTable = t;
-        if (!v.heldTable) return;
-        for (int k = 1; k < v.n; ++k) v.tabs[k] = nullptr;
-        v.n = 1;
-        v.ids[0] = v.heldId;
-        v.tabs[0] = v.heldTable;
-        v.w0[0] = v.w1[0] = 1;
-        return;
-    }
-    v.heldId = v.targetId = -1;
-    v.heldTable = nullptr;
-    double total = 0;
-    bool missing = false;
-    for (int k = 0; k < mix.n; ++k) {
-        if (findTable(mix.ids[k]))
-            total += mix.w[k];
-        else
-            missing = true;
-    }
-    if (total <= 0) return;
-    const double norm = missing ? 1 / total : 1;
-    const bool first = v.n == 0;
-
-    int32_t nIds[MAX_LIVE];
-    const MipSet* nTabs[MAX_LIVE];
-    double nW0[MAX_LIVE], nW1[MAX_LIVE];
-    int m = 0;
-    for (int k = 0; k < v.n; ++k) {
-        const int32_t id = v.ids[k];
-        double w = 0;
-        for (int j = 0; j < mix.n; ++j)
-            if (mix.ids[j] == id) w = mix.w[j] * norm;
-        if (w == 0 && v.w0[k] == 0) continue;
-        nIds[m] = id;
-        nTabs[m] = v.tabs[k];
-        nW0[m] = v.w0[k];
-        nW1[m] = w;
-        ++m;
-    }
-    for (int j = 0; j < mix.n && m < MAX_LIVE; ++j) {
-        const int32_t id = mix.ids[j];
-        const MipSet* t = findTable(id);
-        if (!t) continue;
-        bool known = false;
-        for (int k = 0; k < m; ++k)
-            if (nIds[k] == id) known = true;
-        if (known) continue;
-        const double w = mix.w[j] * norm;
-        nIds[m] = id;
-        nTabs[m] = t;
-        nW0[m] = first ? w : 0;
-        nW1[m] = w;
-        ++m;
-    }
-    double maxDiff = 0;
-    for (int k = 0; k < m; ++k) maxDiff = std::max(maxDiff, std::abs(nW1[k] - nW0[k]));
-    if (maxDiff > slew) {
-        const double f = slew / maxDiff;
-        for (int k = 0; k < m; ++k) nW1[k] = nW0[k] + (nW1[k] - nW0[k]) * f;
-    }
-    for (int k = 0; k < m; ++k) {
-        v.ids[k] = nIds[k];
-        v.tabs[k] = nTabs[k];
-        v.w0[k] = nW0[k];
-        v.w1[k] = nW1[k];
-    }
-    for (int k = m; k < MAX_LIVE; ++k) v.tabs[k] = nullptr;
-    v.n = m;
+    v.osc.resolve(tables, *wt, p.windowStart, p.windowEnd, p.windowStartY, p.windowEndY, v.pos, v.posY, slew);
 }
 
 double SynthEngine::renderVoiceSample(VoiceRuntime& v, double blockT) {
-    if (v.gateRemaining > 0 && --v.gateRemaining == 0) v.env.gateOff();
+    if (v.gateRemaining > 0 && --v.gateRemaining == 0) gateOff(v);
     const double e = v.env.next();
+    return simpleSample(v, e, blockT);
+}
+
+double SynthEngine::simpleSample(VoiceRuntime& v, double e, double blockT) {
     const double target = v.params.mute ? 0 : v.params.level * v.vel;
     v.gain += (target - v.gain) * 0.002;
-
+    WtOsc& o = v.osc;
     double out = 0;
-    if (e > 0 && v.n > 0) {
-        const int off = MIP_OFFSETS[(size_t) v.mipLevel];
-        const int len = MIP_LENGTHS[(size_t) v.mipLevel];
-        const double x = v.phase * len;
-        const int k = (int) x;
-        const double fr = x - k;
-        const int k1 = off + k;
-        const int k2 = k + 1 == len ? off : k1 + 1;
-        for (int j = 0; j < v.n; ++j) {
-            const float* T = v.tabs[j]->data();
-            const double a0 = T[k1];
-            const double w = v.w0[j] + (v.w1[j] - v.w0[j]) * blockT;
-            out += (a0 + (T[k2] - a0) * fr) * w;
-        }
-        out *= e * v.gain;
-    }
-
-    v.phase += (v.freq * (v.bendFrom + (v.bendTo - v.bendFrom) * blockT)) / sr;
-    if (v.phase >= 1) {
-        v.phase -= std::floor(v.phase);
-        if (v.step && v.targetId >= 0 && v.heldId != v.targetId) {
-            if (const MipSet* t = findTable(v.targetId)) {
-                v.heldId = v.targetId;
-                v.heldTable = t;
-                for (int j = 1; j < v.n; ++j) v.tabs[j] = nullptr;
-                v.n = 1;
-                v.ids[0] = v.heldId;
-                v.tabs[0] = t;
-                v.w0[0] = v.w1[0] = 1;
-            }
-        }
+    if (e > 0 && o.n > 0) out = o.read(o.phase, blockT) * (e * v.gain);
+    o.phase += (v.freq * (v.bendFrom + (v.bendTo - v.bendFrom) * blockT)) / sr;
+    if (o.phase >= 1) {
+        o.phase -= std::floor(o.phase);
+        o.wrapped(tables);
     }
     return out;
+}
+
+void SynthEngine::renderMixed(VoiceRuntime& v, double blockT, double& l, double& r) {
+    if (v.gateRemaining > 0 && --v.gateRemaining == 0) gateOff(v);
+    const double e = v.env.next();
+    const double target = v.params.type == VoiceType::synth ? 1 : 0;
+    if (v.typeMix < target)
+        v.typeMix = std::min(1.0, v.typeMix + typeStep);
+    else if (v.typeMix > target)
+        v.typeMix = std::max(0.0, v.typeMix - typeStep);
+    const double m = v.typeMix;
+    SynthVoice& syn = *v.syn;
+    double simple = 0;
+    if (m < 1) simple = simpleSample(v, e, blockT) * (1 - m);
+    l = simple;
+    r = simple;
+    if (m > 0) {
+        syn.render(v.params, e, blockT, tables);
+        l += syn.outL * m * (syn.panL0 + (syn.panL1 - syn.panL0) * blockT);
+        r += syn.outR * m * (syn.panR0 + (syn.panR1 - syn.panR0) * blockT);
+    }
 }
 
 } // namespace mkwavez

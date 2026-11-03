@@ -15,10 +15,14 @@
 #include "midi.h"
 #include "playback.h"
 #include "spsc_queue.h"
+#include "synth_voice.h"
+#include "table_map.h"
 #include "voice.h"
+#include "wtosc.h"
 
 #include <array>
 #include <cstdint>
+#include <optional>
 
 namespace mkwavez {
 
@@ -29,11 +33,17 @@ inline constexpr double REMOVE_RELEASE_SEC = 0.012;
 inline constexpr double BEND_SMOOTH_SEC = 0.004;
 /** Longest a mix change takes (weights slew-limited). */
 inline constexpr double CROSSFADE_SEC = 0.006;
+/** Simple ↔ Synth switch of a sounding voice crossfades over this long. */
+inline constexpr double TYPE_FADE_SEC = 0.01;
+/** CPU guard: unison copies all sounding Synth voices may play together. */
+inline constexpr int UNISON_BUDGET = 32;
 
 struct VoiceStatus {
     int32_t id = 0;
     double pos = 0, posY = 0, index = 0, y = 0, env = 0;
     int32_t note = -1;
+    /** Synth voices: osc B's position and resolved coordinates (else equal to A's). */
+    double posB = 0, posYB = 0, indexB = 0, yB = 0;
 };
 
 struct EngineStatus {
@@ -41,6 +51,8 @@ struct EngineStatus {
     /** Shared clock: ticks since the transport started (TICKS_PER_BEAT per beat; -1 before the first). */
     int64_t tick = -1;
     bool playing = false;
+    /** The CPU guard is reducing unison. */
+    bool unisonLimited = false;
     int voiceCount = 0;
     VoiceStatus voices[MAX];
 };
@@ -55,11 +67,11 @@ namespace detail {
 
 /** Per-voice audio-thread state (see the TS VoiceRuntime). */
 struct VoiceRuntime {
-    static constexpr int MAX_LIVE = 16;
     bool used = false;
     VoiceParams params;
     Adsr env;
-    double phase = 0;
+    /** The Simple voice's oscillator. */
+    WtOsc osc;
     double lfoPhase = 0, lfoPhaseY = 0;
     double freq = 110;
     int64_t gateRemaining = 0;
@@ -67,20 +79,14 @@ struct VoiceRuntime {
     double vel = 1;
     NoteStack notes;
     double bendTarget = 0, bendSemis = 0, bendFrom = 1, bendTo = 1;
-    double pos = 0, posY = 0, index = 0, indexY = 0;
-    int mipLevel = 0;
-    bool step = false;
-    /** Tables being mixed (by id), weights ramping w0 → w1 across the control block. */
-    int n = 0;
-    int32_t ids[MAX_LIVE]{};
-    const MipSet* tabs[MAX_LIVE]{};
-    double w0[MAX_LIVE]{}, w1[MAX_LIVE]{};
-    Mix mix;
-    MixWindow win;
-    TableId heldId = -1;
-    const MipSet* heldTable = nullptr;
-    TableId targetId = -1;
+    double pos = 0, posY = 0;
     bool removing = false;
+    /** The Synth path (constructed in place when the voice first becomes a Synth voice; no heap). */
+    std::optional<SynthVoice> syn;
+    /** Simple (0) ↔ Synth (1) crossfade. */
+    double typeMix = 0;
+    /** Mod wheel / channel pressure 0..1. */
+    double wheel = 0, pressure = 0;
 };
 
 } // namespace detail
@@ -90,8 +96,6 @@ public:
     static constexpr int MAX_VOICES = 16;
     static constexpr int MAX_SEQUENCES = 32;
     static constexpr int MAX_WAVETABLES = 64;
-    /** Open-addressing table map capacity (power of two, > 2 × TIMELINE_CAP). */
-    static constexpr int TABLE_CAPACITY = 16384;
     /** Removed tables / replaced wavetables awaiting retirement. */
     static constexpr int MAX_ZOMBIES = 8192;
 
@@ -104,7 +108,7 @@ public:
     void addTable(TableId id, const MipSet* mips);
     void removeTable(TableId id);
     bool hasTable(TableId id) const { return findTable(id) != nullptr; }
-    int tableCount() const { return tableCount_; }
+    int tableCount() const { return tables.size(); }
 
     void setWavetable(WavetableId id, const PackedWavetable* wt);
     void removeWavetable(WavetableId id);
@@ -137,24 +141,23 @@ public:
     void status(EngineStatus& out) const;
 
     // ---- audio ----
-    /** Render `frames` mono samples. */
-    void process(float* out, int frames);
+    /**
+     * Render `frames` samples: stereo into out (left) and outR (right), or, without outR,
+     * the mono sum ((L + R) / 2) into out. Simple voices are identical in both channels.
+     */
+    void process(float* out, int frames, float* outR = nullptr);
 
     // ---- memory ----
     bool popRetired(Retired& out) { return retired.pop(out); }
 
 private:
     using VoiceRuntime = detail::VoiceRuntime;
-    struct TableSlot {
-        TableId id = -1;
-        const MipSet* mips = nullptr;
-    };
     struct WavetableSlot {
         WavetableId id = -1;
         const PackedWavetable* wt = nullptr;
     };
 
-    const MipSet* findTable(TableId id) const;
+    const MipSet* findTable(TableId id) const { return tables.find(id); }
     VoiceRuntime* findVoice(int32_t id);
     const VoiceRuntime* findVoice(int32_t id) const;
     const PackedWavetable* findWavetable(WavetableId id) const;
@@ -162,17 +165,25 @@ private:
     void collectZombies();
 
     void triggerTick();
+    void applyParams(VoiceRuntime& v, const VoiceParams& p);
+    void gateOff(VoiceRuntime& v);
+    void synthNote(VoiceRuntime& v, double vel, bool legato, bool retrigger);
+    void controlSynth(VoiceRuntime& v, int blockLen);
+    double simpleSample(VoiceRuntime& v, double e, double blockT);
+    void renderMixed(VoiceRuntime& v, double blockT, double& l, double& r);
     void control(int blockLen);
     void resolvePitch(VoiceRuntime& v);
     void resolve(VoiceRuntime& v);
     double renderVoiceSample(VoiceRuntime& v, double blockT);
+    double typeStep;
+    SynthControl ctl;
+    bool unisonLimited = false;
 
     double sr;
     double bendCoef;
     double slew;
 
-    std::array<TableSlot, TABLE_CAPACITY> tables{};
-    int tableCount_ = 0;
+    TableMap tables;
 
     std::array<WavetableSlot, MAX_WAVETABLES> wavetables{};
     int nWavetables = 0;

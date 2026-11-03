@@ -120,17 +120,61 @@ TEST("midi: bend follows retargeting; all-notes-off; reset controllers") {
     CHECK(router.heldCount() == 0);
 }
 
-TEST("midi: CC map assigns uniquely and patches") {
+TEST("midi: CC map assigns uniquely and patches (simple and synth targets)") {
     CcMap map;
     CHECK(map.cc[(size_t) CcParam::position] == CC_MOD_WHEEL);
     map.assign(CcParam::level, CC_MOD_WHEEL);
     CHECK(map.cc[(size_t) CcParam::position] == -1);
     auto p = ccPatch(map, CC_MOD_WHEEL, 127);
-    CHECK(p.has(VoicePatch::level) && p.get(VoicePatch::level) == 1 && !p.has(VoicePatch::position));
+    CHECK(p.has(CcParam::level) && p.get(CcParam::level) == 1 && !p.has(CcParam::position));
     map.assign(CcParam::lfoRate, 20);
     p = ccPatch(map, 20, 0);
-    CHECK_NEAR(p.get(VoicePatch::lfoRate), LFO_RATE_MIN, 1e-12);
-    CHECK(ccPatch(map, 21, 5).mask == 0);
+    CHECK_NEAR(p.get(CcParam::lfoRate), LFO_RATE_MIN, 1e-12);
+    CHECK(ccPatch(map, 21, 5).empty());
     map.assign(CcParam::position, 120); // channel mode: unassigns
     CHECK(map.cc[(size_t) CcParam::position] == -1);
+
+    // Synth targets, as src/core/midi.ts targetPatch applies them.
+    map.assign(CcParam::cutoff, 30);
+    map.assign(CcParam::oscMix, 31);
+    map.assign(CcParam::lfo2Rate, 32);
+    map.assign(CcParam::filterEnv, 33);
+    map.assign(CcParam::glide, 34);
+    VoiceParams v;
+    v.synth.lfos[1].sync = true;
+    ccPatch(map, 30, 127).applyTo(v);
+    ccPatch(map, 31, 127).applyTo(v);
+    ccPatch(map, 32, 0).applyTo(v);
+    ccPatch(map, 33, 0).applyTo(v);
+    ccPatch(map, 34, 127).applyTo(v);
+    CHECK_NEAR(v.synth.cutoff, CUTOFF_MAX, 1e-9);
+    CHECK(v.synth.aLevel == 0 && v.synth.bLevel == 1);
+    CHECK_NEAR(v.synth.lfos[1].rate, CC_LFO_RATE_MIN, 1e-12);
+    CHECK(!v.synth.lfos[1].sync);
+    CHECK(v.synth.envAmount == -1);
+    CHECK_NEAR(v.synth.glide, CC_GLIDE_MAX, 1e-12);
+}
+
+TEST("midi: channel pressure and mod wheel are tracked like the bend") {
+    MidiRouter router;
+    Collect c;
+    router.route(msg({0xd0, 64}), routing(true, 1, {1, 2}), c);
+    CHECK(c.evs.size() == 1 && c.evs[0].type == MidiVoiceEvent::pressure && c.evs[0].voiceId == 1);
+    CHECK_NEAR(c.evs[0].semitones, 64 / 127.0, 1e-12);
+    c.evs.clear();
+    router.route(msg({0xb0, CC_MOD_WHEEL, 127}), routing(true, 1, {1, 2}), c);
+    CHECK(c.evs.size() == 2 && c.evs[0].type == MidiVoiceEvent::cc && c.evs[1].type == MidiVoiceEvent::mod && c.evs[1].semitones == 1);
+    c.evs.clear();
+    router.retarget(routing(true, 2, {1, 2}), c);
+    // Each of mod and pressure: zero the old voice, move the value to the new one.
+    int zeroed = 0, moved = 0;
+    for (const auto& e : c.evs) {
+        if (e.type != MidiVoiceEvent::mod && e.type != MidiVoiceEvent::pressure) continue;
+        if (e.voiceId == 1 && e.semitones == 0) ++zeroed;
+        if (e.voiceId == 2 && e.semitones > 0) ++moved;
+    }
+    CHECK(zeroed == 2 && moved == 2);
+    c.evs.clear();
+    router.route(msg({0xb0, CC_RESET_ALL_CONTROLLERS, 0}), routing(true, 2, {1, 2}), c);
+    CHECK(c.evs.size() == 2);
 }

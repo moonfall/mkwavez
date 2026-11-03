@@ -1,5 +1,7 @@
 #include "WebLink.h"
 
+#include "SynthJson.h"
+
 using namespace mkwavez;
 
 namespace {
@@ -54,6 +56,8 @@ VoiceParams decodeVoice(const juce::var& o) {
     v.decay = num(o, "decay", v.decay);
     v.sustain = num(o, "sustain", v.sustain);
     v.release = num(o, "release", v.release);
+    v.type = o.getProperty("type", "simple").toString() == "synth" ? VoiceType::synth : VoiceType::simple;
+    v.synth = synthjson::decode(o.getProperty("synth", {}));
     return v;
 }
 
@@ -272,7 +276,10 @@ void WebLink::applyBatch(const juce::var& ops) {
             ms.omniVoice = voice.isVoid() || voice.isUndefined() ? 0 : (int) voice; // 0 = no voice
             setParam(params::omni, (bool) op.getProperty("omni", false) ? 1.0f : 0.0f);
             const auto cc = op.getProperty("cc", {});
-            const char* keys[CC_PARAM_COUNT] = {"position", "positionY", "lfoDepth", "lfoRate", "level"};
+            // Order = CC_PARAMS (src/core/midi.ts) = mkwavez::CcParam.
+            const char* keys[CC_PARAM_COUNT] = {"position", "positionY", "lfoDepth", "lfoRate", "level", "cutoff", "resonance",
+                                                "drive", "filterEnv", "oscMix", "subLevel", "noiseLevel", "glide", "lfo1Rate",
+                                                "lfo1Depth", "lfo2Rate", "lfo2Depth", "lfo3Rate", "lfo3Depth"};
             for (int i = 0; i < CC_PARAM_COUNT; ++i) ms.cc[(size_t) i] = (int) num(cc, keys[i], -1);
         }
         // 'midi' / 'voice/patch': the page doesn't send them in plugin mode (host MIDI is routed natively).

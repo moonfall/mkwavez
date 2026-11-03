@@ -89,6 +89,22 @@ struct Instance {
         return std::sqrt(sum / (blocks * 512.0));
     }
 
+    /** Render; returns the largest |L − R| (stereo spread / pan) and the left RMS. */
+    std::pair<double, double> renderStereo(int blocks, std::function<void(int, juce::MidiBuffer&)> midiAt) {
+        double maxDiff = 0, sum = 0;
+        for (int b = 0; b < blocks; ++b) {
+            juce::MidiBuffer midi;
+            midiAt(b, midi);
+            buf.clear();
+            proc->processBlock(buf, midi);
+            for (int i = 0; i < buf.getNumSamples(); ++i) {
+                maxDiff = std::max(maxDiff, (double) std::abs(buf.getSample(0, i) - buf.getSample(1, i)));
+                sum += (double) buf.getSample(0, i) * buf.getSample(0, i);
+            }
+        }
+        return {maxDiff, std::sqrt(sum / (blocks * 512.0))};
+    }
+
     template <typename Fn>
     auto doc(Fn&& fn) const {
         using R = decltype(fn(std::declval<const mkwavez::Document&>()));
@@ -166,6 +182,24 @@ int main(int argc, const char* argv[]) {
         if (const int pause = juce::SystemStats::getEnvironmentVariable("MKWAVEZ_SCREENSHOT_PAUSE", "0").getIntValue(); pause > 0)
             pump(pause);
 
+        // 6. A Synth voice set up in the page plays in the native engine (stereo: unison spread, pan).
+        a.render(40, [](int b, juce::MidiBuffer& m) {
+            if (b == 0) m.addEvent(juce::MidiMessage::allNotesOff(1), 0);
+        });
+        a.web()->evaluate("mkwavez.model.updateVoice(1, { type: 'synth', synth: { ...mkwavez.model.voice(1).synth, aUnison: 3, aSpread: 1, pan: 0.4, cutoff: 3000 } })");
+        waitFor([&] {
+            a.render(1);
+            return a.doc([](const auto& d) { return !d.voices.empty() && d.voices[0].type == mkwavez::VoiceType::synth && d.voices[0].synth.aUnison == 3; });
+        }, 10000, "a Synth voice set in the page reaches the engine document");
+        const auto [lr, synthRms] = a.renderStereo(60, [](int b, juce::MidiBuffer& m) {
+            if (b == 0) m.addEvent(juce::MidiMessage::noteOn(1, 52, (juce::uint8) 110), 0);
+        });
+        check(synthRms > 0.005 && lr > 1e-3, "the Synth voice sounds, in stereo (rms " + juce::String(synthRms, 4) + ", max |L-R| " + juce::String(lr, 4) + ")");
+        a.render(40, [](int b, juce::MidiBuffer& m) {
+            if (b == 0) m.addEvent(juce::MidiMessage::allNotesOff(1), 0);
+        });
+        waitFor([&] { a.render(1); return metaOf(*a.proc).contains("\"type\":\"synth\""); }, 10000, "the Synth voice is in the saved session");
+
         a.proc->getStateInformation(saved);
         savedProject = metaOf(*a.proc);
         check(saved.getSize() > (size_t) afterBatch * 2048 * 4, "state holds every table (" + juce::String((int) saved.getSize()) + " bytes)");
@@ -176,6 +210,15 @@ int main(int argc, const char* argv[]) {
         Instance b;
         b.proc->setStateInformation(saved.getData(), (int) saved.getSize());
         const int tables = b.doc([](const auto& d) { return (int) d.tables.size(); });
+        check(b.doc([](const auto& d) { return !d.voices.empty() && d.voices[0].type == mkwavez::VoiceType::synth && d.voices[0].synth.aUnison == 3; }),
+              "the restored engine (before the editor opens) has the Synth voice");
+        const auto [lr0, rms0] = b.renderStereo(60, [](int blk, juce::MidiBuffer& m) {
+            if (blk == 0) m.addEvent(juce::MidiMessage::noteOn(1, 52, (juce::uint8) 110), 0);
+        });
+        check(rms0 > 0.005 && lr0 > 1e-3, "it plays in stereo without the editor (rms " + juce::String(rms0, 4) + ")");
+        b.render(40, [](int blk, juce::MidiBuffer& m) {
+            if (blk == 0) m.addEvent(juce::MidiMessage::allNotesOff(1), 0);
+        });
         b.render(2);
         b.openEditor();
         b.editor->setVisible(true);

@@ -191,6 +191,9 @@ build and verification in `docs/PLUGIN.md`.
   the session (src/core/session.ts, via the regular autosave / restore and a plugin
   session backend) saved with the plugin state; host automation / transport / MIDI
   settings in sync; end-to-end web view test.
+- Synth voice (done): `plugin/core` has the Synth voice path (oscillators with unison,
+  sub, noise, ring, FM, hard sync, ZDF filter, envelopes, LFOs, mod matrix, CPU guard,
+  stereo), matched sample for sample against the TS engine by golden scenarios.
 - Next: P2 hardening (pluginval, DAWs, per-host web view quirks, project files, presets),
   P3 release (signing, installers, licence).
 

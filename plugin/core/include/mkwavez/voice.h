@@ -3,6 +3,7 @@
 
 #include "constants.h"
 #include "playback.h"
+#include "synth.h"
 
 #include <algorithm>
 #include <array>
@@ -14,6 +15,10 @@ namespace mkwavez {
 /** One monophonic voice (plain data, shared verbatim between model and engine). */
 struct VoiceParams {
     int32_t id = 0;
+    /** Simple (the original voice) or Synth (core/synth.h; amp ADSR / level / mute / octave apply to both). */
+    VoiceType type = VoiceType::simple;
+    /** Synth settings (kept, unused, on Simple voices). */
+    SynthParams synth{};
     WavetableId wavetableId = 0;
     /** Inclusive X window (slots; unused on Rows) and Y window (rows; 2D and Rows). */
     int32_t windowStart = 0, windowEnd = 0;
@@ -32,28 +37,66 @@ struct VoiceParams {
     double attack = 0.004, decay = 0.35, sustain = 0.25, release = 0.2;
 };
 
-/** A few voice params changed by MIDI controllers, without a full voice set. */
+/**
+ * Controller targets (order = CC_PARAMS in src/core/midi.ts). The first five drive every
+ * voice; the rest are Synth voice parameters.
+ */
+enum class CcParam : uint8_t {
+    position, positionY, lfoDepth, lfoRate, level, cutoff, resonance, drive, filterEnv, oscMix, subLevel, noiseLevel, glide,
+    lfo1Rate, lfo1Depth, lfo2Rate, lfo2Depth, lfo3Rate, lfo3Depth
+};
+inline constexpr int CC_PARAM_COUNT = 19;
+
+/** Parameter changes (values already mapped from 7-bit, see ccValue), applied as src/core/midi.ts targetPatch does. */
 struct VoicePatch {
-    enum Field : uint8_t { position = 1, positionY = 2, lfoDepth = 4, lfoRate = 8, level = 16 };
-    uint8_t mask = 0;
-    double values[5]{};
+    uint32_t mask = 0;
+    double values[CC_PARAM_COUNT]{};
 
-    void set(Field f, double v) {
-        mask |= f;
-        values[index(f)] = v;
+    void set(CcParam p, double v) {
+        mask |= 1u << (unsigned) p;
+        values[(size_t) p] = v;
     }
-    bool has(Field f) const { return (mask & f) != 0; }
-    double get(Field f) const { return values[index(f)]; }
-    void applyTo(VoiceParams& p) const {
-        if (has(position)) p.position = get(position);
-        if (has(positionY)) p.positionY = get(positionY);
-        if (has(lfoDepth)) p.lfoDepth = get(lfoDepth);
-        if (has(lfoRate)) p.lfoRate = get(lfoRate);
-        if (has(level)) p.level = get(level);
-    }
+    bool has(CcParam p) const { return (mask >> (unsigned) p) & 1u; }
+    double get(CcParam p) const { return values[(size_t) p]; }
+    bool empty() const { return mask == 0; }
 
-private:
-    static int index(Field f) { return f == position ? 0 : f == positionY ? 1 : f == lfoDepth ? 2 : f == lfoRate ? 3 : 4; }
+    void applyTo(VoiceParams& v) const {
+        for (int i = 0; i < CC_PARAM_COUNT; ++i) {
+            if (!((mask >> i) & 1u)) continue;
+            const double x = values[i];
+            SynthParams& s = v.synth;
+            switch ((CcParam) i) {
+                case CcParam::position: v.position = x; break;
+                case CcParam::positionY: v.positionY = x; break;
+                case CcParam::lfoDepth: v.lfoDepth = x; break;
+                case CcParam::lfoRate: v.lfoRate = x; break;
+                case CcParam::level: v.level = x; break;
+                case CcParam::cutoff: s.cutoff = x; break;
+                case CcParam::resonance: s.resonance = x; break;
+                case CcParam::drive: s.drive = x; break;
+                case CcParam::filterEnv: s.envAmount = x; break;
+                case CcParam::oscMix:
+                    s.aLevel = 1 - x;
+                    s.bLevel = x;
+                    break;
+                case CcParam::subLevel: s.subLevel = x; break;
+                case CcParam::noiseLevel: s.noiseLevel = x; break;
+                case CcParam::glide: s.glide = x; break;
+                case CcParam::lfo1Rate:
+                case CcParam::lfo2Rate:
+                case CcParam::lfo3Rate: {
+                    // A rate move turns tempo sync off (so the knob is heard).
+                    auto& l = s.lfos[(size_t) ((i - (int) CcParam::lfo1Rate) / 2)];
+                    l.rate = x;
+                    l.sync = false;
+                    break;
+                }
+                case CcParam::lfo1Depth:
+                case CcParam::lfo2Depth:
+                case CcParam::lfo3Depth: s.lfos[(size_t) ((i - (int) CcParam::lfo1Depth) / 2)].depth = x; break;
+            }
+        }
+    }
 };
 
 /** position + depth/2 * sin(lfoPhase), reflected back into [0, 1]. */

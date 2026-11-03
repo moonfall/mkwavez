@@ -1,0 +1,462 @@
+#include "mkwavez/synth_voice.h"
+
+#include "mkwavez/midi.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace mkwavez {
+
+namespace {
+
+constexpr double TWO_PI = 2 * PI;
+constexpr double UNISON_PHASE = 0.381966;
+/** Unison places (fraction of the detune) and pans for n copies (index n). */
+constexpr double UNISON_PLACES[5][4] = {{0}, {0}, {-0.5, 0.5}, {0, -1, 1}, {-1, -1.0 / 3, 1.0 / 3, 1}};
+constexpr double UNISON_PANS[5][4] = {{0}, {0}, {-1, 1}, {0, -1, 1}, {-1, -1.0 / 3, 1.0 / 3, 1}};
+
+double clamp01(double x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+
+double polyBlep(double t, double dt) {
+    if (t < dt) {
+        const double x = t / dt;
+        return x + x - x * x - 1;
+    }
+    if (t > 1 - dt) {
+        const double x = (t - 1) / dt;
+        return x * x + x + x + 1;
+    }
+    return 0;
+}
+
+/** JS Math.round. */
+double jsRound(double x) { return std::floor(x + 0.5); }
+
+} // namespace
+
+void applyMatrix(const std::array<ModSlot, MOD_SLOTS>& slots, const double* src, double* dst) {
+    for (int i = 0; i < N_DESTS; ++i) dst[i] = 0;
+    for (const auto& s : slots) {
+        if (s.src == SRC_NONE || s.dst == DST_NONE || s.amt == 0) continue;
+        dst[s.dst] += s.amt * src[s.src];
+    }
+}
+
+double pitchFreq(double semis) { return 440 * std::pow(2.0, (semis - 69) / 12); }
+double freqPitch(double freq) { return 69 + 12 * std::log2(freq / 440); }
+
+SynthVoice::SynthVoice(double sr, int32_t voiceId, int block, const SynthParams& s)
+    : sampleRate(sr),
+      blockLen(block),
+      uniStep(block / (UNISON_FADE_SEC * sr)),
+      uniGlide(1 - std::exp(-block / (UNISON_GLIDE_SEC * sr))),
+      noise(deriveSeed(NOISE_SEED, (uint32_t) voiceId)),
+      modRng(deriveSeed(MOD_SEED, (uint32_t) voiceId)),
+      smooth(1 - std::exp(-block / (CONTROL_SMOOTH_SEC * sr))) {
+    for (double& c : envCfg) c = -1;
+    wA0[0] = wA1[0] = wB0[0] = wB1[0] = 1;
+    for (int i = 0; i < LFO_COUNT; ++i) {
+        lfoPhase[i] = s.lfos[(size_t) i].phase;
+        lfoCur[i] = modRng.bipolar();
+        lfoPrev[i] = lfoCur[i];
+        lfoAge[i] = 1e9;
+    }
+}
+
+void SynthVoice::configure(const SynthParams& s, int block) {
+    double* c = envCfg;
+    const double ad = s.mMode == ModEnvMode::ad ? 1 : 0;
+    if (c[0] == s.fAttack && c[1] == s.fDecay && c[2] == s.fSustain && c[3] == s.fRelease && c[4] == s.pAttack && c[5] == s.pDecay &&
+        c[6] == s.mAttack && c[7] == s.mDecay && c[8] == s.mSustain && c[9] == s.mRelease && c[10] == ad)
+        return;
+    c[0] = s.fAttack;
+    c[1] = s.fDecay;
+    c[2] = s.fSustain;
+    c[3] = s.fRelease;
+    c[4] = s.pAttack;
+    c[5] = s.pDecay;
+    c[6] = s.mAttack;
+    c[7] = s.mDecay;
+    c[8] = s.mSustain;
+    c[9] = s.mRelease;
+    c[10] = ad;
+    fenv.configure(s.fAttack, s.fDecay, s.fSustain, s.fRelease, sampleRate);
+    penv.configure(s.pAttack, s.pDecay, 0, s.pDecay, sampleRate / block);
+    if (ad != 0)
+        menv.configure(s.mAttack, s.mDecay, 0, s.mDecay, sampleRate / block);
+    else
+        menv.configure(s.mAttack, s.mDecay, s.mSustain, s.mRelease, sampleRate / block);
+}
+
+void SynthVoice::noteOn(const VoiceParams& p, double notePitch, double velocity, bool legato, bool retrigger, bool sounding) {
+    const SynthParams& s = p.synth;
+    target = notePitch;
+    vel = velocity;
+    const bool glide = s.glide > 0 && sounding && (!s.glideLegato || legato);
+    if (!glide) pitch = notePitch;
+    if (retrigger) {
+        configure(s, blockLen);
+        fenv.gateOn();
+        penv.gateOn();
+        menv.gateOn();
+        noteRand = modRng.bipolar();
+        for (int i = 0; i < LFO_COUNT; ++i) {
+            const LfoParams& l = s.lfos[(size_t) i];
+            lfoAge[i] = 0;
+            if (l.retrig) {
+                lfoPhase[i] = l.phase;
+                lfoPrev[i] = lfoCur[i];
+                lfoCur[i] = modRng.bipolar();
+            }
+        }
+    }
+    if (!glide) retune(p);
+}
+
+void SynthVoice::gateOff(const VoiceParams& p) {
+    fenv.gateOff();
+    penv.gateOff();
+    if (p.synth.mMode != ModEnvMode::ad) menv.gateOff();
+}
+
+void SynthVoice::retune(const VoiceParams& p) {
+    pitches(p, lastBend);
+    incA0 = incA1;
+    incB0 = incB1;
+    incS0 = incS1;
+    mips(p.synth, incA1, incB1);
+}
+
+void SynthVoice::mips(const SynthParams& s, double incA, double incB) {
+    const double sr = sampleRate;
+    const int ring = s.ringLevel > 0 || lv1[4] > 1e-4 ? 1 : 0;
+    const double fa = incA * maxRatA * sr;
+    const double fb = incB * maxRatB * sr;
+    const double side = s.fm > 0 ? (TWO_PI * FM_DEPTH * s.fm + 1) * fb : 0;
+    const double limit = MIP_NYQUIST_FRACTION * sr;
+    int la = MIP_LEVELS - 1;
+    for (int l = 0; l < MIP_LEVELS; ++l) {
+        if (fa * MIP_HARMONICS[(size_t) l] + side < limit) {
+            la = l;
+            break;
+        }
+    }
+    a.mipLevel = std::min(MIP_LEVELS - 1, la + ring);
+    b.mipLevel = std::min(MIP_LEVELS - 1, mipLevelFor(fb, sr) + ring);
+}
+
+void SynthVoice::resync(const VoiceParams& p, double notePitch, bool gated, bool sounding) {
+    target = pitch = notePitch;
+    configure(p.synth, blockLen);
+    if (gated) {
+        fenv.gateOn();
+        penv.gateOn();
+        menv.gateOn();
+    } else {
+        for (Adsr* env : {&fenv, &penv, &menv}) {
+            env->value = 0;
+            env->stage = Adsr::Idle;
+        }
+    }
+    if (!sounding) {
+        filter.reset();
+        filterR.reset();
+    }
+    retune(p);
+}
+
+void SynthVoice::pitches(const VoiceParams& p, double bendSemis) {
+    const SynthParams& s = p.synth;
+    const double sr = sampleRate;
+    const double pe = penv.value * s.pAmount;
+    const double base = pitch + bendSemis;
+    const double pa = base + oscSemis(s.aOct, s.aCoarse, s.aFine) + (s.pTarget != PitchTarget::b ? pe : 0) + dst[DST_PITCH_A] * MOD_PITCH_SEMIS;
+    const double pb = base + oscSemis(s.bOct, s.bCoarse, s.bFine) + (s.pTarget != PitchTarget::a ? pe : 0) + dst[DST_PITCH_B] * MOD_PITCH_SEMIS;
+    const double fa = std::min(pitchFreq(pa), sr * 0.45);
+    incA1 = fa / sr;
+    incB1 = std::min(pitchFreq(pb), sr * 0.45) / sr;
+    incS1 = fa / (s.subOct >= 2 ? 4 : 2) / sr;
+}
+
+void SynthVoice::stepLfos(const SynthParams& s, double bpm, int block, double beat) {
+    const double dt = block / sampleRate;
+    for (int i = 0; i < LFO_COUNT; ++i) {
+        const LfoParams& l = s.lfos[(size_t) i];
+        const double m = std::max(-1.0, std::min(1.0, dst[DST_LFO1_RATE + i]));
+        const double mult = m == 0 ? 1 : std::pow(2.0, m * MOD_LFO_RATE_OCTAVES);
+        const double inc = std::min(LFO_RATE_MAX_HZ * 2, std::max(0.0, lfoRateHz(l, bpm) * mult)) * dt;
+        double ph = lfoPhase[i] + inc;
+        if (l.sync && !l.retrig && beat >= 0 && m == 0) {
+            const double t = beat / LFO_DIV_BEATS[(size_t) l.div] + l.phase;
+            double d = t - std::floor(t) - ph;
+            d -= jsRound(d);
+            ph += std::max(-0.5 * inc, std::min(0.5 * inc, d));
+        }
+        if (ph >= 1) {
+            ph -= std::floor(ph);
+            lfoPrev[i] = lfoCur[i];
+            lfoCur[i] = modRng.bipolar();
+        } else if (ph < 0)
+            ph -= std::floor(ph);
+        lfoPhase[i] = ph;
+        const double age = lfoAge[i];
+        const double fade = l.fade > 0 ? std::min(1.0, age / l.fade) : 1;
+        lfoAge[i] = age + dt;
+        lfoOut[i] = lfoWave(l.shape, ph, lfoCur[i], lfoPrev[i]) * l.depth * fade;
+    }
+}
+
+void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
+    const SynthParams& s = p.synth;
+    blockLen = c.blockLen;
+    configure(s, blockLen);
+    if (pitch != target) {
+        if (s.glide > 0) {
+            const double coef = 1 - std::exp(-CONTROL_BLOCK / (std::max(1e-4, s.glide / 4) * sampleRate));
+            pitch += (target - pitch) * coef;
+            if (std::abs(target - pitch) < 1e-4) pitch = target;
+        } else
+            pitch = target;
+    }
+    penv.next();
+    menv.next();
+    stepLfos(s, c.bpm, blockLen, c.beat);
+    src[SRC_LFO1] = lfoOut[0];
+    src[SRC_LFO2] = lfoOut[1];
+    src[SRC_LFO3] = lfoOut[2];
+    src[SRC_FENV] = fenv.value;
+    src[SRC_PENV] = penv.value;
+    src[SRC_MENV] = menv.value;
+    src[SRC_VEL] = vel;
+    src[SRC_WHEEL] = c.wheel;
+    src[SRC_AT] = c.pressure;
+    src[SRC_KEY] = (pitch - 60) / 24;
+    src[SRC_RAND] = noteRand;
+    applyMatrix(s.mods, src, dst);
+    const double bend = (c.bend * s.bendRange) / BEND_RANGE_SEMITONES;
+    lastBend = bend;
+    incA0 = incA1;
+    incB0 = incB1;
+    incS0 = incS1;
+    pitches(p, bend);
+    unison(s, c.unisonScale);
+    mips(s, std::max(incA0, incA1), std::max(incB0, incB1));
+
+    posA = dst[DST_POS_A] != 0 ? reflect01(p.position + dst[DST_POS_A]) : p.position;
+    posYA = dst[DST_POSY_A] != 0 ? reflect01(p.positionY + dst[DST_POSY_A]) : p.positionY;
+    posB = dst[DST_POS_B] != 0 ? reflect01(s.b.position + dst[DST_POS_B]) : s.b.position;
+    posYB = dst[DST_POSY_B] != 0 ? reflect01(s.b.positionY + dst[DST_POSY_B]) : s.b.positionY;
+    a.hold();
+    if (c.wtA) a.resolve(*c.tables, *c.wtA, p.windowStart, p.windowEnd, p.windowStartY, p.windowEndY, posA, posYA, c.slew);
+    b.hold();
+    if (c.wtB) b.resolve(*c.tables, *c.wtB, s.b.windowStart, s.b.windowEnd, s.b.windowStartY, s.b.windowEndY, posB, posYB, c.slew);
+
+    const double cut = std::log2(s.cutoff) + (s.keyTrack * (pitch - 60)) / 12 + s.velAmount * (vel - 1) * FILTER_VEL_OCTAVES +
+                       dst[DST_CUTOFF] * MOD_CUTOFF_OCTAVES;
+    if (!cutSet) {
+        cutS = cut1 = cut;
+        cutSet = true;
+    } else
+        cutS += (cut - cutS) * smooth;
+    cut0 = cut1;
+    cut1 = cutS;
+    k0 = k1;
+    k1 += (resonanceK(clamp01(s.resonance + dst[DST_RES])) - k1) * smooth;
+    driveM = clamp01(s.drive + dst[DST_DRIVE]);
+    for (int i = 0; i < 5; ++i) lv0[i] = lv1[i];
+    lv1[0] += (clamp01(s.aLevel + dst[DST_LEVEL_A]) - lv1[0]) * smooth;
+    lv1[1] += (clamp01(s.bLevel + dst[DST_LEVEL_B]) - lv1[1]) * smooth;
+    lv1[2] += (clamp01(s.subLevel + dst[DST_SUB]) - lv1[2]) * smooth;
+    lv1[3] += (clamp01(s.noiseLevel + dst[DST_NOISE]) - lv1[3]) * smooth;
+    lv1[4] += (s.ringLevel - lv1[4]) * smooth;
+    const double pan = std::max(-1.0, std::min(1.0, s.pan + dst[DST_PAN]));
+    const double gl = pan > 0 ? 1 - pan : 1;
+    const double gr = pan < 0 ? 1 + pan : 1;
+    panL0 = panL1;
+    panR0 = panR1;
+    panL1 += (gl - panL1) * smooth;
+    panR1 += (gr - panR1) * smooth;
+    gainTarget = c.gainTarget * std::max(0.0, 1 + dst[DST_AMP]);
+    filter.flush();
+    filterR.flush();
+    if (std::abs(pink0) < 1e-20) pink0 = 0;
+    if (std::abs(pink1) < 1e-20) pink1 = 0;
+    if (std::abs(pink2) < 1e-20) pink2 = 0;
+}
+
+void SynthVoice::unison(const SynthParams& s, double scale) {
+    const auto want = [&](int n) { return scale >= 1 ? n : std::max(1, (int) std::floor(n * scale)); };
+    const int nA = want(s.aUnison);
+    const int nB = want(s.bUnison);
+    uA = copies(nA, wA0, wA1, phA, phCA, plA, pnA);
+    uB = copies(nB, wB0, wB1, phB, phCB, plB, pnB);
+    if (uA == 1) phCA = phA[0];
+    if (uB == 1) phCB = phB[0];
+    maxRatA = place(uA, nA, s.aDetune, s.aSpread, plA, pnA, ratA, gAL, gAR);
+    maxRatB = place(uB, nB, s.bDetune, s.bSpread, plB, pnB, ratB, gBL, gBR);
+    const bool spread = (uA > 1 && s.aSpread > 0) || (uB > 1 && s.bSpread > 0);
+    if (spread && !stereo) {
+        filterR.copyFrom(filter);
+        stereo = true;
+    } else if (!spread && stereo && filter.closeTo(filterR))
+        stereo = false;
+}
+
+int SynthVoice::copies(int n, double* w0, double* w1, double* ph, double centre, double* pl, double* pn) {
+    const double tgt = 1 / std::sqrt((double) n);
+    const double* places = UNISON_PLACES[n];
+    const double* pans = UNISON_PANS[n];
+    int count = 1;
+    for (int i = 0; i < MAX_UNISON; ++i) {
+        const double was = w1[i];
+        w0[i] = was;
+        const double t = i < n ? tgt : 0;
+        if (was == 0 && t > 0) {
+            ph[i] = std::fmod(centre + (n > 1 ? i * UNISON_PHASE : 0), 1.0);
+            pl[i] = places[i];
+            pn[i] = pans[i];
+        }
+        w1[i] = was + std::max(-uniStep, std::min(uniStep, t - was));
+        if (w0[i] > 0 || w1[i] > 0) count = i + 1;
+    }
+    return count;
+}
+
+double SynthVoice::place(int count, int n, double cents, double spread, double* pl, double* pn, double* rat, double* gl, double* gr) {
+    const double* places = UNISON_PLACES[n];
+    const double* pans = UNISON_PANS[n];
+    double max = 1;
+    for (int i = 0; i < count; ++i) {
+        if (i < n) {
+            pl[i] += (places[i] - pl[i]) * uniGlide;
+            pn[i] += (pans[i] - pn[i]) * uniGlide;
+        }
+        rat[i] = std::pow(2.0, (pl[i] * cents) / 1200);
+        if (rat[i] > max) max = rat[i];
+        const double pp = pn[i] * spread;
+        gl[i] = pp > 0 ? 1 - pp : 1;
+        gr[i] = pp < 0 ? 1 + pp : 1;
+    }
+    return max;
+}
+
+double SynthVoice::render(const VoiceParams& p, double e, double blockT, const TableMap& tables) {
+    const SynthParams& s = p.synth;
+    gain += (gainTarget - gain) * 0.002;
+    const double fe = fenv.next();
+    const double t = blockT;
+    const double incA = incA0 + (incA1 - incA0) * t;
+    const double incB = incB0 + (incB1 - incB0) * t;
+    const double incS = incS0 + (incS1 - incS0) * t;
+    double yL = 0, yR = 0;
+    if (e > 0) {
+        const double la = lv0[0] + (lv1[0] - lv0[0]) * t;
+        const double lb = lv0[1] + (lv1[1] - lv0[1]) * t;
+        const double ls = lv0[2] + (lv1[2] - lv0[2]) * t;
+        const double ln = lv0[3] + (lv1[3] - lv0[3]) * t;
+        const double lr = lv0[4] + (lv1[4] - lv0[4]) * t;
+        double sbL = 0, sbR = 0, b0 = 0;
+        if (b.n > 0 && (lb > 0 || lr > 0 || s.fm > 0)) {
+            if (s.fm > 0) b0 = b.read(uB == 1 ? phB[0] : phCB, t);
+            for (int i = 0; i < uB; ++i) {
+                const double raw = b.read(phB[i], t);
+                const double v = raw * (wB0[i] + (wB1[i] - wB0[i]) * t);
+                sbL += v * gBL[i];
+                sbR += v * gBR[i];
+            }
+        }
+        double saL = 0, saR = 0;
+        if (a.n > 0) {
+            const double fmOff = s.fm > 0 ? s.fm * FM_DEPTH * b0 : 0;
+            for (int i = 0; i < uA; ++i) {
+                double ph = phA[i] + fmOff;
+                ph -= std::floor(ph);
+                const double v = a.read(ph, t) * (wA0[i] + (wA1[i] - wA0[i]) * t);
+                saL += v * gAL[i];
+                saR += v * gAR[i];
+            }
+        }
+        double x = la * saL + lb * sbL + lr * saL * sbL;
+        double xr = la * saR + lb * sbR + lr * saR * sbR;
+        if (ls > 0) {
+            if (s.subWave == SubWave::square) {
+                double q = subPhase < 0.5 ? 1 : -1;
+                q += polyBlep(subPhase, incS);
+                const double h = subPhase + 0.5;
+                q -= polyBlep(h >= 1 ? h - 1 : h, incS);
+                x += ls * q * 0.7;
+                xr += ls * q * 0.7;
+            } else {
+                const double q = ls * std::sin(TWO_PI * subPhase);
+                x += q;
+                xr += q;
+            }
+        }
+        if (ln > 0) {
+            const double w = noise.bipolar();
+            double q;
+            if (s.noiseType == NoiseType::pink) {
+                pink0 = 0.99765 * pink0 + w * 0.099046;
+                pink1 = 0.963 * pink1 + w * 0.2965164;
+                pink2 = 0.57 * pink2 + w * 1.0526913;
+                q = ln * (pink0 + pink1 + pink2 + w * 0.1848) * PINK_GAIN;
+            } else
+                q = ln * w;
+            x += q;
+            xr += q;
+        }
+        const double cut = cut0 + (cut1 - cut0) * t + fe * s.envAmount * FILTER_ENV_OCTAVES;
+        const double g = cutoffG(std::pow(2.0, cut), sampleRate);
+        const double k = k0 + (k1 - k0) * t;
+        const int mode = (int) s.filterMode;
+        const double amp = e * gain;
+        yL = driveSample(filter.process(driveSample(x, driveM), mode, g, k), s.sat) * amp;
+        if (stereo) {
+            yR = driveSample(filterR.process(driveSample(xr, driveM), mode, g, k), s.sat) * amp;
+            if (s.width != 1) {
+                const double m = (yL + yR) * 0.5;
+                const double d = (yL - yR) * 0.5 * s.width;
+                yL = m + d;
+                yR = m - d;
+            }
+            yR = softLimit(yR);
+        }
+        yL = softLimit(yL);
+        if (!stereo) yR = yL;
+    }
+    bool synced = false;
+    phCB += incB;
+    if (phCB >= 1) {
+        phCB -= std::floor(phCB);
+        b.wrapped(tables);
+        if (s.sync) {
+            const double frac = incB > 0 ? phCB / incB : 0;
+            phCA = std::fmod(frac * incA, 1.0);
+            for (int j = 0; j < uA; ++j) phA[j] = std::fmod(frac * incA * ratA[j], 1.0);
+            a.wrapped(tables);
+            synced = true;
+        }
+    }
+    for (int i = 0; i < uB; ++i) {
+        const double ph = phB[i] + incB * ratB[i];
+        phB[i] = ph >= 1 ? ph - std::floor(ph) : ph;
+    }
+    if (!synced) {
+        phCA += incA;
+        if (phCA >= 1) {
+            phCA -= std::floor(phCA);
+            a.wrapped(tables);
+        }
+        for (int i = 0; i < uA; ++i) {
+            const double ph = phA[i] + incA * ratA[i];
+            phA[i] = ph >= 1 ? ph - std::floor(ph) : ph;
+        }
+    }
+    subPhase += incS;
+    if (subPhase >= 1) subPhase -= std::floor(subPhase);
+    outL = yL;
+    outR = yR;
+    return (yL + yR) * 0.5;
+}
+
+} // namespace mkwavez
