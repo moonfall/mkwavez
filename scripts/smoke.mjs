@@ -2167,6 +2167,8 @@ async function sessionChecks(label, url, browser) {
   watch(pageB);
   await pageB.goto(url, { waitUntil: 'load' });
   await pageB.waitForSelector('#sec-generate');
+  // It renders at once (autosave paused) and gives up waiting for the lock after ~1.5 s.
+  await pageB.waitForFunction(() => document.querySelector('#session-notice')?.textContent.includes('open in another tab'), null, { timeout: 5000 });
   assert(
     (await pageB.evaluate(() => window.mkwavez.saver.status)) === 'paused' &&
       (await pageB.textContent('#session-notice')).includes('open in another tab') &&
@@ -2233,10 +2235,13 @@ async function sessionChecks(label, url, browser) {
       new Promise((res) => {
         const r = indexedDB.open('mkwavez');
         r.onsuccess = () => {
-          const g = r.result.transaction('kept').objectStore('kept').get('last');
-          g.onsuccess = () => {
+          const tx = r.result.transaction(['kept', 'keptWaveforms']);
+          const g = tx.objectStore('kept').getAll();
+          const c = tx.objectStore('keptWaveforms').count();
+          tx.oncomplete = () => {
             r.result.close();
-            res({ version: g.result?.meta?.version, records: g.result?.records?.length ?? 0 });
+            const last = g.result.at(-1);
+            res({ version: last?.meta?.version, records: last?.count === c.result ? c.result : -1 });
           };
         };
       }),

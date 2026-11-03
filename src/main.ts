@@ -6,7 +6,7 @@ import { WebMidi } from './browser/webMidi';
 import { Autosaver, type SaveScheduler } from './app/autosave';
 import { SessionStore } from './browser/sessionStore';
 import { FILE_EXTENSION, packSessionFile, type SessionMeta } from './core/session';
-import { restoreSession } from './app/restore';
+import { becomeOwner, restoreSession } from './app/restore';
 import { TabLock } from './browser/tabLock';
 import { setTheme, storedTheme, throttle } from './ui/canvas';
 import { UiState, type FrameView, type UiContext } from './ui/context';
@@ -33,10 +33,11 @@ const boot = await restoreSession(() => SessionStore.open(), () => lock.acquire(
 model.loadState(boot.state.model);
 ctx.ui.loadPrefs(boot.state.ui);
 const saver = new Autosaver(model, () => ctx.ui.exportPrefs(), boot.store, browserScheduler());
+// Ownership first: a tab that doesn't own autosave never deletes or writes anything.
+if (!boot.owner) saver.setActive(false);
 saver.init(boot.stored);
 // Never reuse an id that a kept (unrestorable) session uses either.
 model.reserveTableIds(boot.reserve);
-if (!boot.owner) saver.setActive(false);
 ctx.ui.onVoice(() => saver.markDirty());
 ctx.ui.onPrefs(() => saver.markDirty());
 // Hidden / closing: one transaction, issued synchronously (async chains don't survive unload).
@@ -60,8 +61,8 @@ async function takeOver(): Promise<void> {
   );
   if (!ok || !(await lock.takeOver())) return;
   try {
-    saver.adopt(await boot.store.keys());
-    saver.setActive(true);
+    await becomeOwner(saver, boot.store, boot, true);
+    session.sync();
   } catch (e) {
     console.warn('[session] take over failed', e);
     showNotice('Couldn’t take over autosave in this tab.');
@@ -92,21 +93,27 @@ const voices = buildVoices(ctx);
 const sequences = buildSequences(ctx);
 const hooks: SessionHooks = {
   takeOver,
-  hasKept: () => boot.hasKept,
+  keptCount: () => boot.keptCount,
   async exportKept() {
     try {
-      const kept = await boot.store?.loadKept();
+      const latest = (await boot.store?.keptList())?.at(-1);
+      const kept = latest && (await boot.store?.loadKept(latest.key));
       if (!kept) return;
-      downloadBytes(packSessionFile(kept.meta as SessionMeta, kept.records), `mkwavez-unrestored-${stamp(new Date(kept.savedAt))}${FILE_EXTENSION}`);
+      downloadBytes(packSessionFile(kept.meta as SessionMeta, kept.records), `mkwavez-unrestored-${stamp(new Date(kept.info.savedAt))}${FILE_EXTENSION}`);
     } catch (e) {
       console.warn('[session] export of the kept session failed', e);
       showNotice('Couldn’t export the kept session.');
     }
   },
   async discardKept() {
-    if (!window.confirm('Discard the session that couldn’t be restored? It can’t be recovered afterwards.')) return;
-    await boot.store?.clearKept().catch(() => {});
-    boot.hasKept = false;
+    if (!window.confirm('Discard the most recent session that couldn’t be restored? It can’t be recovered afterwards.')) return;
+    try {
+      const latest = (await boot.store?.keptList())?.at(-1);
+      if (latest) await boot.store?.clearKept(latest.key);
+      boot.keptCount = (await boot.store?.keptList())?.length ?? 0;
+    } catch (e) {
+      console.warn('[session] discarding the kept session failed', e);
+    }
   },
 };
 const session = buildSessionMenu(ctx, saver, hooks);
@@ -168,7 +175,21 @@ for (const n of boot.notices) {
       : [],
   );
 }
-if (!boot.owner) otherTabNotice();
+// Not the owner at startup: the app runs (autosave paused) while the lock may still come
+// free (a reload's previous document releasing it); otherwise another tab owns it.
+if (!boot.owner && boot.store) {
+  const store = boot.store;
+  void lock.wait().then(async (got) => {
+    if (!got) return otherTabNotice();
+    try {
+      await becomeOwner(saver, store, boot, false);
+      session.sync();
+    } catch (e) {
+      console.warn('[session] starting autosave failed', e);
+      otherTabNotice();
+    }
+  });
+}
 
 function browserScheduler(): SaveScheduler {
   const ric = (globalThis as { requestIdleCallback?: (fn: () => void, o?: { timeout: number }) => number }).requestIdleCallback;

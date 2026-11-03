@@ -210,8 +210,9 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
     records), so files don't depend on re-render determinism.
 - **Autosave** (`app/autosave.ts`, `app/restore.ts`, `browser/sessionStore.ts`,
   `browser/tabLock.ts`): IndexedDB database `mkwavez` with stores `meta` (key
-  `session`), `waveforms` (keyPath `id`) and `kept` (key `last`: a session that couldn't
-  be restored, set aside intact — meta and every record). Any model topic or UI pref
+  `session`), `waveforms` (keyPath `id`), `kept` (one small entry per session that
+  couldn't be restored: meta, error, max id, count; several may accumulate) and
+  `keptWaveforms` (their records, key `[kept key, id]`). Any model topic or UI pref
   change marks the session dirty; the save runs 1.5 s after the last change (at most 6 s
   after the first), writes new waveform records in chunks of ≤ 64 / ≤ 4 ms with idle-time
   yields, then the meta and the deletion of unreferenced records (evicted waveforms; a
@@ -222,22 +223,30 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   - Restore: only records the restored meta reaches count as saved; any other record
     (from a save whose meta never landed) is deleted, and new ids are allocated above
     every stored id (`AppModel.reserveTableIds`), so a stale record can't stand in for a
-    new waveform.
-  - Quota: if a write fails with QuotaExceededError, unreferenced records are deleted
-    first and the write retried once; still full → error status and a notice (Export).
+    new waveform. A tab that doesn't own autosave deletes nothing (the owner may be
+    mid-save: its new records are "orphans" only until its meta lands).
+  - Quota: if a write fails with QuotaExceededError, the current meta is committed
+    together with the deletion of records it doesn't reference (so no saved meta points
+    at a deleted record; until the rest is written that meta lacks some new waveforms,
+    which a restore would drop with a warning) and the write is retried once; still
+    full → error status and a notice (Export).
     Other write errors set an error status and retry on the next change.
-  - Tabs: one tab owns autosave (Web Locks, `mkwavez-autosave`; a reload waits ≤ 1.5 s
-    for the previous document's lock). Other tabs restore the last save but are paused
-    (notice + Session menu "Use autosave here…"); taking over steals the lock (the old
-    owner pauses) and rewrites every waveform (`adopt`: nothing in the store counts as
-    saved, the rest is deleted at commit). Without Web Locks every tab saves (last
-    writer wins).
+  - Tabs: one tab owns autosave (Web Locks, `mkwavez-autosave`). A tab that can't take
+    the lock at startup renders at once with autosave paused and waits ≤ 1.5 s in the
+    background (a reload's previous document releasing it); then `becomeOwner`: if the
+    store still holds the save it restored, it carries on incrementally (`init`), else
+    rewrites everything. Otherwise it shows a notice + Session menu "Use autosave
+    here…"; taking over steals the lock (the old owner pauses) and rewrites every
+    waveform, the meta and the deletions in one transaction (`adopt`), so an interruption
+    never pairs the old meta with overwritten records. Without Web Locks every tab saves
+    (last writer wins).
   - Startup (`restoreSession`, before the UI is built; the page shows "Loading…"):
     storage unavailable → fresh session, autosave off, a notice; unrestorable save
     (corrupt, or a newer version) → moved to `kept` intact in one transaction, fresh
     session (new ids above the kept ones), a notice offering Export / Discard (also in the
-    Session menu); if it can't be moved, or another tab owns the store, it is left
-    untouched (autosave off / paused).
+    Session menu, for the latest; earlier kept sessions stay); if it can't be moved, it is
+    left untouched (autosave off); if another tab owns the store, it is set aside when
+    this tab becomes the owner (unless replaced meanwhile).
   - New session / Import replace the model (`AppModel.loadState`, undo cleared), clear
     the store and save everything. Imports are capped (256 MB, 4×4096 records, exactly
     2048 samples per waveform) and the timeline is cut to the cap like an add (oldest

@@ -63,8 +63,8 @@ export function showNotice(text: string, actions: { label: string; run: () => vo
 export interface SessionHooks {
   /** Take autosave over from another tab (asks first). */
   takeOver(): Promise<void>;
-  /** A session that couldn't be restored is kept in storage. */
-  hasKept(): boolean;
+  /** Sessions that couldn't be restored, kept in storage. */
+  keptCount(): number;
   exportKept(): Promise<void>;
   discardKept(): Promise<void>;
 }
@@ -144,10 +144,11 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver, hooks: Sessio
   });
 
   const takeOverBtn = h('button', { id: 'session-takeover', class: 'small', hidden: true, onclick: () => void hooks.takeOver() }, 'Use autosave in this tab…');
+  const keptLabel = h('span', {});
   const kept = h(
     'div',
     { id: 'session-kept', class: 'session-kept', hidden: true },
-    h('span', {}, 'A session that couldn’t be restored is kept: '),
+    keptLabel,
     h('button', { id: 'session-kept-export', class: 'small', onclick: () => void hooks.exportKept() }, 'Export it'),
     h('button', { id: 'session-kept-discard', class: 'small', onclick: () => void hooks.discardKept().then(() => menu.sync()) }, 'Discard it'),
   );
@@ -203,7 +204,9 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver, hooks: Sessio
     status.textContent = text;
     status.classList.toggle('session-status-error', saver.status === 'off' || saver.status === 'error');
     takeOverBtn.hidden = saver.status !== 'paused';
-    kept.hidden = !hooks.hasKept();
+    const nKept = hooks.keptCount();
+    kept.hidden = nKept === 0;
+    keptLabel.textContent = nKept === 1 ? 'A session that couldn’t be restored is kept: ' : `${nKept} sessions that couldn’t be restored are kept; the latest: `;
     open.dataset.state = saver.status;
     open.title = text;
   };

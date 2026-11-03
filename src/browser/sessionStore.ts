@@ -1,9 +1,10 @@
 /**
  * IndexedDB storage for the autosaved session (browser only). Object stores: `meta` (key
  * 'session' = the current SessionMeta), `waveforms` (WaveformRecord by id, Float32 samples
- * stored as typed arrays) and `kept` (key 'last': a session that couldn't be restored —
- * corrupt, or saved by a newer version — set aside intact, meta and records, so it can be
- * exported or discarded). Every call may reject (private mode, quota, blocked): callers
+ * stored as typed arrays), `kept` (sessions that couldn't be restored — corrupt, or saved
+ * by a newer version — set aside intact so they can be exported or discarded: a small entry
+ * per session, key = when it was set aside) and `keptWaveforms` (their records, key
+ * [kept key, id]). Every call may reject (private mode, quota, blocked): callers
  * catch and carry on.
  */
 import type { SessionBackend } from '../app/autosave';
@@ -11,12 +12,12 @@ import type { SessionMeta, WaveformRecord } from '../core/session';
 import type { TableId } from '../core/table';
 
 const DB_NAME = 'mkwavez';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const META = 'meta';
 const WAVEFORMS = 'waveforms';
 const KEPT = 'kept';
+const KEPT_WAVEFORMS = 'keptWaveforms';
 const SESSION_KEY = 'session';
-const KEPT_KEY = 'last';
 
 function req<T>(r: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -55,12 +56,14 @@ export interface StoredSession {
   records: Map<TableId, WaveformRecord>;
 }
 
-/** A session set aside because it couldn't be restored. */
-export interface KeptSession {
+/** A session set aside because it couldn't be restored (records stored separately). */
+export interface KeptInfo {
+  key: number;
   savedAt: number;
   error: string;
-  meta: unknown;
-  records: WaveformRecord[];
+  /** Highest waveform id it uses (new ids stay above it). */
+  maxId: number;
+  count: number;
 }
 
 export class SessionStore implements SessionBackend {
@@ -78,7 +81,10 @@ export class SessionStore implements SessionBackend {
       const db = r.result;
       if (!db.objectStoreNames.contains(META)) db.createObjectStore(META);
       if (!db.objectStoreNames.contains(WAVEFORMS)) db.createObjectStore(WAVEFORMS, { keyPath: 'id' });
-      if (!db.objectStoreNames.contains(KEPT)) db.createObjectStore(KEPT);
+      // Schema 2 kept one whole session in `kept`; dropped (unreleased).
+      if (db.objectStoreNames.contains(KEPT) && !db.objectStoreNames.contains(KEPT_WAVEFORMS)) db.deleteObjectStore(KEPT);
+      if (!db.objectStoreNames.contains(KEPT)) db.createObjectStore(KEPT, { keyPath: 'key' });
+      if (!db.objectStoreNames.contains(KEPT_WAVEFORMS)) db.createObjectStore(KEPT_WAVEFORMS);
     };
     const db = await withTimeout(req(r), timeoutMs, 'Opening saved-session storage');
     return new SessionStore(db);
@@ -134,24 +140,53 @@ export class SessionStore implements SessionBackend {
 
   /**
    * Set an unrestorable session aside, intact (meta + records), and empty the live
-   * session, in one transaction. Replaces a previously kept one.
+   * session, in one transaction. Earlier kept sessions stay.
    */
   async keep(meta: unknown, records: readonly WaveformRecord[], error: string): Promise<void> {
-    const tx = this.db.transaction([META, WAVEFORMS, KEPT], 'readwrite');
-    tx.objectStore(KEPT).put({ savedAt: Date.now(), error, meta, records: [...records] } satisfies KeptSession, KEPT_KEY);
+    const tx = this.db.transaction([META, WAVEFORMS, KEPT, KEPT_WAVEFORMS], 'readwrite');
+    const key = Date.now();
+    let maxId = 0;
+    const kw = tx.objectStore(KEPT_WAVEFORMS);
+    for (const r of records) {
+      maxId = Math.max(maxId, r.id);
+      kw.put(r, [key, r.id]);
+    }
+    tx.objectStore(KEPT).put({ key, savedAt: key, error, maxId, count: records.length, meta });
     tx.objectStore(META).delete(SESSION_KEY);
     tx.objectStore(WAVEFORMS).clear();
     await done(tx);
   }
 
-  async loadKept(): Promise<KeptSession | undefined> {
+  /** The kept sessions, oldest first (small entries: no samples are read). */
+  async keptList(): Promise<KeptInfo[]> {
     const tx = this.db.transaction(KEPT, 'readonly');
-    return (await req(tx.objectStore(KEPT).get(KEPT_KEY))) as KeptSession | undefined;
+    const all = (await req(tx.objectStore(KEPT).getAll())) as (KeptInfo & { meta?: unknown })[];
+    return all.map(({ key, savedAt, error, maxId, count }) => ({ key, savedAt, error, maxId, count }));
   }
 
-  async clearKept(): Promise<void> {
-    const tx = this.db.transaction(KEPT, 'readwrite');
-    tx.objectStore(KEPT).delete(KEPT_KEY);
+  /** One kept session in full (for export). */
+  async loadKept(key: number): Promise<{ info: KeptInfo; meta: unknown; records: WaveformRecord[] } | undefined> {
+    const tx = this.db.transaction([KEPT, KEPT_WAVEFORMS], 'readonly');
+    const range = IDBKeyRange.bound([key, -Infinity], [key, Infinity]);
+    const [entry, records] = await Promise.all([
+      req(tx.objectStore(KEPT).get(key)) as Promise<(KeptInfo & { meta: unknown }) | undefined>,
+      req(tx.objectStore(KEPT_WAVEFORMS).getAll(range)) as Promise<WaveformRecord[]>,
+    ]);
+    if (!entry) return undefined;
+    const { meta, ...info } = entry;
+    return { info, meta, records };
+  }
+
+  async clearKept(key: number): Promise<void> {
+    const tx = this.db.transaction([KEPT, KEPT_WAVEFORMS], 'readwrite');
+    tx.objectStore(KEPT).delete(key);
+    tx.objectStore(KEPT_WAVEFORMS).delete(IDBKeyRange.bound([key, -Infinity], [key, Infinity]));
     await done(tx);
+  }
+
+  /** The meta currently saved (to tell whether another tab wrote since). */
+  async loadMeta(): Promise<unknown> {
+    const tx = this.db.transaction(META, 'readonly');
+    return req(tx.objectStore(META).get(SESSION_KEY));
   }
 }

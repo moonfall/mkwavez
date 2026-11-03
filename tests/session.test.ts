@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Autosaver, type SaveScheduler } from '../src/app/autosave';
-import { restoreSession, type RestoreStore } from '../src/app/restore';
+import { becomeOwner, restoreSession, type RestoreStore } from '../src/app/restore';
 import { defaultSessionState } from '../src/app/defaultSession';
 import { AppModel } from '../src/app/model';
 import { compileFormula } from '../src/browser/formulaEval';
@@ -325,7 +325,10 @@ class QuotaError extends Error {
 class MemoryBackend implements RestoreStore {
   meta: SessionMeta | null = null;
   waveforms = new Map<TableId, WaveformRecord>();
-  kept: { meta: unknown; records: WaveformRecord[]; error: string } | undefined;
+  keptSessions: { meta: unknown; records: WaveformRecord[]; error: string }[] = [];
+  get kept() {
+    return this.keptSessions.at(-1);
+  }
   puts = 0;
   written: TableId[] = [];
   fail = false;
@@ -367,12 +370,18 @@ class MemoryBackend implements RestoreStore {
   async load() {
     return { meta: this.meta ?? undefined, records: new Map(this.waveforms) };
   }
-  async loadKept() {
-    return this.kept;
+  async loadMeta() {
+    return this.meta ?? undefined;
+  }
+  async keys() {
+    return [...this.waveforms.keys()];
+  }
+  async keptList() {
+    return this.keptSessions.map((k) => ({ maxId: Math.max(0, ...k.records.map((r) => r.id)) }));
   }
   async keep(meta: unknown, records: readonly WaveformRecord[], error: string) {
     if (this.failKeep) throw new Error('disk error');
-    this.kept = { meta, records: [...records], error };
+    this.keptSessions.push({ meta, records: [...records], error });
     this.meta = null;
     this.waveforms.clear();
   }
@@ -597,7 +606,7 @@ describe('autosave robustness', () => {
     const boot = await restoreSession(async () => be, async () => true);
     expect(boot.restored).toBe(false);
     expect(boot.store).toBe(be);
-    expect(boot.hasKept).toBe(true);
+    expect(boot.keptCount).toBe(1);
     expect(boot.notices[0].kind).toBe('kept');
     expect(boot.notices[0].text).toMatch(/newer version/);
     expect(be.kept!.meta).toEqual(oldMeta);
@@ -616,7 +625,7 @@ describe('autosave robustness', () => {
     // A later restart still finds the kept one and keeps ids clear of it.
     const again = await restoreSession(async () => be, async () => true);
     expect(again.restored).toBe(true);
-    expect(again.hasKept).toBe(true);
+    expect(again.keptCount).toBe(1);
     expect(again.reserve).toBe(Math.max(...oldRecords.keys()) + 1);
   });
 
@@ -754,5 +763,130 @@ describe('import limits', () => {
     for (const w of state.model.wavetables) if (w.pins) for (const r of w.rows) for (const id of r) if (id !== null) expect(ids.has(id)).toBe(true);
     expect(ids.has(st.timeline[0].id)).toBe(false);
     expect(state.model.wavetables[0].rows[0]).toEqual(state.model.timeline.map((t) => t.id));
+  });
+});
+
+describe('tab ownership', () => {
+  /** A scheduler whose idle callbacks run only when released (a chunked save can be paused mid-way). */
+  function heldScheduler() {
+    const s = fakeScheduler();
+    const held: (() => void)[] = [];
+    return {
+      ...s,
+      idle: (fn: () => void) => void held.push(fn),
+      async release() {
+        while (held.length) {
+          held.shift()!();
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      },
+      held,
+    };
+  }
+
+  async function ownerWithSave() {
+    const be = new MemoryBackend();
+    const m = new AppModel(70);
+    m.loadState(defaultSessionState());
+    const sched = heldScheduler();
+    const saver = new Autosaver(m, () => ({}), be, sched, { chunk: 4, budgetMs: 0 });
+    saver.markDirty();
+    await saver.flush();
+    return { be, m, saver, sched };
+  }
+
+  it('a second tab opening while the owner is mid-save deletes nothing (no "waveform missing" on reload)', async () => {
+    const a = await ownerWithSave();
+    a.m.addTables(generatePerlin(DEFAULT_PERLIN, 3, 12), false);
+    a.sched.fire(); // the debounced save starts ...
+    await new Promise((r) => setTimeout(r, 0));
+    expect(a.sched.held.length).toBe(1); // ... and yields after its first chunk, meta not committed yet
+    const written = a.m.timeline.slice(5, 9).map((t) => t.id);
+    for (const id of written) expect(a.be.waveforms.has(id)).toBe(true);
+
+    // Tab B starts now: restores the old meta, doesn't own autosave.
+    const boot = await restoreSession(async () => a.be, async () => false);
+    expect(boot.owner).toBe(false);
+    const b = new AppModel(70);
+    b.loadState(boot.state.model);
+    const sb = new Autosaver(b, () => ({}), a.be, fakeScheduler());
+    sb.setActive(false);
+    sb.init(boot.stored);
+    await new Promise((r) => setTimeout(r, 0));
+    for (const id of written) expect(a.be.waveforms.has(id), `record ${id} kept`).toBe(true);
+    expect(b.exportState().nextTableId).toBeGreaterThan(Math.max(...written)); // still no id reuse
+
+    // A finishes; a reload restores everything without warnings.
+    await a.sched.release();
+    await a.saver.flush();
+    const { state, warnings } = decodeSession(a.be.meta, a.be.waveforms);
+    expect(warnings).toEqual([]);
+    expectSameState(a.m.exportState(), state.model);
+  });
+
+  it('late lock (reload): the same save carries on incrementally', async () => {
+    const a = await ownerWithSave();
+    const boot = await restoreSession(async () => a.be, async () => false);
+    const b = new AppModel(70);
+    b.loadState(boot.state.model);
+    const sb = new Autosaver(b, () => ({}), a.be, fakeScheduler());
+    sb.setActive(false);
+    sb.init(boot.stored);
+    a.be.written = [];
+    await becomeOwner(sb, a.be, boot, false);
+    b.addTables([generateBasic('saw', 0)]);
+    await sb.flush();
+    expect(a.be.written).toEqual([b.timeline.at(-1)!.id]);
+    expectSameState(b.exportState(), restore(a.be).model);
+  });
+
+  it('late lock after another tab saved, or a takeover: everything rewritten in one transaction', async () => {
+    const a = await ownerWithSave();
+    const boot = await restoreSession(async () => a.be, async () => false);
+    const b = new AppModel(70);
+    b.loadState(boot.state.model);
+    const sb = new Autosaver(b, () => ({}), a.be, fakeScheduler());
+    sb.setActive(false);
+    sb.init(boot.stored);
+    // A saves a change B doesn't have (same next id as B's next add, different data).
+    a.m.addTables([generateBasic('saw', 0)]);
+    await a.saver.flush();
+    b.addTables([generateBasic('square', 0)]);
+    a.saver.setActive(false);
+    const commits: number[] = [];
+    const commit = a.be.commit.bind(a.be);
+    a.be.commit = (meta, remove, records = []) => {
+      commits.push(records.length);
+      return commit(meta, remove, records);
+    };
+    const puts = a.be.puts;
+    await becomeOwner(sb, a.be, boot, false);
+    await sb.flush();
+    expect(a.be.puts).toBe(puts); // no chunked puts ...
+    expect(commits).toEqual([b.timeline.length]); // ... one commit with every waveform
+    expectSameState(b.exportState(), restore(a.be).model);
+  });
+
+  it('a save this tab could not restore is set aside when it becomes the owner; kept sessions accumulate', async () => {
+    const a = await ownerWithSave();
+    a.be.keptSessions.push({ meta: { old: true }, records: [], error: 'older' });
+    a.be.meta = { ...a.be.meta!, version: SESSION_VERSION + 1 } as SessionMeta;
+    const ids = [...a.be.waveforms.keys()];
+    const boot = await restoreSession(async () => a.be, async () => false);
+    expect(boot.unrestorable).toBeDefined();
+    expect(a.be.keptSessions).toHaveLength(1); // not the owner: untouched
+    const b = new AppModel(70);
+    b.loadState(boot.state.model);
+    b.reserveTableIds(boot.reserve);
+    const sb = new Autosaver(b, () => ({}), a.be, fakeScheduler());
+    sb.setActive(false);
+    sb.init(boot.stored);
+    a.saver.setActive(false);
+    await becomeOwner(sb, a.be, boot, false);
+    await sb.flush();
+    expect(a.be.keptSessions).toHaveLength(2);
+    expect(a.be.kept!.records.map((r) => r.id).sort()).toEqual(ids.sort());
+    expect(boot.keptCount).toBe(2);
+    expectSameState(b.exportState(), restore(a.be).model);
   });
 });

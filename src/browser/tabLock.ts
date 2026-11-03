@@ -27,15 +27,18 @@ export class TabLock {
     return !!this.locks;
   }
 
+  /** Take the lock if no other tab holds it (no waiting). True when this tab owns autosave. */
+  acquire(): Promise<boolean> {
+    return this.request({ ifAvailable: true });
+  }
+
   /**
-   * Take the lock if no other tab holds it. Resolves true when this tab owns autosave. A
-   * reload's previous document may still hold it for a moment, so a busy lock is waited
-   * for briefly (`waitMs`) before giving up.
+   * Wait up to `ms` for the lock (a reload's previous document may still hold it for a
+   * moment). The app runs meanwhile, with autosave paused.
    */
-  async acquire(waitMs = 1500): Promise<boolean> {
-    if (await this.request({ ifAvailable: true })) return true;
-    if (typeof AbortSignal === 'undefined' || !('timeout' in AbortSignal)) return false;
-    return this.request({ signal: AbortSignal.timeout(waitMs) });
+  wait(ms = 1500): Promise<boolean> {
+    if (typeof AbortSignal === 'undefined' || !('timeout' in AbortSignal)) return Promise.resolve(false);
+    return this.request({ signal: AbortSignal.timeout(ms) });
   }
 
   /** Take the lock from the tab holding it. */

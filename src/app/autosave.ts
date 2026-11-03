@@ -86,6 +86,8 @@ export class Autosaver {
   private urgent = false;
   private suspended = false;
   private active = true;
+  /** The next save writes everything in one transaction (after `adopt`). */
+  private atomicNext = false;
   /** Bumped by every save; a save whose number is stale doesn't commit (superseded). */
   private seq = 0;
   private readonly delay: number;
@@ -120,11 +122,17 @@ export class Autosaver {
    * After a restore: `records` = everything in the store. Only records the restored
    * timeline reaches (its waveforms and the samples their refs use) count as saved; the
    * rest are orphans (from a save whose meta never landed) and are deleted. New waveform
-   * ids are allocated above every stored id.
+   * ids are allocated above every stored id. A tab that doesn't own autosave
+   * (`setActive(false)` first) deletes nothing: the owner may be mid-save, and those
+   * records are only "orphans" until its meta lands.
    */
   init(records: Iterable<Pick<WaveformRecord, 'id' | 'enc' | 'ref'>>): void {
     const all = new Map<TableId, Pick<WaveformRecord, 'id' | 'enc' | 'ref'>>();
     for (const r of records) all.set(r.id, r);
+    if (!this.active) {
+      this.reserveAbove(all.keys());
+      return;
+    }
     for (const t of this.model.timeline) {
       const r = all.get(t.id);
       if (!r) continue;
@@ -148,10 +156,12 @@ export class Autosaver {
 
   /**
    * Take over a store another tab wrote: nothing in it counts as saved (its ids may hold
-   * other waveforms); the next save rewrites every waveform and deletes the rest.
+   * other waveforms); the next save rewrites every waveform and deletes the rest, all in
+   * one transaction, so an interruption never pairs the old meta with overwritten records.
    */
   adopt(storedIds: Iterable<TableId>): void {
     this.seq++;
+    this.atomicNext = true;
     this.stored.clear();
     this.refs.clear();
     this.owners = new WeakMap();
@@ -314,8 +324,28 @@ export class Autosaver {
       const state = this.model.exportState();
       const meta = encodeMeta({ model: state, ui: this.uiPrefs() }, Date.now());
       const live = this.live(state.timeline, []);
-      // New waveforms, in chunks (yielding to the main thread unless urgent).
       const written = new Set<TableId>();
+      if (this.atomicNext) {
+        // Takeover: every waveform, the meta and the deletions in one transaction.
+        const records: WaveformRecord[] = [];
+        for (const t of state.timeline) {
+          if (this.stored.has(t.id)) continue;
+          const rec = this.encode(t, written);
+          records.push(rec);
+          written.add(t.id);
+        }
+        const all = this.live(state.timeline, records);
+        const remove = this.removable(all);
+        await backend.commit(meta, remove, records);
+        if (superseded()) return;
+        this.atomicNext = false;
+        this.noteWritten(records);
+        this.noteRemoved(remove);
+        this.lastSaved = Date.now();
+        this.ok();
+        return;
+      }
+      // New waveforms, in chunks (yielding to the main thread unless urgent).
       let batch: WaveformRecord[] = [];
       let collected = false;
       let t0 = this.sched.now();
@@ -326,12 +356,15 @@ export class Autosaver {
         try {
           await backend.putWaveforms(b);
         } catch (e) {
-          // Storage full: delete what nothing current references, then try once more.
+          // Storage full: free what the current state doesn't need, then try once more. The
+          // deletions go with the current meta (one transaction), so no saved meta is
+          // left pointing at a deleted record; until the rest is written, that meta lacks
+          // some new waveforms, which a restore drops (with a warning).
           if (!isQuotaError(e) || collected) throw e;
           collected = true;
           const ids = this.removable(new Set([...live, ...b.map((r) => r.id)]));
-          if (!ids.length) throw e;
-          await backend.remove(ids);
+          if (!ids.length || superseded()) throw e;
+          await backend.commit(meta, ids);
           this.noteRemoved(ids);
           await backend.putWaveforms(b);
         }
