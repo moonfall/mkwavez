@@ -12,14 +12,31 @@ import { clampVoiceWindow, DEFAULT_VOICE, followEdit, fullWindow, voiceWindow, t
 import {
   builtinWavetables,
   cellAt,
+  clearSlot,
   composeMaps,
+  duplicateWavetable,
+  FIRST_USER_WAVETABLE_ID,
+  moveSlot,
+  newWavetable,
+  normalizeWrite,
   pinnedIds,
+  placeTable,
+  removeSlot,
   removeTables,
+  resize1D,
+  resize2D,
+  setHead,
+  setWrite,
   TIMELINE_WAVETABLE_ID,
   writeTables,
+  type Cell,
   type Interp,
+  type SlotTarget,
   type Wavetable,
+  type WavetableEdit,
   type WavetableId,
+  type WavetableShape,
+  type WriteSettings,
 } from '../core/wavetable';
 import { windowIds } from '../core/wavetablePlayback';
 
@@ -51,11 +68,13 @@ interface Snapshot {
   selectedId: TableId | null;
   windows: Map<number, Windows>;
   steps: Map<number, readonly number[]>;
+  /** Undo puts voices back on the wavetable they were on (a deleted wavetable's voices). */
+  restoreVoiceWavetables: boolean;
 }
 
 export class AppModel {
   timeline: readonly WaveTable[] = [];
-  /** Built-ins first (Timeline, Last batch, Batches, Grid), then user wavetables (phase 2). */
+  /** Built-ins first (Timeline, Last batch, Batches, Grid), then user wavetables (ids from 16). */
   wavetables: readonly Wavetable[] = builtinWavetables();
   voices: readonly VoiceParams[] = [];
   sequences: readonly SequenceData[] = [];
@@ -349,6 +368,137 @@ export class AppModel {
     this.emit('wavetables');
   }
 
+  /** User wavetables only (built-ins are read-only). */
+  private userWavetable(id: WavetableId): Wavetable | undefined {
+    const wt = this.wavetable(id);
+    return wt && !wt.builtin ? wt : undefined;
+  }
+
+  /** Replace a wavetable's settings (not content): not undoable, kept across undo. */
+  private setSettings(id: WavetableId, fn: (wt: Wavetable) => Wavetable): void {
+    const wt = this.userWavetable(id);
+    if (!wt) return;
+    const next = fn(wt);
+    if (next === wt) return;
+    this.wavetables = this.wavetables.map((w) => (w.id === id ? next : w));
+    this.emit('wavetables');
+  }
+
+  /**
+   * An undoable content edit of a user wavetable: voice windows on it follow (see
+   * followEdit). Returns false if nothing changed (no undo step).
+   */
+  private editWavetable(id: WavetableId, fn: (wt: Wavetable) => WavetableEdit): boolean {
+    const wt = this.userWavetable(id);
+    if (!wt) return false;
+    const e = fn(wt);
+    if (e.wt === wt) return false;
+    this.snapshot();
+    this.wavetables = this.wavetables.map((w) => (w.id === id ? e.wt : w));
+    this.voices = followEdit(this.voices, wt, e);
+    this.emit('wavetables', 'voices', 'undo');
+    return true;
+  }
+
+  /** Next free user wavetable id. */
+  private newWavetableId(): WavetableId {
+    return Math.max(FIRST_USER_WAVETABLE_ID - 1, ...this.wavetables.map((w) => w.id)) + 1;
+  }
+
+  /** `base`, or `base 2`, `base 3`, … — the first name no wavetable has. */
+  private uniqueName(base: string, numberFirst = false): string {
+    const used = new Set(this.wavetables.map((w) => w.name));
+    if (!numberFirst && !used.has(base)) return base;
+    for (let n = numberFirst ? 1 : 2; ; n++) if (!used.has(`${base} ${n}`)) return `${base} ${n}`;
+  }
+
+  private addWavetable(wt: Wavetable): Wavetable {
+    this.snapshot();
+    this.wavetables = [...this.wavetables, wt];
+    this.emit('wavetables', 'undo');
+    return wt;
+  }
+
+  /** A new, empty user wavetable (frozen; see newWavetable): 1D variable, 2D W × H (8×8) or Rows. Undoable. */
+  createWavetable(shape: WavetableShape, w?: number, h?: number): Wavetable {
+    return this.addWavetable(newWavetable(this.newWavetableId(), this.uniqueName('Wavetable', true), shape, w, h));
+  }
+
+  /** An editable, frozen copy of any wavetable (built-ins included), named "… copy". Undoable. */
+  duplicateWavetable(id: WavetableId): Wavetable | null {
+    const wt = this.wavetable(id);
+    if (!wt) return null;
+    return this.addWavetable(duplicateWavetable(wt, this.newWavetableId(), this.uniqueName(`${wt.name} copy`)));
+  }
+
+  /** Rename a user wavetable (trimmed; empty names are ignored). Undoable. */
+  renameWavetable(id: WavetableId, name: string): void {
+    const wt = this.userWavetable(id);
+    const n = name.trim().slice(0, 40);
+    if (!wt || !n || n === wt.name) return;
+    this.snapshot();
+    this.wavetables = this.wavetables.map((w) => (w.id === id ? { ...w, name: n } : w));
+    this.emit('wavetables', 'undo');
+  }
+
+  /**
+   * Delete a user wavetable; voices on it fall back to the Timeline (whole window). Its
+   * waveforms are no longer pinned (evictable again). Undo brings it and those voices back.
+   */
+  deleteWavetable(id: WavetableId): void {
+    if (!this.userWavetable(id)) return;
+    this.snapshot(true);
+    this.wavetables = this.wavetables.filter((w) => w.id !== id);
+    const tl = this.wavetable(TIMELINE_WAVETABLE_ID)!;
+    this.voices = this.voices.map((v) => (v.wavetableId === id ? clampVoiceWindow({ ...v, wavetableId: tl.id, ...fullWindow(tl) }, tl) : v));
+    this.emit('wavetables', 'voices', 'undo');
+  }
+
+  setWavetableLive(id: WavetableId, live: boolean): void {
+    this.setSettings(id, (wt) => (wt.live === live ? wt : { ...wt, live }));
+  }
+
+  /** Write head settings (coerced per shape; a head that can't write any more restarts). */
+  setWavetableWrite(id: WavetableId, patch: Partial<WriteSettings>): void {
+    this.setSettings(id, (wt) => setWrite(wt, patch));
+  }
+
+  /** Move the write head (clamped; see setHead). */
+  setWavetableHead(id: WavetableId, x: number, y: number): void {
+    this.setSettings(id, (wt) => setHead(wt, x, y));
+  }
+
+  /** 1D: variable, or fixed at `len` slots (drops slots from the end when shrinking). Undoable. */
+  resizeWavetable1D(id: WavetableId, fixed: boolean, len?: number): boolean {
+    return this.editWavetable(id, (wt) => resize1D(wt, fixed, len));
+  }
+
+  /** 2D: resize to W × H (cells outside are dropped). Undoable. */
+  resizeWavetable2D(id: WavetableId, w: number, h: number): boolean {
+    return this.editWavetable(id, (wt) => resize2D(wt, w, h));
+  }
+
+  /** Put a timeline table into a user wavetable (replace / insert / new row). Undoable. */
+  placeInWavetable(id: WavetableId, target: SlotTarget, tableId: TableId): boolean {
+    if (!this.byId.has(tableId)) return false;
+    return this.editWavetable(id, (wt) => placeTable(wt, target, tableId));
+  }
+
+  /** Move (or copy) a slot within a user wavetable. Undoable. */
+  moveInWavetable(id: WavetableId, from: Cell, target: SlotTarget, copy = false): boolean {
+    return this.editWavetable(id, (wt) => moveSlot(wt, from, target, copy));
+  }
+
+  /** Empty a slot (it stays). Undoable. */
+  clearWavetableSlot(id: WavetableId, x: number, y: number): boolean {
+    return this.editWavetable(id, (wt) => clearSlot(wt, x, y));
+  }
+
+  /** Remove a slot (variable lines close up; see removeSlot). Undoable. */
+  removeWavetableSlot(id: WavetableId, x: number, y: number): boolean {
+    return this.editWavetable(id, (wt) => removeSlot(wt, x, y));
+  }
+
   // ---- sequences ----
 
   addSequence(voiceId: number | null, steps: readonly number[] = [], length = 16): SequenceData {
@@ -395,7 +545,7 @@ export class AppModel {
 
   // ---- undo ----
 
-  private snapshot(): void {
+  private snapshot(restoreVoiceWavetables = false): void {
     this.gestureKey = null;
     this.undoStack.push({
       timeline: this.timeline,
@@ -403,6 +553,7 @@ export class AppModel {
       wavetables: this.wavetables,
       windows: new Map(this.voices.map((v) => [v.id, windowsOf(v)])),
       steps: new Map(this.sequences.map((s) => [s.id, s.steps])),
+      restoreVoiceWavetables,
     });
     if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift();
   }
@@ -413,16 +564,21 @@ export class AppModel {
     if (!s) return;
     const parentsChanged = this.setTimeline(s.timeline);
     this.selectedId = s.selectedId !== null && this.byId.has(s.selectedId) ? s.selectedId : (s.timeline.at(-1)?.id ?? null);
-    // Contents come back; settings changed since (interpolation) are kept.
+    // Contents (slots, head, size, name) come back; settings changed since (interpolation,
+    // Live / Frozen, write head settings) are kept.
     const now = new Map(this.wavetables.map((w) => [w.id, w]));
     this.wavetables = s.wavetables.map((w) => {
       const cur = now.get(w.id);
-      return cur && cur.interp !== w.interp ? { ...w, interp: cur.interp } : w;
+      if (!cur || (cur.interp === w.interp && cur.live === w.live && cur.write === w.write)) return w;
+      // The write settings must suit the restored size (fixed / variable 1D).
+      return { ...w, interp: cur.interp, live: cur.live, write: normalizeWrite(w.shape, w.fixed, cur.write) };
     });
     this.voices = this.voices.map((v) => {
       const w = s.windows.get(v.id);
-      // A voice that has switched wavetable since keeps its window.
-      const next = w && w.wavetableId === v.wavetableId ? { ...v, ...w } : v;
+      // A voice that has switched wavetable since keeps its window (unless the step moved
+      // it: a deleted wavetable's voices go back to it).
+      const back = s.restoreVoiceWavetables && w && w.wavetableId !== v.wavetableId && this.wavetable(w.wavetableId);
+      const next = w && (w.wavetableId === v.wavetableId || back) ? { ...v, ...w } : v;
       const wt = this.wavetable(next.wavetableId);
       return wt ? clampVoiceWindow(next, wt) : next;
     });
