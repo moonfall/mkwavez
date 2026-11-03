@@ -41,9 +41,49 @@ export function pickMateIndex(seed: number, poolLength: number): number {
   return poolLength > 0 ? new Prng(seed).int(poolLength) : -1;
 }
 
-function amountsFor(req: MutateRequest, count: number): number[] {
-  if (req.mode === 'single' || req.mode === 'chain') return new Array<number>(count).fill(req.amount);
-  return sweepAmounts(count, req.amount, req.mode);
+/** Number of tables an Apply makes (1 for 'single'). */
+export function batchCount(req: MutateRequest): number {
+  return req.mode === 'single' ? 1 : Math.max(1, Math.round(req.count));
+}
+
+/** Amount of table i: A for single / chain, the sweep amount for lin / log. */
+export function batchAmountAt(req: MutateRequest, i: number): number {
+  if (req.mode === 'single' || req.mode === 'chain') return req.amount;
+  return sweepAmounts(batchCount(req), req.amount, req.mode)[i];
+}
+
+/**
+ * Table i of an Apply, exactly as mutateBatch() returns it. Lets a preview compute the
+ * batch incrementally (shown table first). A chain needs `prev` = table i−1's data
+ * (ignored for i = 0 and for the other modes); `mate` as for mutateBatch().
+ */
+export function mutateBatchTable(
+  req: MutateRequest,
+  source: WaveTable,
+  i: number,
+  prev?: Float32Array,
+  mate?: WaveTable,
+): GeneratedTable {
+  const count = batchCount(req);
+  const seed = req.seed >>> 0;
+  const ctx = req.mutation === 'breed' && mate ? { breedPool: [mate.data] } : {};
+  const parents: TableId[] = req.mutation === 'breed' && mate ? [source.id, mate.id] : [source.id];
+  const amount = batchAmountAt(req, i);
+  let data: Float32Array;
+  if (req.mode === 'chain') {
+    if (i > 0 && !prev) throw new Error('mutateBatchTable: chain step needs the previous table');
+    data = mutate(req.mutation, i > 0 ? prev! : source.data, req.amount, chainStepSeed(seed, i), ctx);
+  } else {
+    data = mutate(req.mutation, source.data, amount, seed, ctx);
+  }
+  const recipe: Recipe = {
+    op: 'mutate',
+    params: { mutation: req.mutation, amount, batchAmount: req.amount, mode: req.mode },
+    seed,
+    parents,
+    batch: { index: i, count },
+  };
+  return { data, recipe };
 }
 
 /**
@@ -51,30 +91,8 @@ function amountsFor(req: MutateRequest, count: number): number[] {
  * is the identity); it is recorded as the second parent.
  */
 export function mutateBatch(req: MutateRequest, source: WaveTable, mate?: WaveTable): GeneratedTable[] {
-  const count = req.mode === 'single' ? 1 : Math.max(1, Math.round(req.count));
-  const seed = req.seed >>> 0;
-  const ctx = req.mutation === 'breed' && mate ? { breedPool: [mate.data] } : {};
-  const parents: TableId[] = req.mutation === 'breed' && mate ? [source.id, mate.id] : [source.id];
-  const amounts = amountsFor(req, count);
   const out: GeneratedTable[] = [];
-  let chain = source.data;
-  for (let i = 0; i < count; i++) {
-    let data: Float32Array;
-    if (req.mode === 'chain') {
-      chain = mutate(req.mutation, chain, req.amount, chainStepSeed(seed, i), ctx);
-      data = chain;
-    } else {
-      data = mutate(req.mutation, source.data, amounts[i], seed, ctx);
-    }
-    const recipe: Recipe = {
-      op: 'mutate',
-      params: { mutation: req.mutation, amount: amounts[i], batchAmount: req.amount, mode: req.mode },
-      seed,
-      parents,
-      batch: { index: i, count },
-    };
-    out.push({ data, recipe });
-  }
+  for (let i = 0; i < batchCount(req); i++) out.push(mutateBatchTable(req, source, i, out[i - 1]?.data, mate));
   return out;
 }
 

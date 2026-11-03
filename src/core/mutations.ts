@@ -12,39 +12,51 @@ import { lerpAt, shape, shapeFrom } from './shape';
 
 const N = TABLE_SIZE;
 
+/**
+ * The mutation library. `hint` is a one-line description of how amount a maps onto the
+ * effect (a = 0 is always the source unchanged); `seeded` marks mutations whose result
+ * depends on the seed (the others ignore it).
+ */
 export const MUTATIONS = [
-  { group: 'Morph', id: 'toSaw', label: 'Toward saw' },
-  { group: 'Morph', id: 'toSine', label: 'Toward sine' },
-  { group: 'Morph', id: 'toSquare', label: 'Toward square' },
-  { group: 'Morph', id: 'toTri', label: 'Toward triangle' },
-  { group: 'Morph', id: 'toNoise', label: 'Toward noise' },
-  { group: 'Waveshape', id: 'foldSmooth', label: 'Fold + smooth' },
-  { group: 'Waveshape', id: 'fold', label: 'Fold' },
-  { group: 'Waveshape', id: 'pm', label: 'Self phase mod' },
-  { group: 'Waveshape', id: 'sync', label: 'Hard sync' },
-  { group: 'Waveshape', id: 'ring', label: 'Ring mod' },
-  { group: 'Waveshape', id: 'rect', label: 'Rectify' },
-  { group: 'Waveshape', id: 'crush', label: 'Crush' },
-  { group: 'Waveshape', id: 'warp', label: 'Phase warp' },
-  { group: 'Waveshape', id: 'nwarp', label: 'Noise warp' },
-  { group: 'Spectral', id: 'smooth', label: 'Smooth' },
-  { group: 'Spectral', id: 'spread', label: 'Spread up' },
-  { group: 'Spectral', id: 'stretch', label: 'Stretch' },
-  { group: 'Spectral', id: 'comb', label: 'Comb' },
-  { group: 'Spectral', id: 'formant', label: 'Formant' },
-  { group: 'Spectral', id: 'blur', label: 'Blur' },
-  { group: 'Spectral', id: 'odd', label: 'Odd only' },
-  { group: 'Random', id: 'jitter', label: 'Jitter' },
-  { group: 'Random', id: 'scramble', label: 'Scramble' },
+  { group: 'Morph', id: 'toSaw', label: 'Toward saw', hint: 'Blend (1−a)·x + a·saw' },
+  { group: 'Morph', id: 'toSine', label: 'Toward sine', hint: 'Harmonics ≥ 2 scaled by (1−a)²' },
+  { group: 'Morph', id: 'toSquare', label: 'Toward square', hint: 'Blend (1−a)·x + a·square' },
+  { group: 'Morph', id: 'toTri', label: 'Toward triangle', hint: 'Blend (1−a)·x + a·triangle' },
+  { group: 'Morph', id: 'toNoise', label: 'Toward noise', hint: 'Blend toward a seeded noise cycle', seeded: true },
+  { group: 'Waveshape', id: 'foldSmooth', label: 'Fold + smooth', hint: 'Fold at gain 1 + 3a, then Smooth at a/2' },
+  { group: 'Waveshape', id: 'fold', label: 'Fold', hint: 'Triangle folder, gain 1 + 3a' },
+  { group: 'Waveshape', id: 'pm', label: 'Self phase mod', hint: 'Read x at i + 0.3·a·N·x[i]' },
+  { group: 'Waveshape', id: 'sync', label: 'Hard sync', hint: 'Read x at i·(1 + 3a) mod N' },
+  { group: 'Waveshape', id: 'ring', label: 'Ring mod', hint: '× (1−a) + a·sin(m·p), m = 2–7 seeded', seeded: true },
+  { group: 'Waveshape', id: 'rect', label: 'Rectify', hint: 'Blend toward 2·|x| − 1' },
+  { group: 'Waveshape', id: 'crush', label: 'Crush', hint: 'Quantise to 2 + 62·(1−a)³ levels' },
+  { group: 'Waveshape', id: 'warp', label: 'Phase warp', hint: 'Read offset by 0.12·a·N·sin(p)' },
+  { group: 'Waveshape', id: 'nwarp', label: 'Noise warp', hint: 'Read offset by 0.25·a·N·seeded noise', seeded: true },
+  { group: 'Spectral', id: 'smooth', label: 'Smooth', hint: 'Gaussian low-pass at harmonic 2 / a^1.5' },
+  { group: 'Spectral', id: 'spread', label: 'Spread up', hint: 'Harmonic k gains a·(k−1)/k of harmonic k−1' },
+  { group: 'Spectral', id: 'stretch', label: 'Stretch', hint: 'Harmonic k moves to round(k·(1 + 0.6a))' },
+  { group: 'Spectral', id: 'comb', label: 'Comb', hint: 'Harmonics weighted (1−a) + a·comb (period 6)' },
+  { group: 'Spectral', id: 'formant', label: 'Formant', hint: 'Up to (1 + 2a)× around a seeded centre h4–h24', seeded: true },
+  { group: 'Spectral', id: 'blur', label: 'Blur', hint: 'Magnitudes mixed by a toward their neighbours' },
+  { group: 'Spectral', id: 'odd', label: 'Odd only', hint: 'Even harmonics scaled by (1−a)²' },
+  { group: 'Random', id: 'jitter', label: 'Jitter', hint: 'Seeded magnitude + phase noise, scaled by a', seeded: true },
+  { group: 'Random', id: 'scramble', label: 'Scramble', hint: 'Seeded phase offsets up to ±a·π', seeded: true },
   // Legacy (M2): superseded by the Breed tab (core/breed.ts); kept so older recipes
   // re-render. Not offered in the Mutate picker.
-  { group: 'Random', id: 'breed', label: 'Breed', legacy: true },
+  { group: 'Random', id: 'breed', label: 'Breed', hint: 'Magnitudes pulled by a toward a mate', seeded: true, legacy: true },
 ] as const;
 
 /** Mutations offered in the UI (legacy ones only re-render old recipes). */
 export const MUTATION_CHOICES = MUTATIONS.filter((m) => !('legacy' in m));
 
 export type MutationId = (typeof MUTATIONS)[number]['id'];
+export type MutationInfo = (typeof MUTATIONS)[number];
+
+/** True if the mutation's result depends on the seed. */
+export function mutationUsesSeed(id: MutationId): boolean {
+  const m = MUTATIONS.find((x) => x.id === id);
+  return !!m && 'seeded' in m && m.seeded;
+}
 
 export interface MutationContext {
   /** Candidate tables for 'breed' (prototype: the first targeted voice's window). */

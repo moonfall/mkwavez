@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AppModel } from '../src/app/model';
 import { DEFAULT_PERLIN, generateBasic, generatePerlin, renderRecipe } from '../src/core/generators';
-import { chainStepSeed, mutateBatch, pickMateIndex, type MutateMode } from '../src/core/mutateBatch';
+import { chainStepSeed, mutateBatch, mutateBatchTable, pickMateIndex, type MutateMode } from '../src/core/mutateBatch';
 import { mutate, MUTATIONS } from '../src/core/mutations';
 import { makeTable, type WaveTable } from '../src/core/table';
 
@@ -70,6 +70,42 @@ describe('mutateBatch', () => {
       }
     });
   }
+
+  for (const mode of ['lin', 'log', 'chain'] as MutateMode[]) {
+    it(`mutateBatchTable (the preview) equals mutateBatch (Add batch) table by table (${mode})`, () => {
+      for (const m of ['fold', 'jitter', 'formant', 'smooth'] as const) {
+        const req = { mutation: m, amount: 0.7, seed: 99, mode, count: 6 };
+        const batch = mutateBatch(req, src);
+        // Sweeps can compute in any order (shown card first); a chain goes in order.
+        const order = mode === 'chain' ? [0, 1, 2, 3, 4, 5] : [5, 2, 0, 4, 1, 3];
+        const pv: Float32Array[] = [];
+        for (const i of order) {
+          const t = mutateBatchTable(req, src, i, pv[i - 1]);
+          pv[i] = t.data;
+          expect(same(t.data, batch[i].data), `${m} #${i}`).toBe(true);
+          expect(t.recipe).toEqual(batch[i].recipe);
+        }
+      }
+    });
+  }
+
+  it('Add shown: one table of a batch keeps its batch position and re-renders alone', () => {
+    for (const mode of ['lin', 'log', 'chain'] as MutateMode[]) {
+      const req = { mutation: 'scramble' as const, amount: 0.5, seed: 4, mode, count: 8 };
+      const batch = mutateBatch(req, src);
+      const { tables, resolve } = realize([batch[5]]);
+      expect(tables[0].recipe.batch).toEqual({ index: 5, count: 8 });
+      expect(same(renderRecipe(tables[0].recipe, { resolveTable: resolve }), batch[5].data), mode).toBe(true);
+    }
+    // Last card of a sweep = a single Apply at A.
+    const [single] = mutateBatch({ mutation: 'fold', amount: 0.4, seed: 4, mode: 'single', count: 1 }, src);
+    const lin = mutateBatch({ mutation: 'fold', amount: 0.4, seed: 4, mode: 'lin', count: 8 }, src);
+    expect(same(single.data, lin[7].data)).toBe(true);
+  });
+
+  it('chain steps need the previous table', () => {
+    expect(() => mutateBatchTable({ mutation: 'fold', amount: 0.4, seed: 1, mode: 'chain', count: 3 }, src, 2)).toThrow();
+  });
 
   it('re-render needs the parent', () => {
     const [t] = mutateBatch({ mutation: 'fold', amount: 0.5, seed: 1, mode: 'single', count: 1 }, src);
