@@ -84,6 +84,8 @@ export function slider(opts: {
   value: number;
   format?: (v: number) => string;
   onInput: (v: number) => void;
+  /** Fired when the user releases the slider (change event). */
+  onCommit?: (v: number) => void;
   extra?: Node;
 }): Slider {
   const fmt = opts.format ?? ((v: number) => String(v));
@@ -101,6 +103,7 @@ export function slider(opts: {
     val.textContent = fmt(v);
     opts.onInput(v);
   });
+  if (opts.onCommit) input.addEventListener('change', () => opts.onCommit!(Number(input.value)));
   const right = h('span', { style: 'display:flex;gap:6px;align-items:center' }, opts.extra ?? null, val);
   const el = h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, opts.label), right), input);
   return {

@@ -68,6 +68,68 @@ describe('SynthEngine', () => {
   });
 });
 
+describe('SynthEngine robustness', () => {
+  function pair(interp: 'blend' | 'step') {
+    const mk = () => {
+      const e = new SynthEngine(SR);
+      (['sine', 'saw', 'square', 'tri'] as const).forEach((w, i) => e.addTable(i + 1, buildMipSet(generateBasic(w, 0).data)));
+      e.setWavetable(0, Int32Array.from([1, 2, 3, 4]));
+      e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 1, windowEnd: 3, interp, lfoRate: 3, lfoDepth: 1, sustain: 1 });
+      e.noteOn(1, 220, SR * 10);
+      return e;
+    };
+    return [mk(), mk()] as const;
+  }
+
+  for (const interp of ['blend', 'step'] as const) {
+    it(`${interp}: front eviction with remapped window does not change the output`, () => {
+      const [a, b] = pair(interp);
+      const oa = render(a, 4096);
+      const ob = render(b, 4096);
+      expect(ob).toEqual(oa);
+      // Evict table 1 (index 0): wavetable re-indexes, window shifts by one (atomically).
+      b.removeTables([1]);
+      b.setWavetable(0, Int32Array.from([2, 3, 4]));
+      b.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 0, windowEnd: 2, interp, lfoRate: 3, lfoDepth: 1, sustain: 1 });
+      expect(render(b, 8192)).toEqual(render(a, 8192));
+    });
+  }
+
+  it('step mode keeps the held table until the phase wraps, even if the window moves', () => {
+    const [a, b] = pair('step');
+    render(a, 1000);
+    render(b, 1000);
+    // Point b at a different table mid-cycle: the rest of the current cycle must match a.
+    b.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', windowStart: 0, windowEnd: 0, interp: 'step', lfoRate: 3, lfoDepth: 1, sustain: 1 });
+    const oa = render(a, 40);
+    const ob = render(b, 40); // 220 Hz cycle = ~218 samples; 40 samples stay within it only if not at a wrap
+    expect(ob).toEqual(oa);
+  });
+
+  it('a missing table holds the previous one instead of going silent', () => {
+    const e = setup();
+    e.setTransport(true, 132);
+    render(e, 2048);
+    e.setWavetable(0, Int32Array.from([99, 98, 97]));
+    const out = render(e, 2048);
+    expect(rms(out)).toBeGreaterThan(0.01);
+  });
+
+  it('removeVoice fades out (no click) and then frees the voice', () => {
+    const e = new SynthEngine(SR);
+    e.addTable(1, buildMipSet(generateBasic('sine', 0).data));
+    e.setWavetable(0, Int32Array.from([1]));
+    e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1', sustain: 1, level: 1 });
+    e.noteOn(1, 110, SR);
+    const before = render(e, SR / 4);
+    e.removeVoice(1);
+    const after = render(e, SR / 10);
+    expect(Math.abs(after[0] - before[before.length - 1])).toBeLessThan(0.01); // sine step ~0.003
+    expect(Math.abs(after[after.length - 1])).toBeLessThan(1e-4);
+    expect(e.voiceCount).toBe(0);
+  });
+});
+
 describe('Adsr', () => {
   it('attacks, decays to sustain, releases to zero', () => {
     const a = new Adsr();

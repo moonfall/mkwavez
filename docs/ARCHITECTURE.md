@@ -48,7 +48,8 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   with the engine.
 - **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate.
 - **Undo** — snapshots of the timeline array (references), selection, voice windows
-  and sequence steps; 40 deep. Covers adds and note edits, not slider moves.
+  and sequence steps; 40 deep. Covers adds, note edits and window edits (a slider
+  drag is one step); other slider moves are not undoable.
 
 ## Threads and messages
 
@@ -66,11 +67,17 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   `sequence/set|remove`, `transport`.
 - Worklet → main: `ready`, `status` (sequencer step, per-voice position/index/env,
   table count), `error`.
+- Everything the bridge queues within one task is sent as a single `batch` message,
+  applied atomically between render quanta: a re-indexed wavetable (eviction) and the
+  remapped voice windows always land together, and fresh tables' mip sets (built
+  synchronously, up to 128) precede the wavetable that references them.
 - The bridge reconciles: it tracks which table/voice/sequence ids the worklet has and
   sends adds/removes on each model topic. Undo that restores evicted tables simply
-  re-sends them.
-- The engine tolerates missing tables (silence for that slot) so ordering between
-  wavetable and table messages doesn't matter.
+  re-sends them. Bulk backlogs (e.g. 4096 at audio start) arrive in 48-table chunks.
+- The engine tracks playing tables by table id, not wavetable index: Step holds its
+  table pointer until the phase wraps; Blend ramps only while the id pair is
+  unchanged; a table that hasn't arrived yet keeps the previous pointer. Removed
+  voices fade out with a 12 ms release before being freed.
 - The audio thread never runs an FFT or allocates per sample. LFO/window/mip
   resolution runs every 64 samples; the Blend crossfade is ramped across the block.
 - UI: one rAF loop, ≤ 25 fps while playing. Sections redraw only when open, on screen

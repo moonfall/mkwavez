@@ -15,7 +15,9 @@ export type ToWorklet =
   | { type: 'voice/remove'; id: number }
   | { type: 'sequence/set'; sequence: SequenceData }
   | { type: 'sequence/remove'; id: number }
-  | { type: 'transport'; playing: boolean; bpm: number };
+  | { type: 'transport'; playing: boolean; bpm: number }
+  /** Ops applied in order, atomically (no audio rendered in between). */
+  | { type: 'batch'; ops: ToWorklet[] };
 
 export type FromWorklet =
   | { type: 'ready' }

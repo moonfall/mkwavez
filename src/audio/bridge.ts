@@ -15,6 +15,12 @@ export type AudioState = 'off' | 'starting' | 'running' | 'error';
 
 /** Tables whose mip sets are built per main-thread tick while catching up. */
 const MIP_CHUNK = 48;
+/**
+ * Fresh tables built synchronously and sent in the same batch as (and before) the
+ * wavetable that references them. Covers any UI batch (max 64); larger bulk adds
+ * fall back to chunking, during which the engine holds the previous table.
+ */
+const SYNC_MIPS = 128;
 
 export class AudioBridge {
   state: AudioState = 'off';
@@ -33,6 +39,9 @@ export class AudioBridge {
   private sentSequences = new Set<number>();
   private sentWavetables = new Set<number>();
   private model: AppModel;
+  private outbox: ToWorklet[] = [];
+  private transfers: Transferable[] = [];
+  private flushScheduled = false;
 
   constructor(model: AppModel) {
     this.model = model;
@@ -90,8 +99,30 @@ export class AudioBridge {
     }
   }
 
+  /**
+   * Queue a message. Everything queued in one task (e.g. one model action emitting
+   * 'timeline' + 'voices') is delivered as a single batch, which the worklet applies
+   * atomically between render quanta — so a re-indexed wavetable and the remapped
+   * voice windows always arrive together.
+   */
   private post(m: ToWorklet, transfer: Transferable[] = []): void {
-    this.node?.port.postMessage(m, transfer);
+    if (!this.node) return;
+    this.outbox.push(m);
+    this.transfers.push(...transfer);
+    if (!this.flushScheduled) {
+      this.flushScheduled = true;
+      queueMicrotask(() => this.flush());
+    }
+  }
+
+  private flush(): void {
+    this.flushScheduled = false;
+    if (!this.node || !this.outbox.length) return;
+    const ops = this.outbox;
+    const transfer = this.transfers;
+    this.outbox = [];
+    this.transfers = [];
+    this.node.port.postMessage({ type: 'batch', ops } satisfies ToWorklet, transfer);
   }
 
   private syncAll(): void {
@@ -118,6 +149,8 @@ export class AudioBridge {
       if (!this.sentTables.has(t.id) && !queued.has(t.id)) fresh.push(t);
     }
     this.pending = fresh.concat(this.pending);
+    // Tables first, then the wavetable that references them (same batch).
+    if (this.pending.length) this.sendChunk(Math.min(SYNC_MIPS, fresh.length || MIP_CHUNK));
     this.pump();
     for (const wt of this.model.wavetables) {
       this.sentWavetables.add(wt.id);
@@ -131,22 +164,26 @@ export class AudioBridge {
     }
   }
 
-  private pump(): void {
-    if (this.pumpScheduled || !this.pending.length) return;
-    const chunk = this.pending.splice(0, MIP_CHUNK);
+  private sendChunk(n: number): void {
+    const chunk = this.pending.splice(0, n);
+    if (!chunk.length) return;
     const items = chunk.map((t) => ({ id: t.id, mips: buildMipSet(t.data) }));
     for (const t of chunk) this.sentTables.add(t.id);
     this.post(
       { type: 'tables/add', items },
       items.map((i) => i.mips.buffer as ArrayBuffer),
     );
-    if (this.pending.length) {
-      this.pumpScheduled = true;
-      setTimeout(() => {
-        this.pumpScheduled = false;
-        this.pump();
-      }, 0);
-    }
+  }
+
+  /** Drain the backlog in chunks, one per main-thread tick. */
+  private pump(): void {
+    if (this.pumpScheduled || !this.pending.length) return;
+    this.pumpScheduled = true;
+    setTimeout(() => {
+      this.pumpScheduled = false;
+      this.sendChunk(MIP_CHUNK);
+      this.pump();
+    }, 0);
   }
 
   private syncVoices(): void {

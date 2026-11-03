@@ -13,7 +13,11 @@ import { Adsr } from './adsr';
 
 export const MASTER_GAIN = 0.22;
 
+/** Release time used when a voice is removed while sounding (avoids a click). */
+export const REMOVE_RELEASE_SEC = 0.012;
+
 const EMPTY_IDS = new Int32Array(0);
+const IDLE = 0;
 
 class VoiceRuntime {
   params: VoiceParams;
@@ -26,16 +30,21 @@ class VoiceRuntime {
   /** Modulated position 0..1 and float index into the wavetable (for the UI). */
   pos = 0;
   index = 0;
-  // Resolved tables for this control block.
+  // Resolved tables for this control block, tracked by table id (not wavetable index)
+  // so a wavetable re-index (eviction) never changes what is playing.
   mipLevel = 0;
+  idA: TableId = -1;
+  idB: TableId = -1;
   tableA: MipSet | null = null;
   tableB: MipSet | null = null;
   frac = 0;
   fracPrev = 0;
-  pairKey = -1;
-  /** Step mode: wavetable index of the held table (-1 = none) and the pending target. */
-  heldIndex = -1;
-  targetIndex = 0;
+  /** Step mode: the held table (kept until the oscillator wraps) and the pending target. */
+  heldId: TableId = -1;
+  heldTable: MipSet | null = null;
+  targetId: TableId = -1;
+  /** Fading out before removal. */
+  removing = false;
 
   constructor(p: VoiceParams, sampleRate: number) {
     this.params = p;
@@ -93,19 +102,40 @@ export class SynthEngine {
     this.wavetables.delete(id);
   }
 
+  private findVoice(id: number): VoiceRuntime | undefined {
+    return this.voices.find((x) => x.params.id === id && !x.removing);
+  }
+
   setVoice(p: VoiceParams): void {
-    const v = this.voices.find((x) => x.params.id === p.id);
+    const v = this.findVoice(p.id);
     if (!v) {
-      this.voices.push(new VoiceRuntime({ ...DEFAULT_VOICE, ...p }, this.sampleRate));
+      if (!this.voices.some((x) => x.params.id === p.id)) {
+        this.voices.push(new VoiceRuntime({ ...DEFAULT_VOICE, ...p }, this.sampleRate));
+      }
       return;
     }
     v.params = p;
     v.env.configure(p.attack, p.decay, p.sustain, p.release, this.sampleRate);
-    if (p.interp === 'blend') v.heldIndex = -1;
+    if (p.interp === 'blend') {
+      v.heldId = -1;
+      v.heldTable = null;
+    }
   }
 
+  /** Fade the voice out with a short release, then drop it (see control()). */
   removeVoice(id: number): void {
-    this.voices = this.voices.filter((v) => v.params.id !== id);
+    const v = this.findVoice(id);
+    if (!v) return;
+    v.removing = true;
+    v.gateRemaining = 0;
+    const p = v.params;
+    v.env.configure(p.attack, p.decay, p.sustain, REMOVE_RELEASE_SEC, this.sampleRate);
+    v.env.gateOff();
+  }
+
+  /** Voices still allocated (including ones fading out). */
+  get voiceCount(): number {
+    return this.voices.length;
   }
 
   setSequence(s: SequenceData): void {
@@ -129,7 +159,7 @@ export class SynthEngine {
   }
 
   noteOn(voiceId: number, freq: number, gateSamples: number): void {
-    const v = this.voices.find((x) => x.params.id === voiceId);
+    const v = this.findVoice(voiceId);
     if (!v) return;
     v.freq = freq;
     v.gateRemaining = Math.max(1, Math.round(gateSamples));
@@ -146,7 +176,7 @@ export class SynthEngine {
       const o = out.voices[i] ?? (out.voices[i] = { id: 0, pos: 0, index: 0, env: 0 });
       o.id = v.params.id;
       o.pos = v.pos;
-      o.index = v.params.interp === 'step' && v.heldIndex >= 0 ? v.heldIndex : v.index;
+      o.index = v.params.interp === 'step' ? Math.round(v.index) : v.index;
       o.env = v.env.value;
     }
     return out;
@@ -188,13 +218,16 @@ export class SynthEngine {
       if (s.voiceId === null || s.length <= 0) continue;
       const row = s.steps[this.step % s.length];
       if (row === undefined || row < 0) continue;
-      const v = this.voices.find((x) => x.params.id === s.voiceId);
+      const v = this.findVoice(s.voiceId);
       if (!v) continue;
       this.noteOn(s.voiceId, noteFreq(row, v.params.octave), stepLen * s.gate);
     }
   }
 
   private control(blockLen: number): void {
+    if (this.voices.some((v) => v.removing && v.env.stage === IDLE)) {
+      this.voices = this.voices.filter((v) => !(v.removing && v.env.stage === IDLE));
+    }
     for (const v of this.voices) {
       v.lfoPhase += (2 * Math.PI * v.params.lfoRate * blockLen) / this.sampleRate;
       if (v.lfoPhase > 2 * Math.PI) v.lfoPhase -= 2 * Math.PI;
@@ -209,7 +242,7 @@ export class SynthEngine {
     v.pos = modulatedPosition(p.position, p.lfoDepth, v.lfoPhase);
     v.mipLevel = mipLevelFor(v.freq, this.sampleRate);
     if (ids.length === 0) {
-      v.tableA = v.tableB = null;
+      // Nothing to address: keep whatever was playing (fades with the envelope).
       v.index = 0;
       return;
     }
@@ -224,21 +257,36 @@ export class SynthEngine {
     const f = a + v.pos * (b - a);
     v.index = f;
     if (p.interp === 'step') {
-      v.targetIndex = Math.round(f);
-      if (v.heldIndex < 0 || v.heldIndex > max) v.heldIndex = v.targetIndex;
-      v.tableA = v.tableB = this.tables.get(ids[v.heldIndex]) ?? null;
+      v.targetId = ids[Math.round(f)];
+      if (v.heldId < 0) v.heldId = v.targetId;
+      // Late-arriving table: pick it up; otherwise keep the previous pointer.
+      if (!v.heldTable || v.heldId !== v.idA) {
+        v.heldTable = this.tables.get(v.heldId) ?? v.heldTable;
+        v.idA = v.idB = v.heldId;
+      }
+      v.tableA = v.tableB = v.heldTable;
       v.frac = v.fracPrev = 0;
-      v.pairKey = -1;
       return;
     }
     const i = Math.floor(f);
     const j = Math.min(i + 1, b);
-    const key = i * 65536 + j;
-    v.fracPrev = key === v.pairKey ? v.frac : f - i;
-    v.pairKey = key;
-    v.frac = f - i;
-    v.tableA = this.tables.get(ids[i]) ?? null;
-    v.tableB = this.tables.get(ids[j]) ?? null;
+    const idA = ids[i];
+    const idB = ids[j];
+    const frac = f - i;
+    // Ramp the crossfade only while the pair is unchanged (by table id).
+    v.fracPrev = idA === v.idA && idB === v.idB ? v.frac : frac;
+    v.frac = frac;
+    // A table that has not arrived yet holds the previous pointer instead of going silent.
+    const tA = this.tables.get(idA);
+    const tB = this.tables.get(idB);
+    if (tA) {
+      v.tableA = tA;
+      v.idA = idA;
+    }
+    if (tB) {
+      v.tableB = tB;
+      v.idB = idB;
+    }
   }
 
   private renderVoiceSample(v: VoiceRuntime, blockT: number, sr: number): number {
@@ -273,10 +321,12 @@ export class SynthEngine {
     v.phase += v.freq / sr;
     if (v.phase >= 1) {
       v.phase -= Math.floor(v.phase);
-      if (v.params.interp === 'step' && v.heldIndex !== v.targetIndex) {
-        v.heldIndex = v.targetIndex;
-        const ids = this.wavetables.get(v.params.wavetableId);
-        v.tableA = v.tableB = ids ? (this.tables.get(ids[v.heldIndex]) ?? null) : null;
+      if (v.params.interp === 'step' && v.targetId >= 0 && v.heldId !== v.targetId) {
+        const t = this.tables.get(v.targetId);
+        if (t) {
+          v.heldId = v.idA = v.idB = v.targetId;
+          v.heldTable = v.tableA = v.tableB = t;
+        }
       }
     }
     return out;

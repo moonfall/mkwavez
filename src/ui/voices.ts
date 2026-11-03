@@ -91,8 +91,8 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
     fillWt();
     wtSel.addEventListener('change', () => set({ wavetableId: Number(wtSel.value) }));
 
-    const ws = slider({ label: 'Window start', min: 0, max: 0, step: 1, value: v.windowStart, format: (x) => `#${x + 1}`, onInput: (x) => set({ windowStart: x }) });
-    const we = slider({ label: 'Window end', min: 0, max: 0, step: 1, value: v.windowEnd, format: (x) => `#${x + 1}`, onInput: (x) => set({ windowEnd: x }) });
+    const ws = slider({ label: 'Window start', min: 0, max: 0, step: 1, value: v.windowStart, format: (x) => `#${x + 1}`, onInput: (x) => set({ windowStart: x }), onCommit: () => model.endGesture() });
+    const we = slider({ label: 'Window end', min: 0, max: 0, step: 1, value: v.windowEnd, format: (x) => `#${x + 1}`, onInput: (x) => set({ windowEnd: x }), onCommit: () => model.endGesture() });
     const pos = slider({ label: 'Position', min: 0, max: 1, step: 0.01, value: v.position, format: pct, onInput: (x) => set({ position: x }) });
     const fullBtn = h(
       'button',

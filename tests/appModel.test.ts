@@ -62,6 +62,21 @@ describe('AppModel', () => {
     expect(m.sequences[0].steps[0]).toBe(-1);
   });
 
+  it('window drags are one undo step and undo does not clobber later edits', () => {
+    const { m, a } = model();
+    const s = m.addSequence(a.id);
+    m.updateVoice(a.id, { windowStart: 1 });
+    m.updateVoice(a.id, { windowStart: 2 });
+    m.endGesture();
+    m.updateSequence(s.id, { steps: [4] }, true);
+    expect(m.undoDepth).toBe(2);
+    m.undo(); // reverts the note only
+    expect(m.sequences[0].steps[0]).toBe(-1);
+    expect(m.voice(a.id)!.windowStart).toBe(2);
+    m.undo(); // reverts the whole drag
+    expect(m.voice(a.id)!.windowStart).toBe(0);
+  });
+
   it('window edits push the other handle', () => {
     const { m, b } = model();
     m.updateVoice(b.id, { windowStart: 2 });

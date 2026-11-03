@@ -45,6 +45,8 @@ export class AppModel {
   private nextVoiceId = 1;
   private nextSeqId = 1;
   private undoStack: Snapshot[] = [];
+  /** Coalesces a continuous gesture (e.g. a window-slider drag) into one undo step. */
+  private gestureKey: string | null = null;
   private listeners = new Map<Topic, Set<() => void>>();
 
   constructor(cap = TIMELINE_CAP) {
@@ -161,7 +163,16 @@ export class AppModel {
     return v;
   }
 
+  /**
+   * Update voice params. Window edits are undoable (undo restores windows, so they must
+   * be snapshotted too); a drag is one step until endGesture() or another action.
+   */
   updateVoice(id: number, patch: Partial<VoiceParams>): void {
+    const windowEdit = 'windowStart' in patch || 'windowEnd' in patch;
+    if (windowEdit && this.gestureKey !== `window:${id}`) {
+      this.snapshot();
+      this.gestureKey = `window:${id}`;
+    }
     let changed = false;
     this.voices = this.voices.map((v) => {
       if (v.id !== id) return v;
@@ -179,7 +190,12 @@ export class AppModel {
       changed = true;
       return { ...next, windowStart: s, windowEnd: e };
     });
-    if (changed) this.emit('voices');
+    if (changed) this.emit('voices', ...(windowEdit ? (['undo'] as Topic[]) : []));
+  }
+
+  /** End a coalesced gesture (slider released). */
+  endGesture(): void {
+    this.gestureKey = null;
   }
 
   removeVoice(id: number): void {
@@ -249,6 +265,7 @@ export class AppModel {
   // ---- undo ----
 
   private snapshot(): void {
+    this.gestureKey = null;
     this.undoStack.push({
       timeline: this.timeline,
       selectedId: this.selectedId,
@@ -259,6 +276,7 @@ export class AppModel {
   }
 
   undo(): void {
+    this.gestureKey = null;
     const s = this.undoStack.pop();
     if (!s) return;
     this.setTimeline(s.timeline);

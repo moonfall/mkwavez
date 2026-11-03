@@ -59,6 +59,9 @@ class EngineProcessor extends AudioWorkletProcessor {
       case 'transport':
         e.setTransport(m.playing, m.bpm);
         break;
+      case 'batch':
+        for (const op of m.ops) this.handle(op);
+        break;
     }
   }
 
