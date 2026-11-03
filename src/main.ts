@@ -2,8 +2,8 @@ import './ui/styles.css';
 import { AppModel } from './app/model';
 import { AudioBridge } from './audio/bridge';
 import { generateBasic } from './core/generators';
-import { throttle } from './ui/canvas';
-import type { FrameView, UiContext } from './ui/context';
+import { setTheme, storedTheme, throttle } from './ui/canvas';
+import { UiState, type FrameView, type UiContext } from './ui/context';
 import { h } from './ui/dom';
 import { buildGenerate } from './ui/generate';
 import { buildSequences } from './ui/sequences';
@@ -14,7 +14,9 @@ import { buildWavetables } from './ui/wavetables';
 
 const model = new AppModel();
 const bridge = new AudioBridge(model);
-const ctx: UiContext = { model, bridge };
+const ctx: UiContext = { model, bridge, ui: new UiState(model) };
+// Dark by default; an explicit choice (theme toggle) is remembered.
+setTheme(storedTheme() ?? 'dark', false);
 
 // ---- initial state (as the prototype): five basic tables, three voices, one sequence each;
 // only voice 1 starts unmuted ----
@@ -50,11 +52,11 @@ root.replaceChildren(
   buildTransport(ctx),
   h(
     'main',
-    {},
+    { class: 'shell' },
     h('h1', { class: 'sr-only' }, 'mkwavez — evolving wavetable synth'),
     generate.el,
-    timeline.el,
     wavetables.el,
+    timeline.el,
     voices.el,
     sequences.el,
   ),
@@ -74,4 +76,4 @@ bridge.onStatus = (s) => {
 };
 
 // Debug handle for the console and smoke tests.
-(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge };
+(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui };

@@ -29,9 +29,9 @@ const TYPING_MS = 300;
 const TABLE_CAP_MS = 150;
 const THUMB_W = 44;
 const THUMB_H = 18;
-const CARD_W = 112;
-const CARD_WAVE_H = 46;
-const CARD_SPEC_H = 22;
+const CARD_W = 84;
+const CARD_WAVE_H = 30;
+const CARD_SPEC_H = 14;
 const SPEC_BINS = 64;
 /** Library thumbnails: default params, middle of a 3-table batch (u = 0.5), fixed seed. */
 const THUMB_SEED = 1;
@@ -487,15 +487,15 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const waveC = h('canvas', { id: 'seed-wave', role: 'img', 'aria-label': 'Waveform of the shown table' });
   const specC = h('canvas', { id: 'seed-spec', role: 'img', 'aria-label': 'Harmonic spectrum of the shown table' });
   const axis = (...labels: string[]) => h('div', { class: 'seed-axis' }, ...labels.map((l) => h('span', {}, l)));
-  const viewer = h(
+  // Canvases fill their box (absolutely positioned; sized from the box in drawMain).
+  const waveBox = h(
     'div',
-    { class: 'seed-box seed-viewer' },
+    { class: 'seed-plot-box' },
+    waveC,
     h(
       'div',
-      { class: 'seed-box-head' },
-      h('span', { class: 'seed-h' }, 'Waveform'),
+      { class: 'seed-plot-tags' },
       shownLabel,
-      h('span', { class: 'grow' }),
       // Planned: an Edit layer (draw the waveform / edit harmonics) between the generated
       // table and Add — see finalTable().
       h(
@@ -505,11 +505,16 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         h('button', { id: 'seed-edit-mode', disabled: true, title: 'Planned: draw / edit the waveform and harmonics' }, 'Edit · planned'),
       ),
     ),
+  );
+  const specBox = h('div', { class: 'seed-plot-box' }, specC);
+  const viewer = h(
+    'div',
+    { class: 'seed-viewer' },
     h(
       'div',
       { class: 'seed-views' },
-      h('div', { class: 'seed-plot seed-plot-wave' }, waveC, axis('0', 'π', '2π')),
-      h('div', { class: 'seed-plot seed-plot-spec' }, specC, axis('h1', 'dB (−60…0)', `h${SPEC_BINS}`)),
+      h('div', { class: 'seed-plot seed-plot-wave' }, waveBox, axis('0', 'π', '2π')),
+      h('div', { class: 'seed-plot seed-plot-spec' }, specBox, axis('h1', 'dB (−60…0)', `h${SPEC_BINS}`)),
     ),
   );
 
@@ -558,10 +563,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       stepper,
       seedBox,
       h('div', { class: 'seed-targets' }, h('span', {}, 'Sets window of'), voiceTargetChecks(model)),
-      h('span', { class: 'grow' }),
+      status,
       h('div', { class: 'seed-adds' }, addShownBtn, addBatchBtn),
     ),
-    status,
     strip,
   );
 
@@ -768,7 +772,6 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const currentEntryJob = () => (job && job.req.entry === entry() ? job : null);
   const drawMain = () => {
     mainDirty = false;
-    const narrow = narrowMq.matches;
     const cur = currentEntryJob();
     const i = cur ? Math.min(shown, cur.req.count - 1) : 0;
     const failed = !cur || !!cur.errors[i] || !!cur.fatal;
@@ -776,7 +779,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     lastMain = t;
     const axisC = cssColor('--border');
     const grid = cssColor('--surface-2');
-    const [g, w, hh] = fit(waveC, narrow ? 150 : 210);
+    const [g, w, hh] = fit(waveC, Math.max(40, waveBox.clientHeight || 150));
     g.strokeStyle = grid;
     g.lineWidth = 1;
     g.beginPath();
@@ -786,7 +789,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     }
     g.stroke();
     if (t) drawWave(g, 0, 0, w, hh, t.data, cssColor('--wave'), { axis: axisC, lineWidth: 2 });
-    const [gs, sw, sh] = fit(specC, narrow ? 90 : 210);
+    const [gs, sw, sh] = fit(specC, Math.max(30, specBox.clientHeight || 90));
     gs.strokeStyle = grid;
     gs.beginPath();
     for (const f of [1 / 3, 2 / 3]) {

@@ -3,7 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      // Theme before first paint: dark unless the user chose light (see ui/canvas.ts setTheme).
+      try {
+        document.documentElement.dataset.theme = localStorage.getItem('mkwavez.theme') === 'light' ? 'light' : 'dark';
+      } catch (e) {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    </script>
     <title>mkwavez</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M2 12c3-8 5-8 7 0s4 8 7 0 4-8 6 0' fill='none' stroke='%232f55d4' stroke-width='2.5'/%3E%3C/svg%3E" />
   </head>

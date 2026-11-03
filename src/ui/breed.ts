@@ -147,28 +147,36 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
 
   const el = h(
     'div',
-    { role: 'tabpanel', id: 'panel-breed' },
-    h('div', { class: 'label' }, h('span', {}, `Parents (2–${MAX_PARENTS})`), parentsMeta),
-    cards,
-    h('div', { class: 'row' }, addSel, winSel, useWin, clear),
+    { role: 'tabpanel', id: 'panel-breed', class: 'gen-cols' },
     h(
       'div',
-      { class: 'field' },
-      h('div', { class: 'label' }, h('span', {}, 'Preview'), weightsLabel, reroll),
-      pvWave,
-      pvSpec,
-      h('div', { class: 'label' }, seedLabel, h('span', { class: 'hint-inline' }, 'faint = A')),
+      { class: 'gen-col' },
+      h('div', { class: 'label' }, h('span', {}, `Parents (2–${MAX_PARENTS})`), parentsMeta),
+      cards,
+      h('div', { class: 'row' }, addSel, winSel, useWin, clear),
+      h(
+        'div',
+        { class: 'field' },
+        h('div', { class: 'label' }, h('span', {}, 'Preview'), weightsLabel, reroll),
+        pvWave,
+        pvSpec,
+        h('div', { class: 'label' }, seedLabel, h('span', { class: 'hint-inline' }, 'faint = A')),
+      ),
     ),
-    h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Operator')), opSel), biasSlider.el),
-    h('div', { class: 'grid2' }, walkField.el, rateSlider.el),
-    h('div', { class: 'grid2' }, modeField.el, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Children')), stepsLabel)),
-    h('div', { class: 'row' }, apply1, applyN),
     h(
-      'p',
-      { class: 'hint' },
-      'Shift-click or long-press tables in the Timeline to add or remove parents. Bias 0 is parent A. ' +
-        'Breed adds one child and selects it; Breed N sweeps the bias from A (or makes N seeded children at the same bias) ' +
-        'and sets the ticked voices’ windows. Mutation adds seeded jitter, strongest between parents.',
+      'div',
+      { class: 'gen-col' },
+      h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Operator')), opSel), biasSlider.el),
+      h('div', { class: 'grid2' }, walkField.el, rateSlider.el),
+      h('div', { class: 'grid2' }, modeField.el, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Children')), stepsLabel)),
+      h('div', { class: 'row' }, apply1, applyN),
+      h(
+        'p',
+        { class: 'hint' },
+        'Shift-click or long-press tables in the Timeline to add or remove parents. Bias 0 is parent A. ' +
+          'Breed adds one child and selects it; Breed N sweeps the bias from A (or makes N seeded children at the same bias) ' +
+          'and sets the ticked voices’ windows. Mutation adds seeded jitter, strongest between parents.',
+      ),
     ),
   );
 

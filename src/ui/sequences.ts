@@ -1,224 +1,250 @@
-import { MAX_STEPS, SCALE_ROWS } from '../core/constants';
+import { MAX_STEPS, SCALE_ROWS, SCALE_SEMITONES } from '../core/constants';
 import { randomSeed } from '../core/prng';
-import { emptySteps, randomSteps, REST, toggleStep, type SequenceData } from '../core/sequence';
+import { emptySteps, randomSteps, toggleStep, type SequenceData } from '../core/sequence';
 import { cssColor, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { cardCollapse, h, icon, ICONS, section, slider, voiceColorVar } from './dom';
+import { h, icon, ICONS, panel, slider, voiceColorVar } from './dom';
 
-const ROW_H = 12;
-const MIN_CELL_W = 16;
+/** Row-label column (note names) at the left of the grid. */
+const LABEL_W = 30;
+const MIN_CELL_W = 12;
+const MIN_ROW_H = 12;
+/** MIDI note of scale row 0 at octave 0 (SCALE_ROOT_HZ = 110 Hz = A2). */
+const ROOT_MIDI = 45;
+const NOTE_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 
-interface Card {
-  el: HTMLElement;
-  grid: HTMLCanvasElement;
-  dirty: boolean;
-  lastStep: number;
-  collapsed(): boolean;
-  sync(s: SequenceData): void;
-  draw(): void;
-}
+const noteName = (row: number, octave: number) => {
+  const m = ROOT_MIDI + SCALE_SEMITONES[row] + 12 * octave;
+  return `${NOTE_NAMES[m % 12]}${Math.floor(m / 12) - 1}`;
+};
 
 let clipboard: number[] | null = null;
 
-/** Sequences: dev/test step patterns, each targeting a voice, on the shared transport. */
+/**
+ * Sequence: the step pattern(s) of the selected voice (UiState), on the shared transport.
+ * Eighth-note steps over A minor pentatonic; the grid fills the panel (row labels are the
+ * voice's notes). A voice with several sequences gets a small picker; one without gets
+ * an "Add sequence" button.
+ */
 export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameView } {
-  const { model, bridge } = ctx;
-  const sec = section('sec-sequences', 'Sequences');
-  const list = h('div', { id: 'sequence-list' });
-  const addBtn = h(
+  const { model, bridge, ui } = ctx;
+  const sec = panel('sec-sequences', 'Sequence');
+  /** Shown sequence per voice (when a voice has more than one). */
+  const shownSeq = new Map<number, number>();
+
+  const voiceSeqs = () => model.sequences.filter((s) => s.voiceId !== null && s.voiceId === ui.voiceId);
+  const cur = (): SequenceData | undefined => {
+    const list = voiceSeqs();
+    const want = ui.voiceId === null ? undefined : shownSeq.get(ui.voiceId);
+    return list.find((s) => s.id === want) ?? list[0];
+  };
+  const update = (patch: Partial<SequenceData>, undoable = false) => {
+    const s = cur();
+    if (s) model.updateSequence(s.id, patch, undoable);
+  };
+  const addSequence = () => {
+    if (ui.voiceId === null) return;
+    const s = model.addSequence(ui.voiceId);
+    shownSeq.set(ui.voiceId, s.id);
+    sync();
+  };
+
+  // ---- header: target voice, sequence picker, steps, scale ----
+  const target = h('span', { class: 'seq-target', id: 'seq-target' });
+  const picker = h('div', { class: 'seq-picker', role: 'group', 'aria-label': 'Sequences of this voice' });
+  const lenInput = h('input', { type: 'number', id: 'seq-length', min: 1, max: MAX_STEPS, step: 1, inputmode: 'numeric', 'aria-label': 'Steps' });
+  lenInput.addEventListener('change', () => {
+    const v = Math.round(Number(lenInput.value));
+    if (Number.isFinite(v)) update({ length: v });
+    lenInput.value = String(cur()?.length ?? 16);
+  });
+  sec.tools.append(
+    target,
+    picker,
+    h('span', { class: 'grow' }),
+    h('label', { class: 'inline-field' }, h('span', {}, 'Steps'), lenInput),
+    h('span', { class: 'inline-field seq-scale', title: 'Scale (fixed for now)' }, h('span', {}, 'Scale'), h('b', {}, 'A min pent')),
+  );
+
+  // ---- toolbar: gate, copy / paste / clear / random / remove ----
+  const gate = slider({ label: 'Gate', min: 0.05, max: 1, step: 0.01, value: 0.5, format: (x) => `${Math.round(x * 100)}%`, onInput: (x) => update({ gate: x }) });
+  gate.input.id = 'seq-gate';
+  const copyBtn = h(
     'button',
-    { id: 'add-sequence', onclick: () => model.addSequence(model.voices[0]?.id ?? null) },
-    '+ Add sequence',
-  );
-  sec.body.append(
-    h('p', { class: 'hint' }, 'Eighth-note steps over A minor pentatonic (rows, low to high). Click to toggle.'),
-    list,
-    h('div', { class: 'add-row' }, addBtn),
-  );
-  const cards = new Map<number, Card>();
-
-  const makeCard = (s0: SequenceData): Card => {
-    const id = s0.id;
-    let s = s0;
-    const voiceIdx = () => (s.voiceId === null ? -1 : model.voiceIndex(s.voiceId));
-    const color = () => (s.voiceId === null ? cssColor('--muted') : cssColor(voiceColorVar(s.voiceId - 1)));
-
-    const title = h('span', { class: 'name' }, `Seq ${id}`);
-    const target = h('select', { 'aria-label': `Sequence ${id} target voice`, style: 'flex:0 1 auto' });
-    const fillTargets = () => {
-      target.replaceChildren(
-        h('option', { value: '' }, '— none —'),
-        ...model.voices.map((v) => h('option', { value: String(v.id) }, `→ ${v.name}`)),
-      );
-      target.value = s.voiceId === null ? '' : String(s.voiceId);
-    };
-    target.addEventListener('change', () =>
-      model.updateSequence(id, { voiceId: target.value === '' ? null : Number(target.value) }),
-    );
-    const removeBtn = h(
-      'button',
-      { class: 'small', 'aria-label': `Remove sequence ${id}`, onclick: () => model.removeSequence(id) },
-      icon(ICONS.close),
-    );
-    const body = h('div', { class: 'card-body' });
-    const el = h('div', { class: 'card', id: `sequence-${id}` });
-    const collapse = cardCollapse(`sequence ${id}`, el, body, (c) => {
-      if (!c) card.dirty = true;
-    });
-    const meta = h('span', { class: 'meta' });
-    const head = h('div', { class: 'card-head' }, collapse.button, title, target, meta, removeBtn);
-
-    const len = slider({ label: 'Length', min: 1, max: MAX_STEPS, step: 1, value: s.length, onInput: (x) => model.updateSequence(id, { length: x }) });
-    const gate = slider({
-      label: 'Gate',
-      min: 0.05,
-      max: 1,
-      step: 0.01,
-      value: s.gate,
-      format: (x) => `${Math.round(x * 100)}%`,
-      onInput: (x) => model.updateSequence(id, { gate: x }),
-    });
-
-    const copyBtn = h('button', {
-      class: 'grow',
+    {
+      class: 'small',
+      id: 'seq-copy',
       onclick: () => {
+        const s = cur();
+        if (!s) return;
         clipboard = s.steps.slice();
         copyBtn.textContent = 'Copied';
         setTimeout(() => (copyBtn.textContent = 'Copy'), 900);
       },
-    }, 'Copy');
-    const buttons = h(
-      'div',
-      { class: 'row' },
-      copyBtn,
-      h('button', { class: 'grow', onclick: () => clipboard && model.updateSequence(id, { steps: clipboard }, true) }, 'Paste'),
-      h('button', { class: 'grow', onclick: () => model.updateSequence(id, { steps: emptySteps() }, true) }, 'Clear'),
-      h(
-        'button',
-        {
-          style: 'flex:0 0 44px',
-          'aria-label': `Randomize sequence ${id}`,
-          onclick: () => model.updateSequence(id, { steps: randomSteps(s.length, randomSeed()) }, true),
+    },
+    'Copy',
+  );
+  const toolbar = h(
+    'div',
+    { class: 'seq-toolbar' },
+    h('div', { class: 'vrows seq-gate' }, gate.el),
+    copyBtn,
+    h('button', { class: 'small', id: 'seq-paste', onclick: () => clipboard && update({ steps: clipboard }, true) }, 'Paste'),
+    h('button', { class: 'small', id: 'seq-clear', onclick: () => update({ steps: emptySteps() }, true) }, 'Clear'),
+    h(
+      'button',
+      {
+        class: 'small icon-btn',
+        id: 'seq-random',
+        'aria-label': 'Randomize the sequence',
+        title: 'Randomize',
+        onclick: () => update({ steps: randomSteps(cur()?.length ?? 16, randomSeed()) }, true),
+      },
+      icon(ICONS.shuffle),
+    ),
+    h('button', { class: 'small', id: 'seq-add', title: 'Add another sequence for this voice', onclick: () => addSequence() }, '+ Seq'),
+    h(
+      'button',
+      {
+        class: 'small icon-btn',
+        id: 'seq-remove',
+        'aria-label': 'Remove this sequence',
+        title: 'Remove this sequence',
+        onclick: () => {
+          const s = cur();
+          if (s) model.removeSequence(s.id);
         },
-        icon(ICONS.shuffle),
-      ),
-    );
-
-    const grid = h('canvas', { 'aria-label': `Sequence ${id} step grid; click to toggle notes`, class: 'seq-grid' });
-    watchVisibility(grid);
-    const cellW = () => Math.max(MIN_CELL_W, (wrap.clientWidth || 300) / s.length);
-    const wrap = h('div', { class: 'grid-wrap' }, grid);
-    grid.addEventListener('click', (e) => {
-      const r = grid.getBoundingClientRect();
-      const col = Math.floor((e.clientX - r.left) / cellW());
-      const row = SCALE_ROWS - 1 - Math.floor((e.clientY - r.top) / ROW_H);
-      if (col < 0 || col >= s.length || row < 0 || row >= SCALE_ROWS) return;
-      model.updateSequence(id, { steps: toggleStep(s.steps, col, row) }, true);
-    });
-
-    body.append(h('div', { class: 'grid2' }, len.el, gate.el), buttons, wrap);
-    el.append(head, body);
-
-    const card: Card = {
-      el,
-      grid,
-      dirty: true,
-      lastStep: -2,
-      collapsed: collapse.collapsed,
-      sync(ns) {
-        s = ns;
-        len.set(s.length);
-        gate.set(s.gate);
-        fillTargets();
-        title.style.color = s.voiceId === null ? 'var(--muted)' : `var(${voiceColorVar(s.voiceId - 1)})`;
-        const vi = voiceIdx();
-        meta.textContent = vi >= 0 && model.voices[vi].mute ? 'muted' : '';
-        card.dirty = true;
       },
-      draw() {
-        const cw = cellW();
-        const width = cw * s.length;
-        grid.style.width = `${width}px`;
-        const hh = ROW_H * SCALE_ROWS;
-        const [g] = fit(grid, hh);
-        const step = model.playing && bridge.status.step >= 0 ? bridge.status.step % s.length : -1;
-        card.lastStep = step;
-        if (step >= 0) {
-          g.fillStyle = cssColor('--accent-bg');
-          g.fillRect(step * cw, 0, cw, hh);
-        }
-        g.lineWidth = 1;
-        for (let k = 1; k < s.length; k++) {
-          g.strokeStyle = k % 4 ? cssColor('--border') : cssColor('--border-strong');
-          g.beginPath();
-          g.moveTo(Math.round(k * cw) + 0.5, 0);
-          g.lineTo(Math.round(k * cw) + 0.5, hh);
-          g.stroke();
-        }
-        const muted = voiceIdx() >= 0 && model.voices[voiceIdx()].mute;
-        g.fillStyle = color();
-        g.globalAlpha = muted || s.voiceId === null ? 0.4 : 1;
-        for (let k = 0; k < s.length; k++) {
-          const r = s.steps[k];
-          if (r !== REST) g.fillRect(k * cw + 2, (SCALE_ROWS - 1 - r) * ROW_H + 1.5, cw - 4, ROW_H - 3);
-        }
+      icon(ICONS.close),
+    ),
+  );
+
+  // ---- grid ----
+  const grid = h('canvas', { class: 'seq-grid', id: 'seq-grid', 'aria-label': 'Step grid; click to toggle notes' });
+  const box = h('div', { class: 'seq-box' }, grid);
+  watchVisibility(grid);
+  const content = h('div', { class: 'seq-content' }, toolbar, box);
+  const addBtn = h('button', { id: 'add-sequence', onclick: () => addSequence() }, '+ Add sequence');
+  const emptyText = h('span', {});
+  const empty = h('div', { class: 'seq-empty', hidden: true }, emptyText, addBtn);
+  sec.body.append(content, empty);
+
+  let dirty = true;
+  let lastStep = -2;
+  let cellW = MIN_CELL_W;
+  let rowH = MIN_ROW_H;
+
+  const draw = (s: SequenceData) => {
+    const v = s.voiceId === null ? undefined : model.voice(s.voiceId);
+    const availW = box.clientWidth || 300;
+    const availH = box.clientHeight || 8 * 20;
+    cellW = Math.max(MIN_CELL_W, (availW - LABEL_W) / s.length);
+    rowH = Math.max(MIN_ROW_H, Math.floor(availH / SCALE_ROWS));
+    const width = LABEL_W + cellW * s.length;
+    grid.style.width = `${width}px`;
+    const hh = rowH * SCALE_ROWS;
+    const [g] = fit(grid, hh);
+    const step = model.playing && bridge.status.step >= 0 ? bridge.status.step % s.length : -1;
+    lastStep = step;
+    const cBeat = cssColor('--surface-2');
+    const cCell = cssColor('--bg');
+    const cBorder = cssColor('--border');
+    const cPlay = cssColor('--accent-bg');
+    const color = v ? cssColor(voiceColorVar(v.id - 1)) : cssColor('--muted');
+    const muted = !v || v.mute;
+    g.font = '10px ui-monospace, monospace';
+    g.textBaseline = 'middle';
+    g.fillStyle = cssColor('--text-2');
+    for (let r = 0; r < SCALE_ROWS; r++) g.fillText(noteName(r, v?.octave ?? 0), 2, (SCALE_ROWS - 1 - r) * rowH + rowH / 2);
+    const gap = cellW > 14 ? 2 : 1;
+    for (let k = 0; k < s.length; k++) {
+      const x = LABEL_W + k * cellW;
+      const bg = k === step ? cPlay : k % 4 === 0 ? cBeat : cCell;
+      for (let r = 0; r < SCALE_ROWS; r++) {
+        const y = (SCALE_ROWS - 1 - r) * rowH;
+        const on = s.steps[k] === r;
+        g.fillStyle = on ? color : bg;
+        g.globalAlpha = on && muted ? 0.45 : 1;
+        g.fillRect(x + gap / 2, y + gap / 2, cellW - gap, rowH - gap);
         g.globalAlpha = 1;
-      },
-    };
-    card.sync(s);
-    return card;
-  };
-
-  const sync = () => {
-    const live = new Set(model.sequences.map((s) => s.id));
-    for (const [id, c] of cards) {
-      if (!live.has(id)) {
-        c.el.remove();
-        cards.delete(id);
+        if (!on && k !== step) {
+          g.strokeStyle = cBorder;
+          g.lineWidth = 1;
+          g.strokeRect(x + gap / 2 + 0.5, y + gap / 2 + 0.5, cellW - gap - 1, rowH - gap - 1);
+        }
       }
     }
-    for (const s of model.sequences) {
-      let c = cards.get(s.id);
-      if (!c) {
-        c = makeCard(s);
-        cards.set(s.id, c);
-        list.append(c.el);
-      } else c.sync(s);
+    grid.dataset.length = String(s.length);
+    grid.dataset.sequence = String(s.id);
+  };
+
+  grid.addEventListener('click', (e) => {
+    const s = cur();
+    if (!s) return;
+    const r = grid.getBoundingClientRect();
+    const col = Math.floor((e.clientX - r.left - LABEL_W) / cellW);
+    const row = SCALE_ROWS - 1 - Math.floor((e.clientY - r.top) / rowH);
+    if (e.clientX - r.left < LABEL_W || col < 0 || col >= s.length || row < 0 || row >= SCALE_ROWS) return;
+    model.updateSequence(s.id, { steps: toggleStep(s.steps, col, row) }, true);
+  });
+
+  const sync = () => {
+    const v = ui.voiceId === null ? undefined : model.voice(ui.voiceId);
+    const list = voiceSeqs();
+    const s = cur();
+    if (v && s) shownSeq.set(v.id, s.id);
+    target.textContent = v ? `→ ${v.name}${v.mute ? ' · muted' : ''}` : '';
+    target.style.color = v ? `var(${voiceColorVar(v.id - 1)})` : '';
+    picker.replaceChildren(
+      ...(list.length > 1
+        ? list.map((x) =>
+            h(
+              'button',
+              {
+                class: 'small',
+                'aria-pressed': String(x.id === s?.id),
+                onclick: () => {
+                  if (v) shownSeq.set(v.id, x.id);
+                  sync();
+                },
+              },
+              `Seq ${x.id}`,
+            ),
+          )
+        : []),
+    );
+    content.hidden = !s;
+    empty.hidden = !!s;
+    emptyText.textContent = v ? `No sequence for ${v.name}.` : 'No voice selected.';
+    addBtn.hidden = !v;
+    lenInput.disabled = !s;
+    sec.meta.textContent = s ? `Seq ${s.id}` : '';
+    if (s) {
+      if (document.activeElement !== lenInput) lenInput.value = String(s.length);
+      gate.set(s.gate);
     }
-    sec.meta.textContent = `${model.sequences.length}`;
+    dirty = true;
   };
 
   model.on('sequences', sync);
-  model.on('voices', () => {
-    for (const s of model.sequences) cards.get(s.id)?.sync(s);
-  });
-  model.on('transport', () => {
-    for (const c of cards.values()) c.dirty = true;
-  });
-  onThemeChange(() => {
-    for (const c of cards.values()) c.dirty = true;
-  });
-  sec.el.addEventListener('toggle', () => {
-    for (const c of cards.values()) c.dirty = true;
-  });
-  new ResizeObserver(() => {
-    for (const c of cards.values()) c.dirty = true;
-  }).observe(list);
+  model.on('voices', sync);
+  ui.onVoice(sync);
+  model.on('transport', () => (dirty = true));
+  onThemeChange(() => (dirty = true));
+  sec.onToggle(() => (dirty = true));
+  new ResizeObserver(() => (dirty = true)).observe(box);
   sync();
 
   return {
     el: sec.el,
     view: {
       frame() {
-        if (!sec.el.open) return;
-        for (const [id, c] of cards) {
-          if (c.collapsed() || !isOnScreen(c.grid)) continue;
-          const s = model.sequences.find((x) => x.id === id);
-          const step = s && model.playing && bridge.status.step >= 0 ? bridge.status.step % s.length : -1;
-          if (c.dirty || step !== c.lastStep) {
-            c.dirty = false;
-            c.draw();
-          }
+        const s = cur();
+        if (!s || !sec.isOpen() || !isOnScreen(grid)) return;
+        const step = model.playing && bridge.status.step >= 0 ? bridge.status.step % s.length : -1;
+        if (dirty || step !== lastStep) {
+          dirty = false;
+          draw(s);
         }
       },
     },

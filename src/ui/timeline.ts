@@ -3,18 +3,41 @@ import type { VoiceParams } from '../core/voice';
 import { ALL_WAVETABLE_ID } from '../core/wavetable';
 import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { h, section, voiceColorVar } from './dom';
+import { h, icon, ICONS, panel, voiceColorVar } from './dom';
 
-const CELL_MIN_W = 56;
-const CELL_H = 42;
-const MAX_VIEW_H = 186;
-const SEL_H = 76;
+/** Cell width and the gap between cells (px); one cell per table, in one row. */
+const CELL_W = 62;
+const GAP = 1;
+const PITCH = CELL_W + GAP;
 /** Touch long-press (ms) toggles a Breed parent; movement beyond LONG_PRESS_SLOP px cancels. */
 const LONG_PRESS_MS = 450;
 const LONG_PRESS_SLOP = 10;
-/** Window bars: height and pitch (px), stacked up from the cell's bottom edge. */
-const BAR_H = 2;
-const BAR_PITCH = 3;
+/** Window tints: unmuted voices strong, muted faint. Edge = window start / end. */
+const TINT_ON = 0.38;
+const TINT_MUTED = 0.14;
+const EDGE_W = 2;
+const SPEC_BINS = 24;
+
+/** Thumbnail views, cycled by the header button; the choice is remembered. */
+export const TIMELINE_VIEWS = ['Waveform', 'Spectral', 'Waveform + Spectral'] as const;
+const VIEW_KEY = 'mkwavez.timelineView';
+
+function loadView(): number {
+  try {
+    const v = Number(localStorage.getItem(VIEW_KEY));
+    return Number.isInteger(v) && v >= 0 && v < TIMELINE_VIEWS.length ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveView(v: number): void {
+  try {
+    localStorage.setItem(VIEW_KEY, String(v));
+  } catch {
+    /* storage blocked: remembered for this page only */
+  }
+}
 
 /** A voice's colour — read from the shared voice palette so palette changes flow through. */
 const voiceColor = (v: VoiceParams) => cssColor(voiceColorVar(v.id - 1));
@@ -30,178 +53,210 @@ function staticIndex(v: VoiceParams, len: number): number {
 }
 
 /**
- * Timeline: every table ever generated (up to the cap), as a virtualized grid of
- * thumbnails drawn on one sticky canvas — only visible rows are drawn, and only when
- * something changed. Click selects; the selection is shown larger with its spectrum.
- * Shift-click, Cmd-click (Ctrl-click off macOS, where it opens the context menu)
- * or a touch long-press toggles a table as a Breed parent
- * (badged A, B, … in the grid).
+ * Timeline: every table ever generated (up to the cap) as a slim horizontal strip of
+ * thumbnails, virtualized on one sticky canvas — only the visible cells are drawn, and
+ * only when something changed. Click selects; Shift-click, Cmd-click (Ctrl-click off
+ * macOS) or a touch long-press toggles a Breed parent (badged A, B, …).
  *
- * Voice windows are bars along each cell's bottom, stacked in voice order (voice 1 on
- * top). Each unmuted voice's play position (live, LFO included, while playing; static
- * when stopped) is a caret on a transparent overlay canvas, placed proportionally
- * between neighbouring tables' cell centres. The overlay redraws on its own (≤ the
- * frame-loop rate while playing, only when the markers moved), never the grid.
+ * Voice windows tint the cell background in the voice colour (unmuted strong, muted
+ * faint) with a solid edge at the window's start / end; where windows overlap the cell
+ * is split into horizontal bands, one per voice in voice order (top to bottom). Each
+ * unmuted voice's play position (live, LFO included, while playing; static when
+ * stopped) is a caret on a transparent overlay canvas that redraws on its own (≤ the
+ * frame-loop rate while playing, only when the markers moved), never the strip.
  */
 export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model, bridge } = ctx;
-  const sec = section('sec-timeline', 'Timeline');
+  const sec = panel('sec-timeline', 'Timeline');
 
-  const selLabel = h('div', { class: 'sel-label', id: 'timeline-selected' });
-  const selWave = h('canvas', { 'aria-label': 'Selected table waveform' });
-  const selSpec = h('canvas', { 'aria-label': 'Selected table spectrum' });
+  let view = loadView();
+  const viewBtn = h('button', { id: 'timeline-view', class: 'small tl-view-btn' });
+  const viewDots = h('span', { class: 'tl-dots', 'aria-hidden': 'true' });
+  const selLabel = h('span', { class: 'sel-label', id: 'timeline-selected' });
+  const legend = h('span', { class: 'tl-legend', id: 'timeline-legend' });
+  sec.tools.append(viewBtn, viewDots, selLabel, legend);
+
   const grid = h('canvas', { 'aria-label': 'Timeline of all tables; click to select', id: 'timeline-grid' });
   const overlay = h('canvas', { class: 'tl-overlay', id: 'timeline-markers', 'aria-hidden': 'true' });
-  const spacer = h('div');
-  const scroller = h('div', { class: 'tl-scroll' }, h('div', { class: 'tl-stage' }, grid, overlay), spacer);
-  sec.body.append(
-    h('div', { class: 'row', style: 'margin-bottom:4px' }, selLabel),
-    h('div', { class: 'sel-view' }, selWave, selSpec),
-    scroller,
-    h('p', { class: 'hint', style: 'margin:6px 0 0' }, 'Shift-click (or ⌘-click) or long-press a table to add or remove it as a Breed parent.'),
-  );
+  const stage = h('div', { class: 'tl-stage' }, grid, overlay);
+  const track = h('div', { class: 'tl-track' }, stage);
+  const scroller = h('div', { class: 'tl-scroll', id: 'timeline-scroll' }, track);
+  sec.body.append(scroller);
+  sec.body.title = 'Shift-click (or ⌘-click) or long-press a table to add or remove it as a Breed parent.';
   watchVisibility(grid);
-  watchVisibility(selWave);
 
   let dirtyGrid = true;
-  let dirtySel = true;
   let dirtyMarkers = true;
   let markerKey = '';
-  let cols = 1;
-  let cellW = CELL_MIN_W;
-  let viewH = CELL_H;
+  let viewW = 300;
+  let cellH = 60;
 
+  const syncView = () => {
+    const name = TIMELINE_VIEWS[view];
+    viewBtn.replaceChildren(icon(ICONS.cycle), h('span', {}, name));
+    viewBtn.setAttribute('aria-label', `Thumbnail view: ${name}. Click for ${TIMELINE_VIEWS[(view + 1) % TIMELINE_VIEWS.length]}`);
+    viewBtn.dataset.view = String(view);
+    viewDots.replaceChildren(...TIMELINE_VIEWS.map((_, k) => h('span', { class: k === view ? 'on' : '' })));
+  };
+  viewBtn.addEventListener('click', () => {
+    view = (view + 1) % TIMELINE_VIEWS.length;
+    saveView(view);
+    syncView();
+    dirtyGrid = true;
+  });
+  syncView();
+
+  /** Size the stage to the scroller's viewport and the track to every cell. */
   const layout = () => {
-    const w = scroller.clientWidth || 300;
-    cols = Math.max(4, Math.floor(w / CELL_MIN_W));
-    cellW = w / cols;
-    const rows = Math.ceil(model.timeline.length / cols) || 1;
-    const total = rows * CELL_H;
-    const view = Math.min(total, MAX_VIEW_H);
-    scroller.style.height = `${view + 2}px`;
-    spacer.style.height = `${total - view}px`;
-    viewH = view;
-    return view;
+    viewW = scroller.clientWidth || 300;
+    cellH = Math.max(24, scroller.clientHeight || 60);
+    track.style.width = `${Math.max(viewW, model.timeline.length * PITCH - GAP)}px`;
+    stage.style.width = `${viewW}px`;
+    stage.style.height = `${cellH}px`;
   };
 
-  const scrollToIndex = (idx: number, force = false) => {
+  const atEnd = () => scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - PITCH;
+
+  /** Scroll (the strip only) so cell idx is in view. */
+  const scrollToIndex = (idx: number) => {
     if (idx < 0) return;
     layout();
-    const row = Math.floor(idx / cols);
-    const top = row * CELL_H;
-    const view = scroller.clientHeight;
-    if (force || top < scroller.scrollTop || top + CELL_H > scroller.scrollTop + view) {
-      scroller.scrollTop = Math.max(0, top - view + CELL_H + 4);
-    }
+    const left = idx * PITCH;
+    if (left < scroller.scrollLeft) scroller.scrollLeft = Math.max(0, left - PITCH / 2);
+    else if (left + CELL_W > scroller.scrollLeft + viewW) scroller.scrollLeft = left + CELL_W - viewW + PITCH / 2;
+  };
+  const scrollToEnd = () => {
+    layout();
+    scroller.scrollLeft = scroller.scrollWidth;
   };
 
   const drawGrid = () => {
-    const viewH = layout();
-    const [g] = fit(grid, viewH);
+    layout();
+    const [g] = fit(grid, cellH);
     const n = model.timeline.length;
-    const top = scroller.scrollTop;
-    const firstRow = Math.floor(top / CELL_H);
-    const yOff = -(top % CELL_H);
+    const left = scroller.scrollLeft;
+    const first = Math.max(0, Math.floor(left / PITCH));
+    const last = Math.min(n - 1, Math.floor((left + viewW) / PITCH));
     const selIdx = model.indexOf(model.selectedId);
     const newest = n - 1;
-    const cText = cssColor('--text');
+    const cWave = cssColor('--wave');
     const cMuted = cssColor('--text-2');
     const cNew = cssColor('--new');
-    const cSelBg = cssColor('--accent-bg');
+    const cCell = cssColor('--bg');
     const cBorder = cssColor('--border');
     const cLabel = cssColor('--muted');
-    const cParent = cssColor('--accent');
+    const cSel = cssColor('--accent');
+    const cSpec = cssColor('--accent');
     const cParentText = cssColor('--surface');
     const parentIdx = new Map(model.breedParents.map((id, i) => [id, i]));
-    // Bars in voice order, voice 1 topmost: slot k sits (m-1-k) pitches above the bottom.
     const voices = model.voices.filter((v) => v.wavetableId === ALL_WAVETABLE_ID);
     const vColors = voices.map(voiceColor);
-    const barY = voices.map((_, k) => CELL_H - 1 - BAR_H - (voices.length - 1 - k) * BAR_PITCH);
-    const order = voices.map((v) => v.id).join(',');
-    if (grid.dataset.barOrder !== order) grid.dataset.barOrder = order;
+    const showWave = view !== 1;
+    const showSpec = view !== 0;
+    grid.dataset.bandOrder = voices.map((v) => v.id).join(',');
+    grid.dataset.view = String(view);
     g.font = '9px ui-monospace, monospace';
     g.textBaseline = 'top';
-    for (let r = 0; r * CELL_H + yOff < viewH; r++) {
-      const row = firstRow + r;
-      const y = r * CELL_H + yOff;
-      for (let c = 0; c < cols; c++) {
-        const idx = row * cols + c;
-        if (idx >= n) break;
-        const t = model.timeline[idx];
-        const x = c * cellW;
-        if (idx === selIdx) {
-          g.fillStyle = cSelBg;
-          g.fillRect(x, y, cellW, CELL_H);
-        }
-        g.strokeStyle = cBorder;
-        g.lineWidth = 1;
-        g.strokeRect(x + 0.5, y + 0.5, cellW - 1, CELL_H - 1);
-        drawWave(g, x + 3, y + 3, cellW - 6, CELL_H - 12, t.data, idx === selIdx ? cText : idx === newest ? cNew : cMuted, {
-          points: 28,
-          lineWidth: idx === selIdx || idx === newest ? 1.6 : 1,
+    const top = 12;
+    const plotH = cellH - top - 3;
+    for (let idx = first; idx <= last; idx++) {
+      const t = model.timeline[idx];
+      const x = idx * PITCH - left;
+      g.fillStyle = cCell;
+      g.fillRect(x, 0, CELL_W, cellH);
+      // Window tints: one band per voice whose window holds this table, voice order top→bottom.
+      const inside: number[] = [];
+      voices.forEach((v, k) => {
+        if (idx >= v.windowStart && idx <= v.windowEnd) inside.push(k);
+      });
+      const bandH = cellH / (inside.length || 1);
+      inside.forEach((k, b) => {
+        const v = voices[k];
+        const y0 = Math.round(b * bandH);
+        const y1 = Math.round((b + 1) * bandH);
+        g.fillStyle = vColors[k];
+        g.globalAlpha = v.mute ? TINT_MUTED : TINT_ON;
+        g.fillRect(x, y0, CELL_W, y1 - y0);
+        g.globalAlpha = v.mute ? 0.45 : 1;
+        if (idx === v.windowStart) g.fillRect(x, y0, EDGE_W, y1 - y0);
+        if (idx === v.windowEnd) g.fillRect(x + CELL_W - EDGE_W, y0, EDGE_W, y1 - y0);
+      });
+      g.globalAlpha = 1;
+      if (showSpec) {
+        g.save();
+        g.translate(x + 3, top);
+        g.globalAlpha = showWave ? 0.45 : 1;
+        drawSpectrum(g, CELL_W - 6, plotH, t.data, cSpec, { bins: SPEC_BINS });
+        g.restore();
+      }
+      if (showWave) {
+        const hot = idx === selIdx || idx === newest;
+        drawWave(g, x + 3, top, CELL_W - 6, plotH, t.data, idx === newest ? cNew : idx === selIdx ? cWave : cMuted, {
+          points: 32,
+          lineWidth: hot ? 1.6 : 1.1,
         });
-        g.fillStyle = cLabel;
-        g.fillText(String(idx + 1), x + 3, y + 2);
-        const pi = parentIdx.get(t.id);
-        if (pi !== undefined) {
-          g.strokeStyle = cParent;
-          g.lineWidth = 2;
-          g.strokeRect(x + 1.5, y + 1.5, cellW - 3, CELL_H - 3);
-          g.fillStyle = cParent;
-          g.fillRect(x + cellW - 13, y + 2, 11, 11);
-          g.fillStyle = cParentText;
-          g.fillText(String.fromCharCode(65 + pi), x + cellW - 10.5, y + 3.5);
+      }
+      g.fillStyle = idx === newest ? cNew : cLabel;
+      g.fillText(String(idx + 1), x + 4, 2);
+      const sel = idx === selIdx;
+      g.strokeStyle = sel ? cSel : cBorder;
+      g.lineWidth = sel ? 2 : 1;
+      if (sel) g.strokeRect(x + 1, 1, CELL_W - 2, cellH - 2);
+      else g.strokeRect(x + 0.5, 0.5, CELL_W - 1, cellH - 1);
+      const pi = parentIdx.get(t.id);
+      if (pi !== undefined) {
+        if (!sel) {
+          g.strokeStyle = cSel;
+          g.setLineDash([3, 2]);
+          g.lineWidth = 1.5;
+          g.strokeRect(x + 1.5, 1.5, CELL_W - 3, cellH - 3);
+          g.setLineDash([]);
         }
-        voices.forEach((v, k) => {
-          if (idx >= v.windowStart && idx <= v.windowEnd) {
-            g.fillStyle = vColors[k];
-            g.globalAlpha = v.mute ? 0.35 : 0.9;
-            g.fillRect(x + 1, y + barY[k], cellW - 2, BAR_H);
-            g.globalAlpha = 1;
-          }
-        });
+        g.fillStyle = cSel;
+        g.fillRect(x + CELL_W - 14, 2, 12, 12);
+        g.fillStyle = cParentText;
+        g.fillText(String.fromCharCode(65 + pi), x + CELL_W - 10.5, 3.5);
       }
     }
   };
 
   /**
-   * Play-position markers on the overlay. Index f (fractional, into the "All"
-   * wavetable = timeline order) maps to the centre of cell round(f) offset by the
-   * fraction, so f = i + 0.5 sits on the boundary between tables i and i + 1.
-   * Only markers in visible rows are drawn; skipped entirely when nothing moved.
+   * Play-position carets on the overlay. Index f (fractional, into the "All" wavetable =
+   * timeline order) maps to the centre of cell round(f) offset by the fraction, so
+   * f = i + 0.5 sits on the boundary between tables i and i + 1. Only visible carets are
+   * drawn; skipped entirely when nothing moved.
    */
   const drawMarkers = () => {
     const n = model.timeline.length;
-    const top = scroller.scrollTop;
+    const left = scroller.scrollLeft;
     const live = model.playing ? new Map(bridge.status.voices.map((s) => [s.id, s.index])) : null;
-    const marks: { v: VoiceParams; f: number; x: number; y: number }[] = [];
+    const marks: { v: VoiceParams; f: number; x: number }[] = [];
     if (n) {
       for (const v of model.voices) {
         if (v.mute || v.wavetableId !== ALL_WAVETABLE_ID) continue;
         const f = Math.max(0, Math.min(n - 1, live?.get(v.id) ?? staticIndex(v, n)));
-        const j = Math.min(n - 1, Math.floor(f + 0.5));
-        const y = Math.floor(j / cols) * CELL_H - top;
-        if (y + CELL_H <= 0 || y >= viewH) continue;
-        marks.push({ v, f, x: (j % cols) * cellW + (f - j + 0.5) * cellW, y });
+        const x = (f + 0.5) * PITCH - GAP / 2 - left;
+        if (x < -6 || x > viewW + 6) continue;
+        marks.push({ v, f, x });
       }
     }
-    const key = `${viewH}|${cellW}|${marks.map((m) => `${m.v.id}:${m.x.toFixed(1)}:${m.y}`).join(' ')}`;
+    const key = `${viewW}|${cellH}|${marks.map((m) => `${m.v.id}:${m.x.toFixed(1)}`).join(' ')}`;
     if (key === markerKey) return;
     markerKey = key;
-    const [g] = fit(overlay, viewH);
+    const [g] = fit(overlay, cellH);
     const cEdge = cssColor('--surface');
-    for (const { v, x, y } of marks) {
+    for (const { v, x } of marks) {
       const col = voiceColor(v);
       g.globalAlpha = 0.85;
       g.fillStyle = cEdge;
-      g.fillRect(x - 2, y + 1, 4, CELL_H - 2);
+      g.fillRect(x - 2, 0, 4, cellH);
       g.globalAlpha = 1;
       g.fillStyle = col;
-      g.fillRect(x - 1, y + 1, 2, CELL_H - 2);
+      g.fillRect(x - 1, 0, 2, cellH);
       g.beginPath();
-      g.moveTo(x - 4.5, y + 1);
-      g.lineTo(x + 4.5, y + 1);
-      g.lineTo(x, y + 7);
+      g.moveTo(x - 5, 0);
+      g.lineTo(x + 5, 0);
+      g.lineTo(x, 7);
       g.closePath();
       g.strokeStyle = cEdge;
       g.lineWidth = 1;
@@ -211,28 +266,50 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     overlay.dataset.markers = marks.map((m) => `${m.v.id}:${m.f.toFixed(3)}`).join(' ');
   };
 
-  const drawSelection = () => {
+  const updateLabels = () => {
+    sec.meta.textContent = `${model.timeline.length} / ${model.cap}`;
     const t = model.table(model.selectedId);
     const idx = model.indexOf(model.selectedId);
     selLabel.textContent = t ? `#${idx + 1} · id ${t.id} · ${describeRecipe(t.recipe)}` : 'Nothing selected';
-    const [g, w, hh] = fit(selWave, SEL_H);
-    const [g2, w2, h2] = fit(selSpec, SEL_H);
-    if (!t) return;
-    drawWave(g, 0, 0, w, hh, t.data, cssColor('--text'), { axis: cssColor('--border'), lineWidth: 1.75 });
-    drawSpectrum(g2, w2, h2, t.data, cssColor('--accent'));
+    selLabel.title = selLabel.textContent;
   };
 
-  const updateMeta = () => {
-    sec.meta.textContent = `${model.timeline.length} / ${model.cap}`;
+  const updateLegend = () => {
+    legend.replaceChildren(
+      ...model.voices
+        .filter((v) => v.wavetableId === ALL_WAVETABLE_ID)
+        .map((v) =>
+          h(
+            'span',
+            { class: `tl-key${v.mute ? ' muted' : ''}`, style: `--c:var(${voiceColorVar(v.id - 1)})` },
+            h('span', { class: 'sw' }),
+            v.mute ? `${v.name} · muted` : v.name,
+          ),
+        ),
+    );
   };
 
   scroller.addEventListener('scroll', () => (dirtyGrid = dirtyMarkers = true), { passive: true });
-  const cellAt = (clientX: number, clientY: number) => {
+  // A vertical wheel scrolls the strip sideways (mouse users have no horizontal wheel).
+  scroller.addEventListener(
+    'wheel',
+    (e) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || e.ctrlKey) return;
+      const max = scroller.scrollWidth - scroller.clientWidth;
+      if (max <= 0) return;
+      const d = e.deltaMode === 1 ? e.deltaY * PITCH : e.deltaY;
+      const next = Math.max(0, Math.min(max, scroller.scrollLeft + d));
+      if (next === scroller.scrollLeft) return;
+      e.preventDefault();
+      scroller.scrollLeft = next;
+    },
+    { passive: false },
+  );
+  const cellAt = (clientX: number) => {
     const r = grid.getBoundingClientRect();
-    const c = Math.floor((clientX - r.left) / cellW);
-    const row = Math.floor((clientY - r.top + scroller.scrollTop) / CELL_H);
-    const idx = row * cols + c;
-    return c >= 0 && c < cols && idx >= 0 && idx < model.timeline.length ? model.timeline[idx] : undefined;
+    const x = clientX - r.left + scroller.scrollLeft;
+    const idx = Math.floor(x / PITCH);
+    return x >= 0 && idx < model.timeline.length ? model.timeline[idx] : undefined;
   };
   // Touch long-press toggles a Breed parent and swallows the click that follows.
   let press: { timer: ReturnType<typeof setTimeout>; x: number; y: number } | null = null;
@@ -251,7 +328,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
       y,
       timer: setTimeout(() => {
         press = null;
-        const t = cellAt(x, y);
+        const t = cellAt(x);
         if (!t) return;
         swallowClick = true;
         model.toggleBreedParent(t.id);
@@ -272,52 +349,63 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
       swallowClick = false;
       return;
     }
-    const t = cellAt(e.clientX, e.clientY);
+    const t = cellAt(e.clientX);
     if (!t) return;
     if (e.shiftKey || e.ctrlKey || e.metaKey) model.toggleBreedParent(t.id);
     else model.select(t.id);
   });
-  const invalidateMarkers = () => {
-    dirtyMarkers = true;
+  const invalidate = () => {
+    dirtyGrid = dirtyMarkers = true;
     markerKey = '';
   };
-  new ResizeObserver(() => {
-    dirtyGrid = dirtySel = true;
-    invalidateMarkers();
-  }).observe(scroller);
-  sec.el.addEventListener('toggle', () => {
-    dirtyGrid = dirtySel = true;
-    invalidateMarkers();
-  });
-  onThemeChange(() => {
-    dirtyGrid = dirtySel = true;
-    invalidateMarkers();
-  });
+  new ResizeObserver(invalidate).observe(scroller);
+  sec.onToggle(invalidate);
+  onThemeChange(invalidate);
 
+  // Scrolling: a changed selection is brought into view; otherwise, if the strip was
+  // at its end when tables were added, it follows the newest table.
+  let lastSel = model.selectedId;
+  let follow = false;
+  let scrollPending = false;
+  const scheduleScroll = () => {
+    if (scrollPending) return;
+    scrollPending = true;
+    // Defer so layout reflects every change from the same action.
+    requestAnimationFrame(() => {
+      scrollPending = false;
+      const selChanged = model.selectedId !== lastSel;
+      lastSel = model.selectedId;
+      if (selChanged) scrollToIndex(model.indexOf(model.selectedId));
+      else if (follow) scrollToEnd();
+      follow = false;
+      dirtyGrid = dirtyMarkers = true;
+    });
+  };
   model.on('timeline', () => {
-    dirtyGrid = dirtySel = dirtyMarkers = true;
-    updateMeta();
+    if (atEnd()) follow = true;
+    dirtyGrid = dirtyMarkers = true;
+    updateLabels();
+    scheduleScroll();
   });
   model.on('selection', () => {
-    dirtyGrid = dirtySel = true;
-    // Defer so layout reflects any timeline change from the same action.
-    requestAnimationFrame(() => scrollToIndex(model.indexOf(model.selectedId)));
+    dirtyGrid = true;
+    updateLabels();
+    scheduleScroll();
   });
-  model.on('voices', () => (dirtyGrid = dirtyMarkers = true));
+  model.on('voices', () => {
+    dirtyGrid = dirtyMarkers = true;
+    updateLegend();
+  });
   model.on('transport', () => (dirtyMarkers = true));
   model.on('parents', () => (dirtyGrid = true));
-  updateMeta();
+  updateLabels();
+  updateLegend();
 
   return {
     el: sec.el,
     view: {
       frame() {
-        if (!sec.el.open) return;
-        if (dirtySel && isOnScreen(selWave)) {
-          dirtySel = false;
-          drawSelection();
-        }
-        if (!isOnScreen(grid)) return;
+        if (!sec.isOpen() || !isOnScreen(grid)) return;
         if (dirtyGrid) {
           dirtyGrid = false;
           drawGrid();

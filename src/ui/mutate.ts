@@ -123,16 +123,20 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
 
   const el = h(
     'div',
-    { role: 'tabpanel', id: 'panel-mutate' },
-    views,
-    h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Mutation')), opSel), amountSlider.el),
-    h('div', { class: 'grid2' }, modeField.el, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Steps')), stepsLabel)),
-    h('div', { class: 'row' }, apply1, applyN, evolveBtn),
+    { role: 'tabpanel', id: 'panel-mutate', class: 'gen-cols' },
+    h('div', { class: 'gen-col' }, views),
     h(
-      'p',
-      { class: 'hint' },
-      'Apply adds one table and selects it. Apply N adds a batch from the same source (sets the ticked voices’ windows). ' +
-        `Evolve mutates the newest table every ${EVOLVE_MS / 1000} s (amount capped at ${EVOLVE_MAX_AMOUNT * 100}%).`,
+      'div',
+      { class: 'gen-col' },
+      h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Mutation')), opSel), amountSlider.el),
+      h('div', { class: 'grid2' }, modeField.el, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Steps')), stepsLabel)),
+      h('div', { class: 'row' }, apply1, applyN, evolveBtn),
+      h(
+        'p',
+        { class: 'hint' },
+        'Apply adds one table and selects it. Apply N adds a batch from the same source (sets the ticked voices’ windows). ' +
+          `Evolve mutates the newest table every ${EVOLVE_MS / 1000} s (amount capped at ${EVOLVE_MAX_AMOUNT * 100}%).`,
+      ),
     ),
   );
 

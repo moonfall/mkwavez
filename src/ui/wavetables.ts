@@ -2,41 +2,62 @@ import { TABLE_SIZE } from '../core/constants';
 import { wavetableLength, type WavetableId } from '../core/wavetable';
 import { cssColor, fit, onThemeChange, parseColor } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { h, section, selectField, voiceColorVar } from './dom';
+import { h, panel, voiceColorVar } from './dom';
 
-const VIEW_H = 84;
-const HEAT_H = 64;
+/** Heat-map bitmap rows (phase resolution); scaled to the canvas. */
+const HEAT_H = 96;
+/** Window bars under the heat map: height and pitch per voice. */
+const BAR_H = 3;
+const BAR_PITCH = 4;
 
 /**
- * Wavetables: ordered organisations of timeline tables. M1 has only the auto "All".
- * The overview is a heat map (x = table, y = phase, colour = amplitude) which scales
- * to thousands of tables, with voice windows and live play positions overlaid.
+ * Wavetables: ordered organisations of timeline tables. Only the auto "All" exists yet;
+ * creating 1D / 2D wavetables is planned (the slot is reserved in the layout). The
+ * overview is a heat map (x = table, y = phase, colour = amplitude) which scales to
+ * thousands of tables, with voice windows and live play positions overlaid.
  */
 export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model, bridge } = ctx;
-  // Starts collapsed: a placeholder until wavetable editing lands.
-  const sec = section('sec-wavetables', 'Wavetables', false);
+  // Collapsed by default on the narrow shell: a placeholder until wavetable editing lands.
+  const sec = panel('sec-wavetables', 'Wavetables', { collapsed: true });
   let current: WavetableId = model.wavetables[0].id;
 
-  const pick = selectField(
-    'Wavetable',
-    model.wavetables.map((w) => [String(w.id), w.name]),
-    String(current),
-    (v) => {
-      current = Number(v);
-      heatDirty = dirty = true;
-    },
+  const soon = 'Planned: 1D / 2D wavetables from timeline tables';
+  sec.tools.append(
+    h('span', { class: 'grow' }),
+    h('button', { class: 'small', disabled: true, title: soon }, '+ 1D'),
+    h('button', { class: 'small', disabled: true, title: soon }, '+ 2D'),
   );
-  const info = h('div', { class: 'hint', style: 'margin:0' });
+
+  const pick = h('div', { class: 'wt-list', role: 'group', 'aria-label': 'Wavetables' });
+  const renderPick = () => {
+    pick.replaceChildren(
+      ...model.wavetables.map((w) => {
+        const n = wavetableLength(w);
+        const b = h(
+          'button',
+          {
+            class: 'small wt-pick',
+            'aria-pressed': String(w.id === current),
+            onclick: () => {
+              current = w.id;
+              heatDirty = dirty = true;
+              renderPick();
+            },
+          },
+          `${w.name} · ${w.kind.toUpperCase()} · ${n}${w.auto ? ' · auto' : ''}`,
+        );
+        return b;
+      }),
+    );
+  };
   const canvas = h('canvas', { id: 'wavetable-overview', 'aria-label': 'Wavetable overview; click to select a table' });
+  const box = h('div', { class: 'wt-box' }, canvas);
   sec.body.append(
-    h('div', { class: 'grid2' }, pick.el, h('div', { class: 'field', style: 'align-self:end' }, info)),
-    canvas,
-    h(
-      'p',
-      { class: 'hint', style: 'margin-top:6px' },
-      'x = table, y = phase, colour = amplitude. Bars show voice windows; lines show play positions.',
-    ),
+    pick,
+    box,
+    h('p', { class: 'hint wt-hint' }, 'x = table, y = phase, colour = amplitude. Bars: voice windows; lines: play positions.'),
+    h('p', { class: 'hint wt-soon' }, 'Coming soon: build 1D and 2D wavetables from timeline tables.'),
   );
   watchVisibility(canvas);
 
@@ -72,24 +93,26 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
   };
 
   const draw = () => {
-    const [g, w] = fit(canvas, VIEW_H);
+    const voices = model.voices.filter((v) => v.wavetableId === current);
+    const bars = voices.length * BAR_PITCH + 4;
+    const [g, w, H] = fit(canvas, Math.max(48, box.clientHeight || 84));
+    const heatH = Math.max(20, H - bars);
     if (heatDirty || heat.width !== Math.round(w)) {
       heatDirty = false;
       buildHeat(w);
     }
     g.imageSmoothingEnabled = false;
-    g.drawImage(heat, 0, 0, w, HEAT_H);
+    g.drawImage(heat, 0, 0, w, heatH);
     const wt = model.wavetable(current);
     const len = wt ? wavetableLength(wt) : 0;
     if (!len) return;
     const cw = w / len;
-    const voices = model.voices.filter((v) => v.wavetableId === current);
     const live = new Map(bridge.status.voices.map((s) => [s.id, s]));
     voices.forEach((v, k) => {
       const col = cssColor(voiceColorVar(v.id - 1));
       g.globalAlpha = v.mute ? 0.35 : 0.9;
       g.fillStyle = col;
-      g.fillRect(v.windowStart * cw, HEAT_H + 4 + k * 4, (v.windowEnd - v.windowStart + 1) * cw, 3);
+      g.fillRect(v.windowStart * cw, heatH + 3 + k * BAR_PITCH, (v.windowEnd - v.windowStart + 1) * cw, BAR_H);
       const st = model.playing ? live.get(v.id) : undefined;
       let f: number;
       if (st) f = st.index;
@@ -102,7 +125,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
       g.lineWidth = 2;
       g.beginPath();
       g.moveTo(x, 0);
-      g.lineTo(x, HEAT_H);
+      g.lineTo(x, heatH);
       g.stroke();
       g.globalAlpha = 1;
     });
@@ -119,10 +142,8 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
   });
 
   const updateInfo = () => {
-    const wt = model.wavetable(current);
-    const n = wt ? wavetableLength(wt) : 0;
-    info.textContent = wt ? `${wt.kind.toUpperCase()} · ${n} tables${wt.auto ? ' · auto' : ''}` : '';
     sec.meta.textContent = `${model.wavetables.length}`;
+    renderPick();
   };
 
   model.on('timeline', () => {
@@ -131,8 +152,8 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
   });
   model.on('voices', () => (dirty = true));
   model.on('transport', () => (dirty = true));
-  sec.el.addEventListener('toggle', () => (dirty = true));
-  new ResizeObserver(() => (dirty = true)).observe(canvas);
+  sec.onToggle(() => (dirty = true));
+  new ResizeObserver(() => (dirty = true)).observe(box);
   onThemeChange(() => (heatDirty = dirty = true));
   updateInfo();
 
@@ -140,7 +161,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
     el: sec.el,
     view: {
       frame() {
-        if (!sec.el.open || !isOnScreen(canvas)) return;
+        if (!sec.isOpen() || !isOnScreen(canvas)) return;
         if (!dirty && !model.playing) return;
         dirty = false;
         draw();

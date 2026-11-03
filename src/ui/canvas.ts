@@ -19,13 +19,36 @@ export function onThemeChange(fn: () => void): void {
   themeListeners.add(fn);
 }
 
-try {
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    colorCache = new Map();
-    for (const fn of themeListeners) fn();
-  });
-} catch {
-  /* old browsers */
+// ---- theme: dark by default; an explicit choice (toggle) is remembered ----
+
+export type Theme = 'dark' | 'light';
+const THEME_KEY = 'mkwavez.theme';
+
+export function storedTheme(): Theme | null {
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    return t === 'light' || t === 'dark' ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+export function currentTheme(): Theme {
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+}
+
+/** Apply a theme (data-theme on <html>), optionally remember it, and redraw canvases. */
+export function setTheme(t: Theme, persist = true): void {
+  document.documentElement.dataset.theme = t;
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_KEY, t);
+    } catch {
+      /* storage blocked: the choice lasts for this page only */
+    }
+  }
+  colorCache = new Map();
+  for (const fn of themeListeners) fn();
 }
 
 // ---- sizing ----

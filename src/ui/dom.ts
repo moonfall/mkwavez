@@ -52,20 +52,66 @@ export const ICONS = {
   mute: 'M11 5L6 9H2v6h4l5 4zM22 9l-6 6M16 9l6 6',
   close: 'M18 6L6 18M6 6l12 12',
   shuffle: 'M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5',
+  plus: 'M12 5v14M5 12h14',
+  sun: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+  moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
+  cycle: 'M20 11a8 8 0 0 0-14.9-4M4 4v3h3M4 13a8 8 0 0 0 14.9 4M20 20v-3h-3',
 };
 
-/** Collapsible section. Returns the <details> and its body container. */
-export function section(id: string, title: string, open = true): {
-  el: HTMLDetailsElement;
-  body: HTMLDivElement;
+/** Below this width the shell is one scrolling column of collapsible panels. */
+export const NARROW_SHELL = '(max-width: 899px)';
+const narrowShell = typeof matchMedia !== 'undefined' ? matchMedia(NARROW_SHELL) : null;
+export const isNarrowShell = (): boolean => !!narrowShell?.matches;
+
+export interface Panel {
+  el: HTMLElement;
+  /** Header row: collapse chevron (narrow shell only), title, `tools`, `meta`. */
+  head: HTMLElement;
+  tools: HTMLDivElement;
   meta: HTMLSpanElement;
-  summary: HTMLElement;
-} {
+  body: HTMLDivElement;
+  /** Body showing: always on the wide shell; on the narrow one unless collapsed. */
+  isOpen(): boolean;
+  /** Called when the body may have been shown / hidden (collapse, shell width change). */
+  onToggle(fn: () => void): void;
+}
+
+/**
+ * A panel of the app shell. On the wide shell it fills its grid cell (the body scrolls
+ * if its content overflows); on the narrow shell the header chevron collapses the body.
+ */
+export function panel(id: string, title: string, opts: { collapsed?: boolean } = {}): Panel {
   const meta = h('span', { class: 'meta' });
-  const summary = h('summary', {}, icon(ICONS.chevron, 'chev'), h('span', {}, title), meta);
-  const body = h('div', { class: 'sec-body' });
-  const el = h('details', { class: 'sec', id, open }, summary, body);
-  return { el, body, meta, summary };
+  const tools = h('div', { class: 'panel-tools' });
+  const body = h('div', { class: 'panel-body', id: `${id}-body` });
+  const chev = h('button', { class: 'panel-collapse', 'aria-controls': body.id }, icon(ICONS.chevron, 'chev'));
+  const head = h('div', { class: 'panel-head' }, chev, h('h2', { class: 'panel-title' }, title), tools, meta);
+  const el = h('section', { class: 'panel', id, 'aria-label': title }, head, body);
+  let collapsed = !!opts.collapsed;
+  const fns: (() => void)[] = [];
+  const apply = () => {
+    el.classList.toggle('collapsed', collapsed);
+    chev.setAttribute('aria-expanded', String(!collapsed));
+    chev.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} ${title}`);
+  };
+  apply();
+  chev.addEventListener('click', () => {
+    collapsed = !collapsed;
+    apply();
+    for (const fn of fns) fn();
+  });
+  narrowShell?.addEventListener('change', () => {
+    for (const fn of fns) fn();
+  });
+  return {
+    el,
+    head,
+    tools,
+    meta,
+    body,
+    isOpen: () => !collapsed || !isNarrowShell(),
+    onToggle: (fn) => fns.push(fn),
+  };
 }
 
 export interface Slider {
@@ -133,33 +179,6 @@ export function selectField(
   select.addEventListener('change', () => onChange(select.value));
   const el = h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, label)), select);
   return { el, select };
-}
-
-/**
- * Collapse toggle for a card: hides `body` (everything below the card head) and marks
- * the card `.collapsed`. Starts expanded; `onToggle` fires with the new state.
- */
-export function cardCollapse(
-  label: string,
-  card: HTMLElement,
-  body: HTMLElement,
-  onToggle?: (collapsed: boolean) => void,
-): { button: HTMLButtonElement; collapsed(): boolean } {
-  const button = h('button', { class: 'small card-collapse' }, icon(ICONS.chevron));
-  let collapsed = false;
-  const apply = () => {
-    body.hidden = collapsed;
-    card.classList.toggle('collapsed', collapsed);
-    button.setAttribute('aria-expanded', String(!collapsed));
-    button.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} ${label}`);
-  };
-  apply();
-  button.addEventListener('click', () => {
-    collapsed = !collapsed;
-    apply();
-    onToggle?.(collapsed);
-  });
-  return { button, collapsed: () => collapsed };
 }
 
 /** Voice colour CSS variable (`--v0`…`--v7`); index = voice id − 1. Palette in styles.css. */

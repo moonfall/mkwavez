@@ -1,12 +1,12 @@
 import type { FrameView, UiContext } from './context';
-import { h, section, slider } from './dom';
+import { h, panel, slider } from './dom';
 import { buildBreedPanel } from './breed';
 import { buildMutatePanel } from './mutate';
 import { buildSeedPanel, MAX_BATCH, voiceTargetChecks } from './seed';
 
 export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model } = ctx;
-  const sec = section('sec-generate', 'Generate');
+  const sec = panel('sec-generate', 'Generate');
   let count = 8;
   const countListeners: ((n: number) => void)[] = [];
   const setCount = (n: number) => {
@@ -36,7 +36,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
 
   // ---- tabs ----
   const tabNames = ['Seed', 'Mutate', 'Breed', 'Sample'] as const;
-  const tabs = h('div', { class: 'tabs', role: 'tablist' });
+  const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Generate methods' });
   const panels = new Map<string, HTMLElement>();
   const tabButtons = new Map<string, HTMLButtonElement>();
   let currentTab = 'Seed';
@@ -45,20 +45,23 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
     for (const [n, b] of tabButtons) b.setAttribute('aria-selected', String(n === name));
     for (const [n, p] of panels) p.hidden = n !== name;
     shared.hidden = name !== 'Mutate' && name !== 'Breed';
+    sec.el.dataset.tab = name.toLowerCase();
+    sec.body.scrollTop = 0;
   };
   for (const name of tabNames) {
     const b = h('button', { role: 'tab', id: `tab-${name.toLowerCase()}`, onclick: () => setTab(name) }, name);
     tabButtons.set(name, b);
     tabs.append(b);
   }
-  sec.body.append(tabs, shared);
+  sec.tools.append(tabs);
+  sec.body.append(shared);
 
   // ---- Seed panel ----
   const seed = buildSeedPanel(ctx, {
     count: () => count,
     setCount,
     onCount,
-    active: () => sec.el.open && currentTab === 'Seed',
+    active: () => sec.isOpen() && currentTab === 'Seed',
   });
   panels.set('Seed', seed.el);
 
@@ -66,7 +69,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   const mutate = buildMutatePanel(ctx, {
     count: () => count,
     onCount,
-    active: () => sec.el.open && currentTab === 'Mutate',
+    active: () => sec.isOpen() && currentTab === 'Mutate',
   });
   panels.set('Mutate', mutate.el);
 
@@ -74,7 +77,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   const breed = buildBreedPanel(ctx, {
     count: () => count,
     onCount,
-    active: () => sec.el.open && currentTab === 'Breed',
+    active: () => sec.isOpen() && currentTab === 'Breed',
   });
   panels.set('Breed', breed.el);
 
