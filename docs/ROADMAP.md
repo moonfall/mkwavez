@@ -49,14 +49,15 @@ Deferred / known gaps from M2:
 ## M3 — Breed tab (done)
 
 - Generate → Breed: 2–8 parents in an ordered list (A first) held by the model
-  (`AppModel.breedParents`). Add them with Shift/Ctrl/⌘-click or a touch long-press
+  (`AppModel.breedParents`). Add them with Shift/⌘-click (also Ctrl-click off macOS) or a touch long-press
   in the Timeline (cells get an A/B/… badge), "Add selected", or "Use window" of a voice
   (evenly spaced picks when the window holds more than 8). Cards show a thumbnail and
   can be reordered (‹ ›) or removed (×); parents evicted from the timeline (or removed
   by undo) drop out of the list.
 - Operators (`core/breed.ts`, DOM-free, seeded, output through shape()):
   Crossfade (time domain), Spectral mix (magnitudes and phases interpolated
-  separately), A mags + others' phases, A phases + others' mags, Envelope transfer
+  separately; phases as weighted shortest-arc offsets from A, so sweeps stay
+  continuous through antiphase harmonics, tested), A mags + others' phases, A phases + others' mags, Envelope transfer
   (A's harmonics re-weighted toward the others' smoothed spectral envelope), Harmonic
   split (log-harmonic bands, A lowest), Genetic per harmonic and per third-octave band
   (seeded masks), Time splice (8 seeded segments, 64-sample circular raised-cosine
@@ -67,8 +68,10 @@ Deferred / known gaps from M2:
   `rate · min(1, 2·(1 − max w))`, so pure parents stay exact.
 - Breed adds one child and selects it; Breed N = Sweep (bias B·i/N, one seed; seeded
   masks hand harmonics over monotonically) or Generation (N children at the same bias,
-  child j seed derived from the Apply seed, child 0 = preview). Generation of a
-  deterministic operator at 0% mutation is disabled (it would add N copies).
+  child j seed derived from the Apply seed, child 0 = preview). Breed N is disabled when it would only add
+  copies: Sweep at bias 0, or a Generation with no effective mutation (rate 0, or one
+  parent holding all the weight) and a deterministic operator or a single winning
+  parent.
 - Recipes (`op: 'breed'`) record operator, bias, batch bias, mode, walk, weights,
   rate, seed, batch index and all parent ids; re-rendering reproduces every operator ×
   walk × mode exactly (unit-tested). Preview, seeds, window following, batch window

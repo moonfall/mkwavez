@@ -168,25 +168,29 @@ function pickByShare(w: readonly number[], u: number): number {
 
 const hasPhase = (s: Spec, k: number) => s.mag[k] > s.maxMag * PHASE_EPS;
 
-/** Weighted circular mean of the parents' phases at k (unit phasors; undefined phases skipped). */
-function meanPhase(S: readonly Spec[], w: readonly number[], k: number, fallback: number): number {
-  let x = 0;
-  let y = 0;
-  let best = -1;
-  let bestW = 0;
+/** Wrap an angle to (−π, π]. */
+const wrapPi = (x: number) => x - 2 * Math.PI * Math.ceil((x - Math.PI) / (2 * Math.PI));
+
+/**
+ * Weighted phase interpolation at harmonic k, continuous in the weights: each parent's
+ * phase is a fixed shortest-arc offset from a reference parent (the first with a
+ * defined phase, normally A), and the offsets are averaged linearly. (A unit-phasor
+ * mean jumps by π where two parents are in antiphase at an even mix.) Parents without
+ * a defined phase at k count as offset 0. A pure parent gets its own phase.
+ */
+function interpPhase(S: readonly Spec[], w: readonly number[], k: number, fallback: number): number {
+  let ref = -1;
+  for (let p = 0; p < S.length && ref < 0; p++) if (hasPhase(S[p], k)) ref = p;
+  if (ref < 0) return fallback;
+  const pr = Math.atan2(S[ref].im[k], S[ref].re[k]);
+  let acc = 0;
+  let ws = 0;
   for (let p = 0; p < S.length; p++) {
-    if (!w[p] || !hasPhase(S[p], k)) continue;
-    const m = S[p].mag[k];
-    x += (w[p] * S[p].re[k]) / m;
-    y += (w[p] * S[p].im[k]) / m;
-    if (w[p] > bestW) {
-      bestW = w[p];
-      best = p;
-    }
+    if (!w[p]) continue;
+    ws += w[p];
+    if (hasPhase(S[p], k)) acc += w[p] * wrapPi(Math.atan2(S[p].im[k], S[p].re[k]) - pr);
   }
-  if (best < 0) return fallback;
-  if (Math.hypot(x, y) < 1e-9 * bestW) return Math.atan2(S[best].im[k], S[best].re[k]);
-  return Math.atan2(y, x);
+  return ws > 0 ? pr + acc / ws : fallback;
 }
 
 /** Gaussian-smoothed magnitude envelope, normalised to peak 1, floored, as log. */
@@ -270,16 +274,8 @@ function breedRaw(op: BreedOpId, X: readonly Float32Array[], w: readonly number[
       const S = X.map(spec);
       for (let k = 1; k <= KMAX; k++) {
         let m = 0;
-        let fb = 0;
-        let fbW = -1;
-        for (let p = 0; p < P; p++) {
-          m += w[p] * S[p].mag[k];
-          if (w[p] * S[p].mag[k] > fbW) {
-            fbW = w[p] * S[p].mag[k];
-            fb = Math.atan2(S[p].im[k], S[p].re[k]);
-          }
-        }
-        const ph = meanPhase(S, w, k, fb);
+        for (let p = 0; p < P; p++) m += w[p] * S[p].mag[k];
+        const ph = interpPhase(S, w, k, Math.atan2(S[0].im[k], S[0].re[k]));
         re[k] = m * Math.cos(ph);
         im[k] = m * Math.sin(ph);
       }
@@ -289,16 +285,7 @@ function breedRaw(op: BreedOpId, X: readonly Float32Array[], w: readonly number[
       // A's magnitudes; phases walk toward the others' (A's where a donor has none).
       const S = X.map(spec);
       for (let k = 1; k <= KMAX; k++) {
-        const pa = Math.atan2(S[0].im[k], S[0].re[k]);
-        let x = 0;
-        let y = 0;
-        for (let p = 0; p < P; p++) {
-          if (!w[p]) continue;
-          const ph = hasPhase(S[p], k) ? Math.atan2(S[p].im[k], S[p].re[k]) : pa;
-          x += w[p] * Math.cos(ph);
-          y += w[p] * Math.sin(ph);
-        }
-        const ph = Math.hypot(x, y) < 1e-9 ? pa : Math.atan2(y, x);
+        const ph = interpPhase(S, w, k, Math.atan2(S[0].im[k], S[0].re[k]));
         re[k] = S[0].mag[k] * Math.cos(ph);
         im[k] = S[0].mag[k] * Math.sin(ph);
       }
@@ -312,7 +299,7 @@ function breedRaw(op: BreedOpId, X: readonly Float32Array[], w: readonly number[
         let m = 0;
         for (let p = 0; p < P; p++) m += w[p] * S[p].mag[k];
         const pa = Math.atan2(S[0].im[k], S[0].re[k]);
-        const ph = hasPhase(S[0], k) ? pa : meanPhase(S, donors, k, pa);
+        const ph = hasPhase(S[0], k) ? pa : interpPhase(S, donors, k, pa);
         re[k] = m * Math.cos(ph);
         im[k] = m * Math.sin(ph);
       }

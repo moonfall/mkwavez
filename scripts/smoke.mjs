@@ -460,7 +460,18 @@ async function breedChecks(page, tlCount) {
   assert(await page.isDisabled('#breed-applyN'), 'generation of Crossfade at 0% mutation is disabled');
   await page.fill('#breed-rate', '0.05');
   assert(!(await page.isDisabled('#breed-applyN')), 're-enabled with mutation');
+  // A generation at a pure parent (path stop on B of three) would be copies even for a seeded operator.
+  await page.selectOption('#breed-op', 'genetic');
+  await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2, t3]);
+  await page.fill('#breed-bias', '0.5');
+  assert(await page.isDisabled('#breed-applyN'), 'generation at a pure parent is disabled');
+  await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2]);
+  assert(!(await page.isDisabled('#breed-applyN')), 'generation between two parents enabled');
   await page.selectOption('#breed-mode', 'sweep');
+  await page.fill('#breed-bias', '0');
+  assert(await page.isDisabled('#breed-applyN'), 'sweep at bias 0 is disabled');
+  await page.fill('#breed-bias', '0.3');
+  assert(!(await page.isDisabled('#breed-applyN')), 'sweep re-enabled above bias 0');
 
   // Custom weights.
   await page.selectOption('#breed-walk', 'weights');

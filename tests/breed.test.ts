@@ -109,6 +109,31 @@ describe('breed operators', () => {
     expect(maxDiff(run('mix', [A, B], 0.5, { seed: 1, rate: 0.2 }), run('mix', [A, B], 0.5, { seed: 2, rate: 0.2 }))).toBeGreaterThan(1e-3);
   });
 
+  it('phase-interpolating operators sweep continuously, even through antiphase harmonics', () => {
+    const tri = makeTable(21, generateBasic('tri', 0));
+    const pairs: [string, WaveTable[]][] = [
+      ['square→tri', [B, tri]],
+      ['saw→tri', [D, tri]],
+      ['saw→square', [D, B]],
+      ['tri→square→saw', [tri, B, D]],
+    ];
+    // 1% steps per parent-to-parent segment. A crossfade's worst step here is ~0.025;
+    // the old unit-phasor mean jumped ~0.7 at an even mix.
+    for (const op of ['spectral', 'magsA', 'phasesA'] as BreedOpId[]) {
+      for (const [name, ps] of pairs) {
+        const steps = 100 * (ps.length - 1);
+        let prev = run(op, ps, 0);
+        let worst = 0;
+        for (let i = 1; i <= steps; i++) {
+          const y = run(op, ps, i / steps);
+          worst = Math.max(worst, maxDiff(prev, y));
+          prev = y;
+        }
+        expect(worst, `${op} ${name}`).toBeLessThan(0.06);
+      }
+    }
+  });
+
   it('spectral mix keeps magnitudes from cancelling (saw vs its inversion)', () => {
     const inv = makeTable(20, { data: shape(D.data.map((v) => -v)), recipe: D.recipe });
     const y = run('spectral', [D, inv], 0.5);

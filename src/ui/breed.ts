@@ -3,6 +3,7 @@ import {
   breedWeights,
   BREED_OPS,
   isSeededOp,
+  mutationAmount,
   MAX_PARENTS,
   sweepBiases,
   type BiasWalk,
@@ -114,6 +115,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const walkField = selectField('Bias walks', WALKS, walk, (v) => {
     walk = v as BiasWalk;
     cards.classList.toggle('show-weights', walk === 'weights');
+    updateSteps();
   });
   walkField.select.id = 'breed-walk';
   const rateSlider = slider({
@@ -174,8 +176,21 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const parents = (): WaveTable[] => model.breedParents.map((id) => model.table(id)).filter((t): t is WaveTable => !!t);
   const weightList = () => model.breedParents.map((id) => weights.get(id) ?? 1);
   const ready = () => model.breedParents.length >= 2;
-  /** Generation of a deterministic operator without mutation would add N identical children. */
-  const genIdentical = () => mode === 'gen' && !isSeededOp(op) && rate === 0;
+  /**
+   * Why Breed N would only add copies, or null. Sweep at bias 0 is N copies of A. A
+   * generation is N identical children when there's no mutation (rate 0, or one parent
+   * holding all the weight, e.g. bias 0 or a path stop on B) and either the operator
+   * isn't seeded or a single parent wins every seeded pick.
+   */
+  const batchBlocked = (): string | null => {
+    if (mode === 'sweep') return bias === 0 ? 'Bias 0: every child would be A' : null;
+    const P = model.breedParents.length;
+    if (P < 2) return null;
+    const w = breedWeights(P, bias, walk, weightList());
+    if (mutationAmount(rate, w) > 0) return null;
+    if (Math.max(...w) >= 1 - 1e-9) return `${parentLetter(w.indexOf(Math.max(...w)))} holds all the weight: copies`;
+    return isSeededOp(op) ? null : 'identical: pick a seeded operator or raise Mutation';
+  };
 
   const addSelected = () => {
     if (model.selectedId !== null && !model.breedParents.includes(model.selectedId)) model.toggleBreedParent(model.selectedId);
@@ -235,7 +250,10 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
             step: 0.01,
             value: weights.get(id) ?? 1,
             format: (v) => `${Math.round(v * 100)}`,
-            onInput: (v) => weights.set(id, v),
+            onInput: (v) => {
+              weights.set(id, v);
+              updateSteps();
+            },
           });
           w.input.classList.add('pc-weight');
           w.el.classList.add('pc-weight-field');
@@ -262,24 +280,18 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     syncButtons();
   };
 
-  const syncButtons = () => {
-    apply1.disabled = !ready();
-    applyN.disabled = !ready() || genIdentical();
-    addSel.disabled = model.selectedId === null || model.breedParents.includes(model.selectedId) || model.breedParents.length >= MAX_PARENTS;
-  };
-
+  /** Buttons and the Children readout (Breed N is disabled when it would only add copies). */
   const updateSteps = () => {
     const n = opts.count();
-    const s =
-      mode === 'gen'
-        ? genIdentical()
-          ? 'identical: pick a seeded operator or raise Mutation'
-          : `${n} × ${pct(bias)}%, seeds differ`
-        : sweepBiases(n, bias).map(pct).join(' ');
+    const blocked = batchBlocked();
+    const s = blocked ?? (mode === 'gen' ? `${n} × ${pct(bias)}%, seeds differ` : sweepBiases(n, bias).map(pct).join(' '));
     stepsLabel.textContent = s;
     stepsLabel.title = s;
-    syncButtons();
+    apply1.disabled = !ready();
+    applyN.disabled = !ready() || blocked !== null;
+    addSel.disabled = model.selectedId === null || model.breedParents.includes(model.selectedId) || model.breedParents.length >= MAX_PARENTS;
   };
+  const syncButtons = updateSteps;
 
   const newSeed = () => {
     seed = randomSeed();
@@ -356,7 +368,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   };
 
   const applyBatch = () => {
-    if (!ready() || genIdentical()) return;
+    if (!ready() || batchBlocked()) return;
     model.addTables(breedBatch(request(mode, opts.count()), parents()), 'batch', false);
     newSeed();
   };

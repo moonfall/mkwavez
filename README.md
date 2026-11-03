@@ -35,7 +35,7 @@ The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to overr
   preview, Apply and every table of Apply N (Linear / Log sweep or Chain). Reroll
   draws a new seed; one is drawn after each Apply. Evolve keeps mutating the newest
   table on a timer.
-- **Generate → Breed**: combine 2–8 parents. Shift-click (or Ctrl/⌘-click) or
+- **Generate → Breed**: combine 2–8 parents. Shift-click (or ⌘-click) or
   long-press tables in the Timeline, "Add selected", or "Use window" of a voice; reorder
   or remove them on their cards. Pick an operator (crossfade, spectral mix, magnitude /
   phase swaps, envelope transfer, harmonic split, genetic masks, time splice), a Bias

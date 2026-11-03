@@ -16,7 +16,8 @@ const LONG_PRESS_SLOP = 10;
  * Timeline: every table ever generated (up to the cap), as a virtualized grid of
  * thumbnails drawn on one sticky canvas — only visible rows are drawn, and only when
  * something changed. Click selects; the selection is shown larger with its spectrum.
- * Shift/Ctrl/Cmd-click or a touch long-press toggles a table as a Breed parent
+ * Shift-click, Cmd-click (Ctrl-click off macOS, where it opens the context menu)
+ * or a touch long-press toggles a table as a Breed parent
  * (badged A, B, … in the grid).
  */
 export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameView } {
@@ -33,7 +34,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     h('div', { class: 'row', style: 'margin-bottom:4px' }, selLabel),
     h('div', { class: 'sel-view' }, selWave, selSpec),
     scroller,
-    h('p', { class: 'hint', style: 'margin:6px 0 0' }, 'Shift-click (or Ctrl/⌘-click) or long-press a table to add or remove it as a Breed parent.'),
+    h('p', { class: 'hint', style: 'margin:6px 0 0' }, 'Shift-click (or ⌘-click) or long-press a table to add or remove it as a Breed parent.'),
   );
   watchVisibility(grid);
   watchVisibility(selWave);
