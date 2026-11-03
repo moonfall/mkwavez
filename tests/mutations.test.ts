@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateBasic, generatePerlin, DEFAULT_PERLIN } from '../src/core/generators';
+import { harmonicMagnitudes } from '../src/core/fft';
 import { mutate, MUTATION_CHOICES, MUTATIONS, mutationUsesSeed, sweepAmounts } from '../src/core/mutations';
 
 const src = generatePerlin(DEFAULT_PERLIN, 4242, 1)[0].data;
@@ -29,6 +30,32 @@ describe('mutations (core port)', () => {
   it('every offered mutation has an amount hint; legacy Breed is not offered', () => {
     for (const m of MUTATION_CHOICES) expect(m.hint.length, m.id).toBeGreaterThan(8);
     expect(MUTATION_CHOICES.some((m) => m.id === 'breed')).toBe(false);
+  });
+
+  it('spectral: shift, mirror, contrast and sieves move / weight the right harmonics', () => {
+    const saw = generateBasic('saw', 0).data;
+    const mags = (x: Float32Array) => harmonicMagnitudes(x, 72);
+    // Shift at a = 1: 16 harmonics up; h2 moves to h18, h1 stays, h2..h17 empty.
+    const sh = mags(mutate('hshift', saw, 1, 0));
+    expect(sh[1]).toBeGreaterThan(0.1);
+    expect(sh[5]).toBeLessThan(1e-6);
+    expect(sh[18] / sh[1]).toBeCloseTo(0.5, 2);
+    // Mirror at a = 1: saw magnitudes reversed over h2…h72 (h72 gets h2's 1/2).
+    const mi = mags(mutate('mirror', saw, 1, 0));
+    expect(mi[72] / mi[1]).toBeCloseTo(0.5, 2);
+    expect(mi[2] / mi[1]).toBeCloseTo(1 / 72, 3);
+    // Contrast at a = 1: γ = 3, so h2 / h1 = (1/2)³.
+    const c = mags(mutate('contrast', saw, 1, 0));
+    expect(c[2] / c[1]).toBeCloseTo(1 / 8, 3);
+    const fl = mags(mutate('flatten', saw, 1, 0));
+    expect(fl[2] / fl[1]).toBeCloseTo(Math.pow(0.5, 0.15), 3);
+    // Sieves at a = 1 remove the excluded harmonics.
+    const pr = mags(mutate('primes', saw, 1, 0));
+    expect(pr[4]).toBeLessThan(1e-6);
+    expect(pr[7]).toBeGreaterThan(1e-3);
+    const fib = mags(mutate('fibsieve', saw, 1, 0));
+    expect(fib[4]).toBeLessThan(1e-6);
+    expect(fib[8]).toBeGreaterThan(1e-3);
   });
 
   it('sweep amounts', () => {

@@ -39,6 +39,19 @@ export const MUTATIONS = [
   { group: 'Spectral', id: 'formant', label: 'Formant', hint: 'Up to (1 + 2a)× around a seeded centre h4–h24', seeded: true },
   { group: 'Spectral', id: 'blur', label: 'Blur', hint: 'Magnitudes mixed by a toward their neighbours' },
   { group: 'Spectral', id: 'odd', label: 'Odd only', hint: 'Even harmonics scaled by (1−a)²' },
+  { group: 'Spectral', id: 'hshift', label: 'Harmonic shift', hint: 'Harmonics ≥ 2 move up by 16·a^1.5 (fundamental kept)' },
+  { group: 'Spectral', id: 'mirror', label: 'Spectrum mirror', hint: 'Magnitudes of h2…top reversed, blended by a' },
+  { group: 'Spectral', id: 'contrast', label: 'Spectral contrast', hint: 'Magnitudes |X|^γ, γ = 1 + 2a (peaks stand out)' },
+  { group: 'Spectral', id: 'flatten', label: 'Spectral flatten', hint: 'Magnitudes |X|^γ, γ = 1 − 0.85a (toward flat)' },
+  { group: 'Spectral', id: 'primes', label: 'Prime sieve', hint: 'Non-prime harmonics (except h1) scaled by (1−a)²' },
+  { group: 'Spectral', id: 'fibsieve', label: 'Fibonacci sieve', hint: 'Non-Fibonacci harmonics scaled by (1−a)²' },
+  {
+    group: 'Spectral',
+    id: 'multiples',
+    label: 'Multiples sieve',
+    hint: 'Harmonics not a multiple of m (2–5, seeded; h1 kept) scaled by (1−a)²',
+    seeded: true,
+  },
   { group: 'Random', id: 'jitter', label: 'Jitter', hint: 'Seeded magnitude + phase noise, scaled by a', seeded: true },
   { group: 'Random', id: 'scramble', label: 'Scramble', hint: 'Seeded phase offsets up to ±a·π', seeded: true },
   // Legacy (M2): superseded by the Breed tab (core/breed.ts); kept so older recipes
@@ -119,6 +132,56 @@ function polar(
     re[k] = m * Math.cos(p);
     im[k] = m * Math.sin(p);
   }
+}
+
+/** Magnitudes and phases of harmonics 0..KMAX+1 (index = harmonic; 0 and KMAX+1 are 0). */
+function harmonics(re: Float64Array, im: Float64Array): { M: Float64Array; P: Float64Array; max: number } {
+  const M = new Float64Array(KMAX + 2);
+  const P = new Float64Array(KMAX + 2);
+  let max = 0;
+  for (let k = 1; k <= KMAX; k++) {
+    M[k] = Math.hypot(re[k], im[k]);
+    P[k] = Math.atan2(im[k], re[k]);
+    max = Math.max(max, M[k]);
+  }
+  return { M, P, max };
+}
+
+/** Set harmonic k from polar form. */
+function setPolar(re: Float64Array, im: Float64Array, k: number, m: number, p: number): void {
+  re[k] = m * Math.cos(p);
+  im[k] = m * Math.sin(p);
+}
+
+function isPrime(k: number): boolean {
+  if (k < 2) return false;
+  for (let d = 2; d * d <= k; d++) if (k % d === 0) return false;
+  return true;
+}
+
+const FIBONACCI = new Set([1, 2, 3, 5, 8, 13, 21, 34, 55, 89]);
+
+/** Harmonics ≥ 2 that fail `keep` scaled by q (q = 1: unchanged). */
+function sieve(x: Float32Array, q: number, keep: (k: number) => boolean): Float32Array {
+  return viaSpec(x, (re, im) => {
+    for (let k = 2; k < N / 2; k++) {
+      if (keep(k)) continue;
+      re[k] *= q;
+      im[k] *= q;
+    }
+  });
+}
+
+/** Magnitudes renormalised to the peak and raised to γ (harmonics below 1e-6 of the peak dropped). */
+function contrast(x: Float32Array, gamma: number): Float32Array {
+  return viaSpec(x, (re, im) => {
+    const { M, P, max } = harmonics(re, im);
+    if (max <= 0) return;
+    for (let k = 1; k <= KMAX; k++) {
+      const r = M[k] / max;
+      setPolar(re, im, k, r > 1e-6 ? max * Math.pow(r, gamma) : 0, P[k]);
+    }
+  });
 }
 
 export function mutate(
@@ -229,6 +292,44 @@ export function mutate(
           im[k] *= q;
         }
       });
+    case 'hshift': {
+      // Fractional shifts interpolate magnitudes between the two nearest whole shifts.
+      const sh = 16 * Math.pow(a, 1.5);
+      const k0 = Math.floor(sh);
+      const f = sh - k0;
+      return viaSpec(x, (re, im) => {
+        const { M, P } = harmonics(re, im);
+        for (let k = 2; k < N / 2; k++) {
+          if (k > KMAX) {
+            re[k] = im[k] = 0;
+            continue;
+          }
+          const s0 = k - k0;
+          const s1 = s0 - 1;
+          const m = (1 - f) * (s0 >= 2 ? M[s0] : 0) + f * (s1 >= 2 ? M[s1] : 0);
+          setPolar(re, im, k, m, s0 >= 2 ? P[s0] : s1 >= 2 ? P[s1] : 0);
+        }
+      });
+    }
+    case 'mirror':
+      return viaSpec(x, (re, im) => {
+        const { M, P, max } = harmonics(re, im);
+        let top = 2;
+        for (let k = 2; k <= KMAX; k++) if (M[k] > max * 1e-4) top = k;
+        for (let k = 2; k <= top; k++) setPolar(re, im, k, (1 - a) * M[k] + a * M[top + 2 - k], P[k]);
+      });
+    case 'contrast':
+      return contrast(x, 1 + 2 * a);
+    case 'flatten':
+      return contrast(x, 1 - 0.85 * a);
+    case 'primes':
+      return sieve(x, q, isPrime);
+    case 'fibsieve':
+      return sieve(x, q, (k) => FIBONACCI.has(k));
+    case 'multiples': {
+      const m = 2 + rand.int(4);
+      return sieve(x, q, (k) => k % m === 0);
+    }
     case 'jitter':
       return viaSpec(x, (re, im) =>
         polar(re, im, (k, m, p) => {
