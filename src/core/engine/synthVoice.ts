@@ -13,7 +13,8 @@
  * per sample, so the cutoff is recomputed (and smooth) every sample. Fixed state, no
  * allocation; deterministic (the noise PRNG is seeded per voice).
  */
-import { mipLevelFor, type MipSet } from '../mipmap';
+import { BEND_RANGE_SEMITONES } from '../midi';
+import { MIP_LEVELS, mipLevelFor, type MipSet } from '../mipmap';
 import { deriveSeed, Prng } from '../prng';
 import {
   applyMatrix,
@@ -285,8 +286,45 @@ export class SynthVoice {
     this.incA0 = this.incA1;
     this.incB0 = this.incB1;
     this.incS0 = this.incS1;
-    this.a.mipLevel = mipLevelFor(this.incA1 * this.ratA[this.uA - 1] * this.sampleRate, this.sampleRate);
-    this.b.mipLevel = mipLevelFor(this.incB1 * this.ratB[this.uB - 1] * this.sampleRate, this.sampleRate);
+    this.mips(p.synth, this.incA1, this.incB1);
+  }
+
+  /**
+   * Mip levels for the oscillators' highest increments this block. Ring modulation (A × B
+   * holds sum frequencies: twice the bandwidth) takes one level fewer harmonics on both; FM
+   * likewise on A. (Hard sync and drive / saturation still alias somewhat at high notes:
+   * no oversampling, see ROADMAP.)
+   */
+  private mips(s: SynthParams, incA: number, incB: number): void {
+    const sr = this.sampleRate;
+    const ring = s.ringLevel > 0 || this.lv1[4] > 1e-4 ? 1 : 0;
+    this.a.mipLevel = Math.min(MIP_LEVELS - 1, mipLevelFor(incA * this.ratA[this.uA - 1] * sr, sr) + Math.max(ring, s.fm > 0 ? 1 : 0));
+    this.b.mipLevel = Math.min(MIP_LEVELS - 1, mipLevelFor(incB * this.ratB[this.uB - 1] * sr, sr) + ring);
+  }
+
+  /**
+   * The voice became a Synth voice (again): snap its pitch to the current note (no glide
+   * from a stale one) and bring the envelopes in line with the gate: restarted while a note
+   * is held, silent otherwise (the filter state is cleared when nothing sounds).
+   */
+  resync(p: VoiceParams, pitch: number, gated: boolean, sounding: boolean): void {
+    this.target = this.pitch = pitch;
+    this.configure(p.synth, this.blockLen);
+    if (gated) {
+      this.fenv.gateOn();
+      this.penv.gateOn();
+      this.menv.gateOn();
+    } else {
+      for (const env of [this.fenv, this.penv, this.menv]) {
+        env.value = 0;
+        env.stage = 0;
+      }
+    }
+    if (!sounding) {
+      this.filter.reset();
+      this.filterR.reset();
+    }
+    this.retune(p);
   }
 
   private lastBend = 0;
@@ -333,7 +371,6 @@ export class SynthVoice {
    */
   control(p: VoiceParams, c: SynthControl): void {
     const s = p.synth;
-    const sr = this.sampleRate;
     const { bend: bendSemis, blockLen, tables, wtA, wtB, slew, glideCoef, gainTarget } = c;
     this.blockLen = blockLen;
     this.configure(s, blockLen);
@@ -362,15 +399,15 @@ export class SynthVoice {
     src[S.rand] = this.noteRand;
     applyMatrix(s.mods, src, this.dst);
     const dst = this.dst;
-    const bend = (bendSemis * s.bendRange) / 2;
+    const bend = (bendSemis * s.bendRange) / BEND_RANGE_SEMITONES;
     this.lastBend = bend;
     this.incA0 = this.incA1;
     this.incB0 = this.incB1;
     this.incS0 = this.incS1;
     this.pitches(p, bend);
     this.unison(s, c.unisonScale);
-    this.a.mipLevel = mipLevelFor(Math.max(this.incA0, this.incA1) * this.ratA[this.uA - 1] * sr, sr);
-    this.b.mipLevel = mipLevelFor(Math.max(this.incB0, this.incB1) * this.ratB[this.uB - 1] * sr, sr);
+    this.mips(s, Math.max(this.incA0, this.incA1), Math.max(this.incB0, this.incB1));
+
 
     // Table mixes.
     this.posA = dst[D.posA] ? reflect01(p.position + dst[D.posA]) : p.position;

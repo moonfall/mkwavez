@@ -433,3 +433,46 @@ describe('sync, FM, unison, saturation, width', () => {
     expect(one.status({ tick: -1, playing: false, voices: [] }).unisonLimited).toBe(false);
   });
 });
+
+describe('review fixes', () => {
+  it('switching back into Synth re-syncs the path: pitch snaps to the current note, filter env follows the gate', () => {
+    const e = engine();
+    const v = synthVoice(1, { glide: 0.5, glideLegato: false });
+    e.setVoice(v);
+    e.applyMidi({ type: 'noteOn', voiceId: 1, note: 40, velocity: 127 });
+    render(e, 4096);
+    e.setVoice({ ...v, type: 'simple' });
+    render(e, 4096);
+    e.applyMidi({ type: 'noteOff', voiceId: 1, note: 40 });
+    e.applyMidi({ type: 'noteOn', voiceId: 1, note: 70, velocity: 127 });
+    render(e, 4096);
+    e.setVoice(v);
+    const syn = (e as unknown as { voices: { syn: { pitch: number; target: number; fenv: { stage: number } } }[] }).voices[0].syn;
+    expect(syn.pitch).toBeCloseTo(70, 6);
+    expect(syn.target).toBeCloseTo(70, 6);
+    expect(syn.fenv.stage).toBe(1); // attack: retriggered for the held note
+    render(e, 2048);
+    expect(syn.pitch).toBeCloseTo(70, 6); // no glide from the stale note 40
+    // Released while Simple, then back to Synth: envelopes silent.
+    e.setVoice({ ...v, type: 'simple' });
+    e.applyMidi({ type: 'noteOff', voiceId: 1, note: 70 });
+    render(e, SR);
+    e.setVoice(v);
+    expect(syn.fenv.stage).toBe(0);
+  });
+
+  it('ring modulation and FM take one mip level fewer harmonics', () => {
+    const tables = new Map();
+    const c: SynthControl = { bend: 0, blockLen: 64, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1 };
+    const lv = (synth: Partial<SynthParams>) => {
+      const p: VoiceParams = { ...DEFAULT_VOICE, id: 1, name: 'V1', type: 'synth', synth: { ...DEFAULT_SYNTH, mods: [], ...synth } };
+      const sv = new SynthVoice(SR, 1, 64);
+      sv.noteOn(p, 81, 1, false, true, false);
+      sv.control(p, c);
+      return [sv.a.mipLevel, sv.b.mipLevel];
+    };
+    const [a0, b0] = lv({});
+    expect(lv({ ringLevel: 0.5 })).toEqual([a0 + 1, b0 + 1]);
+    expect(lv({ fm: 0.5 })).toEqual([a0 + 1, b0]);
+  });
+});

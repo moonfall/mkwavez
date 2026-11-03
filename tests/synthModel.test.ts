@@ -91,6 +91,25 @@ describe('Synth voices in the model', () => {
     expect(m.undoDepth).toBe(d1);
   });
 
+  it('undo restores only the sound the undone action edited (live CC moves elsewhere survive)', () => {
+    const m = model();
+    const v = m.addVoice({ type: 'synth' })!;
+    const w = m.addVoice({ type: 'synth' })!;
+    m.updateVoice(w.id, { synth: { resonance: 0.5 } });
+    m.endGesture();
+    // Unrelated action, then live (non-undoable) controller moves on both voices.
+    m.addTables([generateBasic('saw', 0)]);
+    m.updateVoice(v.id, { synth: { cutoff: 333 }, position: 0.9 }, { undo: false });
+    m.updateVoice(w.id, { synth: { cutoff: 444 } }, { undo: false });
+    m.undo(); // the add
+    expect(m.voice(v.id)!.synth.cutoff).toBe(333);
+    expect(m.voice(v.id)!.position).toBe(0.9);
+    expect(m.voice(w.id)!.synth.cutoff).toBe(444);
+    m.undo(); // w's resonance edit: only w's sound goes back
+    expect(m.voice(w.id)!.synth.resonance).toBe(DEFAULT_SYNTH.resonance);
+    expect(m.voice(v.id)!.synth.cutoff).toBe(333);
+  });
+
   it('mute is not an undo step on a Synth voice', () => {
     const m = model();
     const v = m.addVoice({ type: 'synth' })!;

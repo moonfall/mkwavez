@@ -218,13 +218,16 @@ export class SynthEngine {
   }
 
   private applyParams(v: VoiceRuntime, p: VoiceParams): void {
+    const wasSynth = v.params.type === 'synth';
     v.params = p;
     v.env.configure(p.attack, p.decay, p.sustain, p.release, this.sampleRate);
-    if (p.type === 'synth' && !v.syn) {
-      // Becoming a Synth voice: start its path at the current note (then crossfade in).
-      const syn = new SynthVoice(this.sampleRate, p.id, CONTROL_BLOCK, p.synth.lfos.map((l) => l.phase));
-      syn.noteOn(p, freqPitch(v.freq), 1, false, v.env.stage !== IDLE, false);
-      v.syn = syn;
+    if (p.type === 'synth' && (!v.syn || !wasSynth)) {
+      // Becoming a Synth voice (first time or again): its path starts at the current note,
+      // envelopes in step with the gate (then it crossfades in). A path kept from an earlier
+      // switch would otherwise glide from a stale note with a frozen filter envelope.
+      const syn = v.syn ?? (v.syn = new SynthVoice(this.sampleRate, p.id, CONTROL_BLOCK, p.synth.lfos.map((l) => l.phase)));
+      syn.vel = v.notes.size ? v.notes.topVelocity / 127 : 1;
+      syn.resync(p, freqPitch(v.freq), v.notes.size > 0 || v.gateRemaining > 0, v.env.stage !== IDLE && v.typeMix > 0);
     }
   }
 

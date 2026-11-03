@@ -91,8 +91,15 @@ interface Snapshot {
   wavetables: readonly Wavetable[];
   selectedId: TableId | null;
   windows: Map<number, Windows>;
-  /** Each voice's type, synth block and (restored on Synth voices) the shared params the Synth panel edits. */
-  sounds: Map<number, SynthSound>;
+  /** Osc B's wavetable and windows per voice (adds / wavetable edits move them, like osc A's). */
+  bWindows: Map<number, Windows>;
+  /**
+   * The sound of the one voice the undone action edits (a synth edit, type switch, preset,
+   * paste): its type, synth block and, on a Synth voice, the shared params the Synth panel
+   * edits. Other voices' sounds are never touched by undo (so live, non-undoable changes such
+   * as MIDI controller moves survive undoing something else).
+   */
+  sound: { id: number; sound: SynthSound } | null;
   steps: Map<number, readonly number[]>;
 }
 
@@ -407,12 +414,12 @@ export class AppModel {
       !!v0 &&
       opts.undo !== false &&
       ((patch.type !== undefined && patch.type !== v0.type) || ((v0.type === 'synth' || patch.type === 'synth') && SYNTH_UNDO_KEYS.some((k) => k in patch)));
-    if (switching) this.snapshot();
+    if (switching) this.snapshot(synthEdit ? id : null);
     else if (windowEdit && this.gestureKey !== `window:${id}`) {
-      this.snapshot();
+      this.snapshot(synthEdit ? id : null);
       this.gestureKey = `window:${id}`;
     } else if (synthEdit && !windowEdit && this.gestureKey !== `synth:${id}`) {
-      this.snapshot();
+      this.snapshot(id);
       this.gestureKey = `synth:${id}`;
     }
     let changed = false;
@@ -724,14 +731,17 @@ export class AppModel {
 
   // ---- undo ----
 
-  private snapshot(): void {
+  /** Push an undo step; `soundVoice` = the voice whose sound this action edits (see Snapshot.sound). */
+  private snapshot(soundVoice: number | null = null): void {
     this.gestureKey = null;
+    const sv = soundVoice === null ? undefined : this.voice(soundVoice);
     this.undoStack.push({
       timeline: this.timeline,
       selectedId: this.selectedId,
       wavetables: this.wavetables,
       windows: new Map(this.voices.map((v) => [v.id, windowsOf(v)])),
-      sounds: new Map(this.voices.map((v) => [v.id, soundOf(v)])),
+      bWindows: new Map(this.voices.map((v) => [v.id, windowsOf(v.synth.b)])),
+      sound: sv ? { id: sv.id, sound: soundOf(sv) } : null,
       steps: new Map(this.sequences.map((s) => [s.id, s.steps])),
     });
     if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift();
@@ -757,8 +767,10 @@ export class AppModel {
     this.voices = this.voices.map((v) => {
       const w = s.windows.get(v.id);
       let next = w && this.wavetable(w.wavetableId) ? { ...v, ...w } : v;
-      // Type and synth block always; the shared sound params only if it was a Synth voice.
-      const snd = s.sounds.get(next.id);
+      const bw = s.bWindows.get(next.id);
+      if (bw && this.wavetable(bw.wavetableId)) next = { ...next, synth: { ...next.synth, b: { ...next.synth.b, ...bw } } };
+      // The edited voice's sound: type and synth block; the shared params only if it was a Synth voice.
+      const snd = s.sound?.id === next.id ? s.sound.sound : undefined;
       if (snd) next = snd.type === 'synth' ? { ...next, ...snd } : { ...next, type: snd.type, synth: snd.synth };
       const wt = this.wavetable(next.wavetableId);
       if (wt) next = clampVoiceWindow(next, wt);
@@ -794,7 +806,8 @@ function soundOf(v: VoiceParams): SynthSound {
   };
 }
 
-function windowsOf(v: VoiceParams): Windows {
+function windowsOf(v: Windows): Windows {
+
 
   return { wavetableId: v.wavetableId, windowStart: v.windowStart, windowEnd: v.windowEnd, windowStartY: v.windowStartY, windowEndY: v.windowEndY };
 }
