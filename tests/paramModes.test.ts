@@ -48,4 +48,20 @@ describe('parameter modes', () => {
     const a = seedTable(req('dynamical-systems', {}, 1, 1), 0).data;
     expect(same(a, seedTable(req('dynamical-systems', {}, 1, 2), 0).data)).toBe(true);
   });
+
+  it('Karplus-Strong: the string darkens over the batch; noise is seeded, the pluck shape is not', () => {
+    const hf = (x: Float32Array) => {
+      let s = 0;
+      for (let i = 1; i < x.length; i++) s += Math.abs(x[i] - x[i - 1]);
+      return s;
+    };
+    const b = seedBatch(req('karplus-strong', {}, 6));
+    expect(hf(b[5].data)).toBeLessThan(hf(b[0].data));
+    const t = (excite: number, seed: number) => seedTable(req('karplus-strong', { excite }, 3, seed), 1).data;
+    expect(same(t(0, 1), t(0, 2))).toBe(false);
+    expect(same(t(1, 1), t(1, 2))).toBe(true);
+    // Snapshot i of a batch = the string after start + i·passes, whatever the batch size.
+    const s = seedTable(req('karplus-strong', { start: 12, passes: 6 }, 8), 0).data;
+    expect(same(s, seedTable(req('karplus-strong', { start: 6, passes: 6 }, 3), 1).data)).toBe(true);
+  });
 });

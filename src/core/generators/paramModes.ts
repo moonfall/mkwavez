@@ -7,6 +7,7 @@
  */
 import type { ParamValue } from '../table';
 import { DEFAULT_DYN, DYN_MAP_LABELS, dynamicalTable } from './dynamical';
+import { DEFAULT_KS, karplusTable } from './karplus';
 
 export interface SeedParam {
   readonly key: string;
@@ -72,6 +73,37 @@ export const PARAM_MODES: readonly ParamModeDef[] = [
         },
         index,
         count,
+      ),
+  },
+  {
+    mode: 'karplus',
+    id: 'karplus-strong',
+    cat: 'Simulations',
+    name: 'Karplus-Strong snapshots',
+    about:
+      'A plucked string: a burst circulates through an averaging filter. Waveform i is the string after ' +
+      'start + i × passes round trips, so a batch scans one decaying pluck (bright → mellow).',
+    params: [
+      { key: 'excite', label: 'Excitation', min: 0, max: 1, step: 1, value: DEFAULT_KS.excite, options: opts(['Noise burst (seeded)', 'Pluck shape']) },
+      { key: 'length', label: 'String length', min: 16, max: 512, step: 1, value: DEFAULT_KS.length },
+      { key: 'damping', label: 'Damping', min: 0, max: 1, step: 0.01, value: DEFAULT_KS.damping },
+      { key: 'passes', label: 'Passes per waveform', min: 1, max: 64, step: 1, value: DEFAULT_KS.passes },
+      { key: 'start', label: 'Start pass', min: 0, max: 256, step: 1, value: DEFAULT_KS.start },
+      { key: 'position', label: 'Pluck position', min: 0.02, max: 0.5, step: 0.01, value: DEFAULT_KS.position },
+    ],
+    seeded: (p) => num(p, 'excite') === 0,
+    render: (p, seed, index) =>
+      karplusTable(
+        {
+          excite: num(p, 'excite'),
+          length: num(p, 'length'),
+          damping: num(p, 'damping'),
+          passes: num(p, 'passes'),
+          start: num(p, 'start'),
+          position: num(p, 'position'),
+        },
+        seed,
+        index,
       ),
   },
 ];

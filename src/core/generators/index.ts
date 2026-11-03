@@ -11,6 +11,7 @@ import { pulseWidth } from './seed';
 export * from './basic';
 export * from './ca';
 export * from './dynamical';
+export * from './karplus';
 export * from './paramModes';
 export * from './formula';
 export * from './formulaPresets';
