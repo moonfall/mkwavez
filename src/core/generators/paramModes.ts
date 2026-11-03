@@ -9,6 +9,7 @@ import type { ParamValue } from '../table';
 import { additiveTable, DEFAULT_ADDITIVE as AD, type AdditiveParams } from './additive';
 import { DEFAULT_DYN, DYN_MAP_LABELS, dynamicalTable } from './dynamical';
 import { DEFAULT_KS, karplusTable } from './karplus';
+import { glyphTable } from './glyph';
 import { DEFAULT_LIFE as LF, LIFE_READS, LIFE_RULES, lifeTable, type LifeParams } from './life';
 import { DEFAULT_RD as RD, RD_CUSTOM, RD_PRESETS, rdTable, type RdParams } from './reactionDiffusion';
 import { DEFAULT_SPLINE as SP, splineTable, type SplineParams } from './spline';
@@ -229,6 +230,30 @@ export const PARAM_MODES = [
     ],
     seeded: () => true,
     render: (p, seed, index, count) => splineTable(nums<SplineParams>(p, SP), seed, index, count),
+  },
+  {
+    mode: 'glyph',
+    id: 'glyph-contour',
+    cat: 'Builders',
+    name: 'Glyph contour',
+    about:
+      'The outer contour of a character, read as radius vs angle around its centre. A batch takes the next ' +
+      'characters of the text, sweeps the font weight, or sweeps a skew. Waveforms store the traced contour, not the font.',
+    params: [
+      { key: 'batch', label: 'Batch', min: 0, max: 2, step: 1, value: 0, options: opts(['Next characters', 'Sweep weight', 'Sweep skew']) },
+      { key: 'weight', label: 'Weight', min: 100, max: 900, step: 100, value: 700 },
+      { key: 'weightEnd', label: 'Batch → weight', min: 100, max: 900, step: 100, value: 200 },
+      { key: 'skew', label: 'Skew', min: -1, max: 1, step: 0.01, value: 0 },
+      { key: 'skewEnd', label: 'Batch → skew', min: -1, max: 1, step: 0.01, value: 0.6 },
+    ],
+    seeded: () => false,
+    // `contour` (and `glyph`, the character) come per table from the host: SeedRequest.inputs.
+    render: (p, _seed, index, count) =>
+      glyphTable(
+        { contour: String(p.contour ?? ''), skew: num(p, 'skew'), skewEnd: num(p, num(p, 'batch') === 2 ? 'skewEnd' : 'skew') },
+        index,
+        count,
+      ),
   },
 ] as const satisfies readonly ParamModeDef[];
 

@@ -44,6 +44,7 @@ src/
                         migrations, the .mkwz file container
     engine/             SynthEngine (audio-thread engine), Adsr, NoteStack (held keys)
   browser/formulaEval.ts  JS expression → FormulaFn (browser-only convenience)
+  browser/glyphTrace.ts character → canvas → outer contour polyline (Glyph contour mode)
   browser/webMidi.ts    Web MIDI access: permission, inputs + hot-plug, chosen input(s),
                         unsupported / insecure / denied states
   browser/sessionStore.ts  IndexedDB store for the autosaved session (meta + waveforms)
@@ -95,8 +96,13 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   `width, widthEnd` (duty sweeps linearly across the batch); `expr, name, edited`
   (the expression actually used); `freq, z, zDrift, octaves, persistence`;
   `rule, cells, start, generation (= start + index)`. Parameter modes from
-  `PARAM_MODES` (`dynamical`, …) record `op` = the mode, every param plus `name`, and
-  re-render through the mode's `render(params, seed, index, count)`. `seed` and `batch {index, count}`
+  `PARAM_MODES` (`dynamical`, `karplus`, `additive`, `numseq`, `rd`, `life`, `spline`,
+  `glyph`) record `op` = the mode, every param plus `name`, and re-render through the
+  mode's `render(params, seed, index, count)` (missing params take the mode's defaults).
+  Data only the host can make arrives as per-table `SeedRequest.inputs` merged into the
+  params and recorded: Glyph contour's `contour` (the outer contour polyline traced by
+  `browser/glyphTrace.ts` from an offscreen canvas, "x,y x,y …") and `glyph` (the
+  character) — the recipe carries the polyline, never the font. `seed` and `batch {index, count}`
   are always set (also for single "Add shown" tables, which keep their batch position),
   so every Seed table re-renders exactly (tested for every library entry).
 - **Mutation recipe** — `op: 'mutate'`, `params { mutation, amount (this table's),

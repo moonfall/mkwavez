@@ -502,6 +502,20 @@ async function seedChecks(page, tlCount) {
   await page.click('#seed-n-inc');
   assert((await page.inputValue('#seed-n')) === '8', 'N back to 8');
 
+  // Glyph contour: the browser traces each character; the strip shows one per card.
+  await page.click('#seed-current');
+  await page.fill('#seed-search', 'glyph');
+  await page.press('#seed-search', 'Enter');
+  assert((await title()) === 'Builders › Glyph contour' && (await page.isVisible('#seed-glyph-text')), 'Glyph contour shows a text field');
+  await page.waitForTimeout(400);
+  const g1 = await canvasInk(page, '#seed-strip .gen-card:nth-child(1) canvas');
+  const g2 = await canvasInk(page, '#seed-strip .gen-card:nth-child(2) canvas');
+  assert(g1.n > 0 && g2.n > 0 && g1.sum !== g2.sum, 'glyph cards render, one character each');
+  await page.fill('#seed-glyph-text', 'O');
+  assert(await page.isVisible('#seed-edited'), 'editing the text marks it edited');
+  await page.click('#seed-revert');
+  assert((await page.inputValue('#seed-glyph-text')) === 'mkwavez' && !(await page.isVisible('#seed-edited')), 'Revert restores the text');
+
   // Basic wave (additive), selected for later adds.
   await page.click('#seed-current');
   await page.fill('#seed-search', 'saw');

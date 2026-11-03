@@ -3,7 +3,11 @@ import { TABLE_SIZE } from '../src/core/constants';
 import {
   additiveAmps,
   DEFAULT_ADDITIVE,
+  DEFAULT_CONTOUR,
   DEFAULT_LIFE,
+  encodeContour,
+  glyphTable,
+  parseContour,
   DEFAULT_RD,
   lifeBoard,
   lifeLine,
@@ -34,13 +38,17 @@ const req = (id: string, params: Record<string, number> = {}, count = 4, seed = 
   return { entry, expr: '', params, seed, count };
 };
 
+const SQUARE = '0.2,0.2 0.8,0.2 0.8,0.8 0.2,0.8';
+
 describe('parameter modes', () => {
   it('every mode is in the library, re-renders exactly and varies across a batch', () => {
     for (const m of PARAM_MODES) {
       const e = seedEntry(m.id);
       expect(e, m.id).toBeDefined();
       expect(e!.mode).toBe(m.mode);
-      const b = seedBatch(req(m.id, {}, 5));
+      // Glyph contours come from the host (browser tracer): two shapes stand in.
+      const inputs = m.mode === 'glyph' ? [{ contour: SQUARE }, { contour: DEFAULT_CONTOUR }, { contour: '0.5,0.9 0.1,0.1 0.9,0.1' }] : undefined;
+      const b = seedBatch({ ...req(m.id, {}, 5), inputs });
       b.forEach((t) => {
         expect(t.data.length).toBe(TABLE_SIZE);
         expect(t.data.every(Number.isFinite), m.id).toBe(true);
@@ -164,5 +172,20 @@ describe('parameter modes', () => {
       const t = seedTable(req('spline', { kind, tension: 0.5 }, 3), 1).data;
       expect(t.every(Number.isFinite)).toBe(true);
     }
+  });
+
+  it('glyph contour: radius vs angle of the polyline; recipes carry the contour; skew sweeps', () => {
+    // A centred square: radius 0.3 at 0°, 0.3·√2 at 45°.
+    const sq = glyphTable({ contour: SQUARE, skew: 0, skewEnd: 0 }, 0, 1);
+    const star = glyphTable({ contour: '', skew: 0, skewEnd: 0 }, 0, 1);
+    expect(same(star, glyphTable({ contour: DEFAULT_CONTOUR, skew: 0, skewEnd: 0 }, 0, 1))).toBe(true);
+    expect(maxDiff(sq, star)).toBeGreaterThan(0.01);
+    expect(parseContour(encodeContour([0.1234, 0.5, 1, 0]))).toEqual([0.123, 0.5, 1, 0]);
+    const r = { ...req('glyph-contour', { batch: 2 }, 3), inputs: [{ contour: SQUARE, glyph: 'A' }] };
+    const b = seedBatch(r);
+    expect(b[2].recipe.params.contour).toBe(SQUARE);
+    expect(describeRecipe(b[2].recipe)).toContain('“A”');
+    expect(same(renderRecipe(b[2].recipe), b[2].data)).toBe(true);
+    expect(maxDiff(b[0].data, b[2].data)).toBeGreaterThan(1e-3);
   });
 });

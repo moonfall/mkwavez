@@ -5,7 +5,7 @@
  * (possibly edited) formula or the params, the seed and the batch position, so
  * renderRecipe() reproduces them exactly.
  */
-import type { GeneratedTable } from '../table';
+import type { GeneratedTable, ParamValue } from '../table';
 import { basicWave, pulse, type BasicWave } from './basic';
 import { CA_RULES, caGenerations } from './ca';
 import { formulaTable, type FormulaFn } from './formula';
@@ -152,6 +152,12 @@ export interface SeedRequest {
   readonly seed: number;
   /** Batch size N (u = index / (N-1)). */
   readonly count: number;
+  /**
+   * Per-table params supplied by the host for parameter modes that need data the core
+   * can't make (e.g. a glyph's traced contour): table i gets inputs[i % length], merged
+   * over the params and recorded in its recipe, so it re-renders without the host.
+   */
+  readonly inputs?: readonly Readonly<Record<string, ParamValue>>[];
 }
 
 /**
@@ -207,7 +213,9 @@ export function seedTable(req: SeedRequest, index: number, fn?: FormulaFn, abort
     default: {
       const pm = paramMode(entry.mode);
       if (!pm) throw new Error(`seedTable: unknown mode ${entry.mode}`);
-      return { data: pm.render(p, seed, index, count), recipe: recipe(pm.mode, { ...p, name: entry.name }) };
+      const extra = req.inputs?.length ? req.inputs[index % req.inputs.length] : {};
+      const all = { ...p, ...extra };
+      return { data: pm.render(all, seed, index, count), recipe: recipe(pm.mode, { ...all, name: entry.name }) };
     }
   }
 }

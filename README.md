@@ -48,8 +48,10 @@ of the same panels, each collapsible. Dark theme by default; the sun / moon butt
 switches (the choice is remembered).
 
 - **Generate → Seed**: pick from the library (basic waves, formula presets by
-  category, Perlin noise, cellular automaton, simulations such as dynamical systems,
-  a blank formula). Search filters by name,
+  category, Perlin noise, cellular automaton, simulations — dynamical systems,
+  Karplus-Strong, reaction-diffusion, Life-like automata — and builders — additive
+  designer, number sequences, spline, glyph contour (type text; each character's outline
+  becomes a waveform) — and a blank formula). Search filters by name,
   category or formula text (Enter picks the first match, ↓ moves into the list, Esc
   clears); ▲/▼ or the arrow keys step through the (filtered) list. On a phone the library
   is one row (▲ · Category › Name · ▼); tap the name for the list. Edit the formula (JS in

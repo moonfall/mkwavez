@@ -92,6 +92,6 @@ function describeOp(r: Recipe): string {
     }
     default:
       // Parameter modes (core/generators/paramModes.ts) record their library name.
-      return `${p.name ? String(p.name) : r.op}${b}`;
+      return `${p.name ? String(p.name) : r.op}${p.glyph ? ` “${String(p.glyph)}”` : ''}${b}`;
   }
 }
