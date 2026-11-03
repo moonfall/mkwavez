@@ -22,11 +22,11 @@ public:
     /** Periodic (≈30 Hz): status, host transport / automation changes, controller moves. */
     void poll(const Emit& emit);
 
-    /** Messages handled / projects received (diagnostics / tests). */
+    /** Messages handled / session commits received (diagnostics / tests). */
     int handled() const { return handledCount; }
-    int projectsReceived() const { return projectCount; }
+    int commitsReceived() const { return commitCount; }
     /** Tables the page sent (tables/addData items). */
-    int tablesReceived() const { return tableCount; }
+    int tablesReceived() const { return tablesIn; }
     /** Whether the page has said hello since the last state load. */
     bool connected() const { return helloGen == proc.stateGeneration(); }
 
@@ -39,8 +39,8 @@ private:
 
     MkwavezProcessor& proc;
     int handledCount = 0;
-    int projectCount = 0;
-    int tableCount = 0;
+    int commitCount = 0;
+    int tablesIn = 0;
     int helloGen = -1;
     /** What the page last heard (or said) per voice slot field / transport, to send only changes. */
     std::array<std::array<float, params::VOICE_FIELD_COUNT>, params::VOICE_SLOTS> sentVoice{};

@@ -297,7 +297,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     const j = currentJob();
     if (!j) return;
     const i = strip.shown();
-    model.addTables([finalTable(j, i)], true);
+    if (!model.addTables([finalTable(j, i)], true).length) return; // refused (Timeline full): the notice says why
     afterAdd(`Added #${i + 1} to the Timeline (now the source)`);
   };
 
@@ -306,7 +306,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     if (!j) return;
     const tables = Array.from({ length: j.req.count }, (_, i) => finalTable(j, i));
     // Select the last added table (the end of the batch): it becomes the next source.
-    model.addTables(tables, true);
+    if (!model.addTables(tables, true).length) return; // refused: keep the seed
     afterAdd(`Added ${tables.length} waveform${tables.length > 1 ? 's' : ''} to the Timeline (the last is now the source)`);
   };
 
@@ -378,7 +378,13 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     const idx = model.indexOf(model.selectedId);
     srcNo.textContent = src ? `#${idx + 1}` : '—';
     srcChip.title = src ? `The Timeline selection: #${idx + 1} · id ${src.id} · ${describeRecipe(src.recipe)}` : 'Select a waveform in the Timeline';
-    addShownBtn.disabled = addBatchBtn.disabled = !src;
+    // Timeline full (every waveform used by a wavetable): adds are refused.
+    const room1 = model.roomFor(1);
+    const roomN = model.roomFor(opts.count());
+    addShownBtn.disabled = !src || !room1;
+    addBatchBtn.disabled = !src || !roomN;
+    addShownBtn.title = room1 ? '' : model.fullMessage();
+    addBatchBtn.title = roomN ? '' : model.fullMessage();
     const g = fitFixed(srcThumb, SRC_W, SRC_H);
     if (src) drawWave(g, 0, 0, SRC_W, SRC_H, src.data, cssColor('--wave'), { lineWidth: 1.2, points: SRC_W * 2 });
   };
@@ -437,6 +443,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     const atEnd = strip.shown() >= strip.cards.length - 1;
     stepper.sync(n);
     addBatchBtn.textContent = `Add +${n}`;
+    srcDirty = true;
     relabelCards();
     if (atEnd) strip.setShown(n - 1);
     syncShownLabel();
@@ -448,6 +455,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   };
   model.on('timeline', onSource);
   model.on('selection', onSource);
+  model.on('wavetables', () => (srcDirty = true));
   onThemeChange(() => {
     thumbDrawn.fill('');
     for (const c of strip.cards) c.drawn = null;

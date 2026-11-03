@@ -4,15 +4,27 @@ import type { Recipe, TableId } from '../table';
 import { basicWave, pulse, type BasicWave } from './basic';
 import { caGenerations } from './ca';
 import { formulaTable, type FormulaCompiler } from './formula';
-import { perlinTable, type PerlinParams } from './perlin';
+import { paramMode, renderParamMode } from './paramModes';
+import { DEFAULT_PERLIN, perlinTable } from './perlin';
 import { pulseWidth } from './seed';
 
+export * from './additive';
 export * from './basic';
 export * from './ca';
+export * from './dynamical';
+export * from './karplus';
+export * from './paramModes';
 export * from './formula';
 export * from './formulaPresets';
+export * from './glyph';
+export * from './life';
 export * from './perlin';
+export * from './reactionDiffusion';
+export * from './resample';
 export * from './seed';
+export * from './sequences';
+export * from './simCache';
+export * from './spline';
 
 export interface RenderEnv {
   /** Needed only for 'formula' recipes (browser: src/browser/formulaEval.ts). */
@@ -32,7 +44,18 @@ export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
     case 'pulse':
       return pulse(pulseWidth(Number(p.width), Number(p.widthEnd), index, count));
     case 'perlin':
-      return perlinTable(p as unknown as PerlinParams, r.seed, index, count);
+      return perlinTable(
+        {
+          freq: Number(p.freq ?? DEFAULT_PERLIN.freq),
+          z: Number(p.z ?? DEFAULT_PERLIN.z),
+          zDrift: Number(p.zDrift ?? DEFAULT_PERLIN.zDrift),
+          octaves: Number(p.octaves ?? DEFAULT_PERLIN.octaves),
+          persistence: Number(p.persistence ?? DEFAULT_PERLIN.persistence),
+        },
+        r.seed,
+        index,
+        count,
+      );
     case 'ca':
       return caGenerations(
         { rule: Number(p.rule), cells: Number(p.cells) },
@@ -52,7 +75,10 @@ export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
       if (!env.resolveTable) throw new Error('renderRecipe: breed needs resolveTable');
       return renderBreedRecipe(r, env.resolveTable);
     }
-    default:
-      throw new Error(`renderRecipe: unknown op ${r.op}`);
+    default: {
+      const pm = paramMode(r.op);
+      if (!pm) throw new Error(`renderRecipe: unknown op ${r.op}`);
+      return renderParamMode(pm, p, r.seed, index, count);
+    }
   }
 }

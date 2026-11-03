@@ -5,6 +5,8 @@
 
 #include "mkwavez/spsc_queue.h"
 
+#include <map>
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
@@ -17,7 +19,8 @@ struct LiveStatus {
         std::atomic<float> pos{0}, posY{0}, index{0}, y{0}, env{0};
         std::atomic<int> note{-1};
     };
-    std::atomic<int64_t> step{-1};
+    /** Sequencer clock tick (see SynthEngine; -1 before the first). */
+    std::atomic<int64_t> tick{-1};
     std::atomic<bool> playing{false};
     std::atomic<int> voiceCount{0};
     std::array<Voice, mkwavez::EngineStatus::MAX> voices;
@@ -81,9 +84,21 @@ public:
     // ---- web UI support (message thread) ----
     WebMidiSettings& webMidi() { return midiSettings; }
     mkwavez::SpscQueue<CcMessage>& ccMessages() { return ccQueue; }
-    /** The web UI's project (JSON without samples), saved with the plugin state. */
-    juce::String projectJson() const;
-    void setProjectJson(const juce::String& json);
+    /**
+     * The web UI's saved session (src/core/session.ts: meta JSON + waveform records as JSON,
+     * keyed by id), written by its autosave through WebLink and saved with the plugin state.
+     */
+    struct Session {
+        juce::String meta;
+        std::map<int, juce::String> records;
+        /** Plugin-only page settings (MIDI routing), JSON. */
+        juce::String settings;
+    };
+    template <typename Fn>
+    auto withSession(Fn&& fn) {
+        const juce::ScopedLock lock(sessionLock);
+        return fn(session);
+    }
     /** Bumped whenever the host loads a state (an open web UI must reload). */
     int stateGeneration() const { return stateGen.load(); }
 
@@ -103,8 +118,8 @@ private:
     LiveStatus status;
     WebMidiSettings midiSettings;
     mkwavez::SpscQueue<CcMessage> ccQueue{1024};
-    juce::CriticalSection projectLock;
-    juce::String project;
+    juce::CriticalSection sessionLock;
+    Session session;
     std::atomic<int> stateGen{0};
 
     // Audio-thread caches.

@@ -66,7 +66,18 @@ inline double modulatedPosition(double position, double depth, double lfoPhase) 
 
 inline constexpr int REST = -1;
 
-/** A step sequence targeting one voice. */
+/** Note value of one sequencer step (order = STEP_LENGTHS in src/core/sequence.ts). */
+enum class StepLength : uint8_t { quarter, eighth, sixteenth, eighthTriplet, sixteenthTriplet };
+inline constexpr int STEP_LENGTH_COUNT = 5;
+/** Shared clock resolution: ticks per quarter note (every step length divides a bar). */
+inline constexpr int TICKS_PER_BEAT = 12;
+inline constexpr int TICKS_PER_EIGHTH = TICKS_PER_BEAT / 2;
+/** Clock ticks per step: 12, 6, 3, 4, 2. */
+inline constexpr std::array<int, STEP_LENGTH_COUNT> STEP_TICKS{12, 6, 3, 4, 2};
+/** Step length in quarter notes (straight values are powers of two: bit-identical eighths). */
+inline constexpr std::array<double, STEP_LENGTH_COUNT> STEP_BEATS{1, 0.5, 0.25, 1.0 / 3, 1.0 / 6};
+
+/** A step sequence targeting one voice. Steps are `stepLength` notes on the shared clock. */
 struct SequenceData {
     int32_t id = 0;
     /** Target voice id, or -1 (silent). */
@@ -81,13 +92,16 @@ struct SequenceData {
     }();
     /** Gate length as a fraction of a step. */
     double gate = 0.5;
+    StepLength stepLength = StepLength::eighth;
 };
 
 inline double noteFreq(int row, double octave) {
     return SCALE_ROOT_HZ * std::pow(2.0, SCALE_SEMITONES[(size_t) row] / 12.0 + octave);
 }
 
-/** Samples per sequencer step (eighth notes at `bpm`). */
-inline double stepSamples(double bpm, double sampleRate) { return (sampleRate * 60) / bpm / 2; }
+/** Samples per sequencer step at `bpm` (quarter-note beats). */
+inline double stepSamples(double bpm, double sampleRate, StepLength len = StepLength::eighth) {
+    return ((sampleRate * 60) / bpm) * STEP_BEATS[(size_t) len];
+}
 
 } // namespace mkwavez

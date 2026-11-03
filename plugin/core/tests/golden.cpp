@@ -270,7 +270,8 @@ void applyOp(SynthEngine& e, Store& store, const std::vector<double>& op) {
             s.voiceId = ai(1);
             s.length = ai(2);
             s.gate = a(3);
-            for (int k = 0; k < MAX_STEPS; ++k) s.steps[(size_t) k] = (int8_t) ai(4 + (size_t) k);
+            s.stepLength = (StepLength) ai(4);
+            for (int k = 0; k < MAX_STEPS; ++k) s.steps[(size_t) k] = (int8_t) ai(5 + (size_t) k);
             return e.setSequence(s);
         }
         case opTransport: return e.setTransport(ai(0) != 0, a(1));
@@ -321,11 +322,11 @@ std::vector<float> runScenario(const std::string& name, int chunk, EngineStatus*
 
 TEST("golden: engine scenarios render the same samples and status") {
     const char* kind_ = "out";
-    for (const char* name : {"sequence", "midi2d", "rows"}) {
+    for (const char* name : {"sequence", "midi2d", "steplen", "rows"}) {
         EngineStatus st;
         const auto out = runScenario(name, 128, &st);
         CHECK_SEQ(out, name, 2e-6);
-        std::vector<double> s{(double) st.step, st.playing ? 1.0 : 0.0, (double) st.voiceCount};
+        std::vector<double> s{(double) st.tick, st.playing ? 1.0 : 0.0, (double) st.voiceCount};
         for (int i = 0; i < st.voiceCount; ++i) {
             const auto& v = st.voices[i];
             s.insert(s.end(), {(double) v.id, v.pos, v.posY, v.index, v.y, v.env, (double) v.note});
@@ -337,7 +338,7 @@ TEST("golden: engine scenarios render the same samples and status") {
 }
 
 TEST("engine: rendering is independent of the host block size") {
-    for (const char* name : {"sequence", "midi2d", "rows"}) {
+    for (const char* name : {"sequence", "midi2d", "steplen", "rows"}) {
         const auto ref = runScenario(name, 128, nullptr);
         for (int chunk : {1, 37, 64, 500, 4096}) {
             const auto out = runScenario(name, chunk, nullptr);

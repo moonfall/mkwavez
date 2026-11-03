@@ -11,7 +11,7 @@ const juce::Identifier DOCUMENT{"document"}, TABLES{"tables"}, TABLE{"table"}, W
 const juce::Identifier version{"version"}, id{"id"}, data{"data"}, name{"name"}, shape{"shape"}, interp{"interp"}, rowStart{"rowStart"},
     ids{"ids"}, wavetableId{"wavetableId"}, windowStart{"windowStart"}, windowEnd{"windowEnd"}, windowStartY{"windowStartY"},
     windowEndY{"windowEndY"}, lfoPhase{"lfoPhase"}, lfoPhaseY{"lfoPhaseY"}, voiceId{"voiceId"}, length{"length"}, steps{"steps"},
-    gate{"gate"};
+    gate{"gate"}, stepLength{"stepLength"};
 
 template <typename T>
 juce::MemoryBlock block(const T* p, size_t n) {
@@ -79,6 +79,7 @@ juce::ValueTree toValueTree(const Document& doc) {
         n.setProperty(voiceId, s.voiceId, nullptr);
         n.setProperty(length, s.length, nullptr);
         n.setProperty(gate, s.gate, nullptr);
+        n.setProperty(stepLength, (int) s.stepLength, nullptr);
         n.setProperty(steps, block(s.steps.data(), s.steps.size()), nullptr);
         seqs.appendChild(n, nullptr);
     }
@@ -134,6 +135,7 @@ bool fromValueTree(const juce::ValueTree& root, Document& out) {
         s.voiceId = (int) n.getProperty(voiceId);
         s.length = juce::jlimit(1, MAX_STEPS, (int) n.getProperty(length));
         s.gate = juce::jlimit(0.05, 1.0, (double) n.getProperty(gate));
+        s.stepLength = (StepLength) juce::jlimit(0, STEP_LENGTH_COUNT - 1, (int) n.getProperty(stepLength, (int) StepLength::eighth));
         const auto st = unblock<int8_t>(n.getProperty(steps));
         for (size_t i = 0; i < s.steps.size() && i < st.size(); ++i)
             s.steps[i] = st[i] >= 0 && st[i] < SCALE_ROWS ? st[i] : (int8_t) REST;

@@ -1,10 +1,25 @@
 import type { VoiceParams } from '../core/voice';
-import { shapeLabel, type Wavetable, type WavetableId } from '../core/wavetable';
+import { isFull, MAX_USER_SLOTS, shapeLabel, type Wavetable, type WavetableId } from '../core/wavetable';
 import { Mix } from '../core/wavetablePlayback';
 import { cssColor, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { h, panel, voiceColorVar } from './dom';
+import { h, isNarrowShell, panel, voiceColorVar } from './dom';
 import { playingMix, voicePositions } from './playing';
+import { buildWavetableEditor } from './wavetableEditor';
+
+/** 12×12 stroke icon (expand / collapse). */
+function svgIcon(d: string): SVGSVGElement {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 12 12');
+  s.setAttribute('width', '11');
+  s.setAttribute('height', '11');
+  s.setAttribute('aria-hidden', 'true');
+  s.setAttribute('class', 'wt-expand-icon');
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', d);
+  s.append(p);
+  return s;
+}
 
 /** 1D stack: at most this many lines (evenly spaced over longer wavetables). */
 const STACK_LINES = 24;
@@ -30,12 +45,13 @@ function lastWritten(wt: Wavetable): { x: number; y: number } | null {
 }
 
 /**
- * Wavetables (compact panel; the expanded editor is phase 2): chips pick a wavetable (a
- * dot marks live ones); the view shows it — 1D as a stack of waveforms, 2D as a small
- * grid, Rows as rows of cells — with voice windows tinted in voice colours (V1 …), the
- * write head of live wavetables in green and the voices' play positions. The summary line
- * gives shape, interpolation (Blend / Step, switchable), Live / Frozen and which voices
- * use it. Click a slot to select its table in the Timeline.
+ * Wavetables (compact panel): chips pick a wavetable (a dot marks live ones); the view
+ * shows it — 1D as a stack of waveforms, 2D as a small grid, Rows as rows of cells — with
+ * voice windows tinted in voice colours (V1 …), the write head of live wavetables in green
+ * and the voices' play positions. The summary line gives shape, interpolation (Blend /
+ * Step, switchable), Live / Frozen and which voices use it. Click a slot to select its
+ * waveform in the Timeline. Edit expands the editor (wavetableEditor.ts) over the Generate
+ * row (Generate is hidden meanwhile); + creates a 1D wavetable and opens it there.
  */
 export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model, bridge } = ctx;
@@ -44,17 +60,64 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
   let current: WavetableId = model.wavetables[0].id;
   const cur = () => model.wavetable(current) ?? model.wavetables[0];
 
-  const soon = 'Phase 2: create and edit wavetables';
-  sec.tools.append(
-    h('span', { class: 'grow' }),
-    h('button', { class: 'small icon-btn', id: 'wt-new', disabled: true, 'aria-label': 'New wavetable', title: soon }, '+'),
-    h('button', { class: 'small', id: 'wt-edit', disabled: true, title: soon }, 'Edit'),
+  // ---- expanded editor (over the Generate row; the Timeline below stays the drag source) ----
+  let expanded = false;
+  const editor = buildWavetableEditor(ctx, {
+    current: () => current,
+    pick: (id) => pick(id),
+    isOpen: () => expanded && sec.isOpen(),
+  });
+  editor.el.hidden = true;
+  const setExpanded = (on: boolean) => {
+    if (on === expanded) return;
+    expanded = on;
+    document.querySelector('.shell')?.classList.toggle('wt-editing', on);
+    sec.el.classList.toggle('expanded', on);
+    if (on) sec.open();
+    for (const e of [chips, box, summary, newBtn, editBtn]) e.hidden = on;
+    editor.el.hidden = !on;
+    collapseBtn.hidden = editHint.hidden = !on;
+    if (on) {
+      editor.shown();
+      (isNarrowShell() ? sec.el : null)?.scrollIntoView({ block: 'start' });
+    } else {
+      dirty = true;
+      editBtn.focus({ preventScroll: true });
+    }
+  };
+  const newBtn = h(
+    'button',
+    {
+      class: 'small icon-btn',
+      id: 'wt-new',
+      'aria-label': 'New wavetable',
+      title: 'New 1D wavetable (opens the editor)',
+      onclick: () => {
+        pick(model.createWavetable('1d').id);
+        setExpanded(true);
+      },
+    },
+    '+',
   );
+  const editBtn = h(
+    'button',
+    { class: 'small wt-expand', id: 'wt-edit', 'aria-label': 'Expand to edit', title: 'Edit wavetables (expands over the Generate row)', onclick: () => setExpanded(true) },
+    svgIcon('M7 1 H11 V5 M5 11 H1 V7 M11 1 L7 5 M1 11 L5 7'),
+    'Edit',
+  );
+  const collapseBtn = h(
+    'button',
+    { class: 'small wt-expand', id: 'wt-collapse', 'aria-label': 'Collapse editor', hidden: true, onclick: () => setExpanded(false) },
+    svgIcon('M1 5 H5 V1 M11 7 H7 V11'),
+    'Collapse',
+  );
+  const editHint = h('span', { class: 'wt-edit-hint', hidden: true }, 'Drag waveforms up from the Timeline: onto a slot replaces, between slots inserts');
+  sec.tools.append(editHint, h('span', { class: 'grow' }), newBtn, editBtn, collapseBtn);
 
   const chips = h('div', { class: 'wt-chips', role: 'listbox', 'aria-label': 'Wavetables', id: 'wt-chips' });
   let chipSig = '';
   const renderChips = () => {
-    const sig = model.wavetables.map((w) => `${w.id}:${w.name}:${w.live}`).join('|') + `|${current}`;
+    const sig = model.wavetables.map((w) => `${w.id}:${w.name}:${w.live}:${isFull(w)}`).join('|') + `|${current}`;
     if (sig === chipSig) return;
     chipSig = sig;
     chips.replaceChildren(
@@ -66,11 +129,12 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
             role: 'option',
             id: `wt-chip-${w.id}`,
             'aria-selected': String(w.id === current),
-            title: `${w.name} · ${shapeLabel(w)} · ${w.live ? 'Live' : 'Frozen'}`,
+            title: `${w.name} · ${shapeLabel(w)} · ${w.live ? 'Live' : 'Frozen'}${isFull(w) ? ` · full (${MAX_USER_SLOTS} slots): new waveforms aren't added` : ''}`,
             onclick: () => pick(w.id),
           },
           h('span', { class: `wt-dot${w.live ? ' live' : ''}` }),
           w.name,
+          isFull(w) ? h('span', { class: 'wt-full' }, 'full') : null,
         ),
       ),
     );
@@ -101,14 +165,14 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
     h('span', { class: 'grow' }),
     usedBy,
   );
-  sec.body.append(chips, box, summary);
+  sec.body.append(chips, box, summary, editor.el);
   watchVisibility(canvas);
 
   const syncSummary = () => {
     const wt = cur();
     sumName.textContent = wt.name;
     sumName.title = wt.builtin ? 'Built-in (read-only)' : '';
-    sumShape.textContent = shapeLabel(wt);
+    sumShape.textContent = `${shapeLabel(wt)}${isFull(wt) ? ' · full' : ''}`;
     for (const [b, on] of [
       [blendBtn, wt.interp === 'blend'],
       [stepBtn, wt.interp === 'step'],
@@ -361,7 +425,11 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
   return {
     el: sec.el,
     view: {
-      frame() {
+      frame(now) {
+        if (expanded) {
+          editor.view.frame(now);
+          return;
+        }
         if (!sec.isOpen() || !isOnScreen(canvas)) return;
         if (!dirty && !model.playing) return;
         dirty = false;

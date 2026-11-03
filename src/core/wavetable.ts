@@ -8,7 +8,7 @@
  *  - 'rows' rows of differing lengths (e.g. one row per batch).
  *
  * A live wavetable has a write head that places every new table (or batch) added to the
- * timeline; see `writeTables()`. Frozen ones are only changed by hand (phase 2 editor).
+ * timeline; see `writeTables()`. Frozen ones are only changed by hand (the editor; see `placeTable()` and friends).
  */
 import type { TableId } from './table';
 
@@ -270,10 +270,26 @@ export interface WavetableEdit {
   readonly reset: boolean;
 }
 
+/**
+ * Most slots a user wavetable may hold. A live write that would grow it past this stops
+ * the head (as "stop at the edge"; the add itself still goes into the Timeline), and hand
+ * edits that add slots are refused: a growing wavetable pins everything it holds, so it
+ * must never fill the Timeline and block generation.
+ */
+export const MAX_USER_SLOTS = 1024;
+
+/** A user wavetable at MAX_USER_SLOTS that could otherwise grow (variable 1D, Rows). */
+export function isFull(wt: Wavetable): boolean {
+  return !wt.builtin && !wt.fixed && slotCount(wt) >= MAX_USER_SLOTS;
+}
+
 /** Mutable working copy for one edit. */
 class Work {
   readonly rows: Slot[][];
   private readonly copied: boolean[];
+  /** Slot count (user wavetables only; built-ins are unlimited). */
+  total: number;
+  readonly limit: number;
   /** Follow-axis origins: origin[k] = old index of what is now at k, or -1 if new. */
   origin: number[] | null = null;
   x: number;
@@ -287,6 +303,13 @@ class Work {
     this.x = wt.head.x;
     this.y = wt.head.y;
     this.s = wt.write;
+    this.limit = wt.builtin ? Infinity : MAX_USER_SLOTS;
+    this.total = wt.builtin ? 0 : slotCount(wt);
+  }
+
+  /** Can a variable line take one more slot? */
+  roomy(): boolean {
+    return this.total < this.limit;
   }
 
   row(r: number): Slot[] {
@@ -316,6 +339,37 @@ class Work {
     this.rows.splice(r, 1);
     this.copied.splice(r, 1);
     this.axis().splice(r, 1);
+  }
+
+  // Hand edits (the editor): each keeps the write head on the slot / row it pointed at.
+
+  /** Insert a slot before x in row y. */
+  ins(y: number, x: number, id: Slot): void {
+    this.row(y).splice(x, 0, id);
+    if (this.wt.shape === '1d') this.axis().splice(x, 0, -1);
+    if (this.y === y && this.x >= x) this.x++;
+  }
+
+  /** Remove slot x of row y. */
+  del(y: number, x: number): void {
+    this.row(y).splice(x, 1);
+    if (this.wt.shape === '1d') this.axis().splice(x, 1);
+    if (this.y === y && this.x > x) this.x--;
+  }
+
+  /** Insert a row at y (Rows). */
+  insRow(y: number, row: Slot[]): void {
+    this.rows.splice(y, 0, row);
+    this.copied.splice(y, 0, true);
+    this.axis().splice(y, 0, -1);
+    if (this.y >= y) this.y++;
+  }
+
+  /** Remove row y (Rows); a head on it moves to the start of the row that takes its place. */
+  delRow(y: number): void {
+    this.dropRow(y);
+    if (this.y > y) this.y--;
+    else if (this.y === y) this.x = lineStart(this.s.dir, this.rows[y]?.length ?? 0, this.s.edge === 'grow' && this.s.mode === 'replace');
   }
 
   done(): WavetableEdit {
@@ -424,13 +478,15 @@ function writeOne(w: Work, id: TableId): boolean {
   const pending = w.y === w.rows.length;
   const L = pending ? 0 : w.rows[w.y].length;
   let pos = w.x;
+  const full = growable && !w.roomy();
   if (insert) {
-    if (pos < 0 || pos > L || (!growable && pos === L)) return false;
+    if (pos < 0 || pos > L || (!growable && pos === L) || full) return false;
   } else {
     const inside = pos >= 0 && pos < L;
-    const grows = growable && s.edge === 'grow' && (d > 0 ? pos === L : pos === -1);
+    const grows = growable && !full && s.edge === 'grow' && (d > 0 ? pos === L : pos === -1);
     if (!inside && !grows) return false;
   }
+  if (growable && (insert || !(pos >= 0 && pos < L))) w.total++;
   if (pending) w.newRow();
   const row = w.row(w.y);
   const on1d = shape === '1d';
@@ -556,4 +612,315 @@ export function composeMaps(a: readonly number[] | null, b: readonly number[] | 
   if (!a) return b;
   if (!b) return a;
   return a.map((i) => (i < 0 ? -1 : (b[i] ?? -1)));
+}
+
+// ---- hand edits (the editor) ----
+
+/**
+ * Where a dragged waveform lands: on a slot (replace), in the gap before slot x of row y
+ * (insert; x = the row length appends), or as a new row at index y (Rows only).
+ */
+export type SlotTarget =
+  | { readonly kind: 'slot'; readonly x: number; readonly y: number }
+  | { readonly kind: 'gap'; readonly x: number; readonly y: number }
+  | { readonly kind: 'row'; readonly y: number };
+
+export interface Cell {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Largest 2D grid side. */
+export const MAX_GRID = 64;
+
+const unchanged = (wt: Wavetable): WavetableEdit => ({ wt, map: null, reset: false });
+
+/**
+ * Whether a target is valid on this wavetable. Built-ins are read-only. 2D grids are
+ * replace-only; a fixed 1D line inserts only before an existing slot; `grows` = the edit
+ * adds a slot (refused at MAX_USER_SLOTS; a move within the wavetable doesn't grow it).
+ */
+export function canTarget(wt: Wavetable, t: SlotTarget, grows = true): boolean {
+  if (wt.builtin) return false;
+  const room = !grows || slotCount(wt) < MAX_USER_SLOTS;
+  if (t.kind === 'slot') return t.y >= 0 && t.y < wt.rows.length && t.x >= 0 && t.x < wt.rows[t.y].length;
+  if (t.kind === 'row') return wt.shape === 'rows' && t.y >= 0 && t.y <= wt.rows.length && room;
+  if (wt.shape === '2d' || (wt.shape === '1d' && t.y !== 0)) return false;
+  const row = wt.rows[t.y];
+  if (!row) return false;
+  if (wt.fixed) return t.x >= 0 && t.x < row.length;
+  return t.x >= 0 && t.x <= row.length && room;
+}
+
+/** Insert into a line: a fixed line shifts towards its end into the first empty slot at or after x (else the last slot drops out). */
+function insertAt(w: Work, y: number, x: number, id: Slot): void {
+  if (w.wt.fixed) {
+    let e = w.rows[y].indexOf(null, x);
+    if (e < 0) e = w.rows[y].length - 1;
+    w.del(y, e);
+  }
+  w.ins(y, x, id);
+}
+
+/** Put table `id` at a target: replace a slot, insert into a line, or add a row. */
+export function placeTable(wt: Wavetable, t: SlotTarget, id: TableId): WavetableEdit {
+  if (!canTarget(wt, t)) return unchanged(wt);
+  const w = new Work(wt);
+  if (t.kind === 'slot') {
+    if (wt.rows[t.y][t.x] === id) return unchanged(wt);
+    w.row(t.y)[t.x] = id;
+  } else if (t.kind === 'row') w.insRow(t.y, [id]);
+  else insertAt(w, t.y, t.x, id);
+  return w.done();
+}
+
+/** Empty a slot (it stays, as an empty slot). */
+export function clearSlot(wt: Wavetable, x: number, y: number): WavetableEdit {
+  if (wt.builtin || cellAt(wt, x, y) === null) return unchanged(wt);
+  const w = new Work(wt);
+  w.row(y)[x] = null;
+  return w.done();
+}
+
+/**
+ * Remove a slot: a variable 1D line closes up; a fixed one closes up and gains an empty
+ * slot at its end; a Rows row closes up (an emptied row is removed); a 2D cell is emptied.
+ */
+export function removeSlot(wt: Wavetable, x: number, y: number): WavetableEdit {
+  if (wt.builtin || x < 0 || x >= (wt.rows[y]?.length ?? 0)) return unchanged(wt);
+  if (wt.shape === '2d') return clearSlot(wt, x, y);
+  const w = new Work(wt);
+  w.del(y, x);
+  if (wt.fixed) w.ins(y, w.rows[y].length, null);
+  else if (wt.shape === 'rows' && !w.rows[y].length) w.delRow(y);
+  return w.done();
+}
+
+/**
+ * Move the slot at `from` within the wavetable: onto a slot = swap the two; into a gap =
+ * take it out and insert it there (a pure reorder: a fixed line keeps its slots); as a
+ * new row (Rows). A Rows row emptied by the move is removed. `copy` leaves the source.
+ */
+export function moveSlot(wt: Wavetable, from: Cell, t: SlotTarget, copy = false): WavetableEdit {
+  const id = cellAt(wt, from.x, from.y);
+  if (wt.builtin || from.x < 0 || from.x >= (wt.rows[from.y]?.length ?? 0)) return unchanged(wt);
+  if (copy) return id === null ? unchanged(wt) : placeTable(wt, t, id);
+  if (!canTarget(wt, t, false)) return unchanged(wt);
+  const w = new Work(wt);
+  if (t.kind === 'slot') {
+    if (t.x === from.x && t.y === from.y) return unchanged(wt);
+    const other = wt.rows[t.y][t.x];
+    w.row(from.y)[from.x] = other;
+    w.row(t.y)[t.x] = id;
+    return w.done();
+  }
+  if (t.kind === 'gap') {
+    if (t.y === from.y && (t.x === from.x || t.x === from.x + 1)) return unchanged(wt);
+    w.del(from.y, from.x);
+    const tx = t.y === from.y && t.x > from.x ? t.x - 1 : t.x;
+    w.ins(t.y, tx, id);
+    if (wt.shape === 'rows' && t.y !== from.y && !w.rows[from.y].length) w.delRow(from.y);
+    return w.done();
+  }
+  if (wt.rows[from.y].length === 1 && (t.y === from.y || t.y === from.y + 1)) return unchanged(wt);
+  w.del(from.y, from.x);
+  w.insRow(t.y, [id]);
+  const src = t.y <= from.y ? from.y + 1 : from.y;
+  if (!w.rows[src].length) w.delRow(src);
+  return w.done();
+}
+
+/** Filled slots a 2D resize to W × H would drop. */
+export function droppedBy2DResize(wt: Wavetable, W: number, H: number): number {
+  let n = 0;
+  wt.rows.forEach((r, y) => r.forEach((id, x) => (n += id !== null && (x >= W || y >= H) ? 1 : 0)));
+  return n;
+}
+
+/**
+ * Resize a 2D grid to W × H (1..MAX_GRID each): cells keep their (x, y); growing adds
+ * empty cells on the right / bottom, shrinking drops the cells outside. The head is
+ * clamped into the grid.
+ */
+export function resize2D(wt: Wavetable, W: number, H: number): WavetableEdit {
+  W = Math.max(1, Math.min(MAX_GRID, Math.round(W)));
+  H = Math.max(1, Math.min(MAX_GRID, Math.round(H)));
+  if (wt.shape !== '2d' || wt.builtin) return unchanged(wt);
+  const { w: W0, h: H0 } = wavetableDims(wt);
+  if (W === W0 && H === H0) return unchanged(wt);
+  const rows = Array.from({ length: H }, (_, y) => Array.from({ length: W }, (_, x) => wt.rows[y]?.[x] ?? null));
+  const head = { x: Math.max(0, Math.min(W - 1, wt.head.x)), y: Math.max(0, Math.min(H - 1, wt.head.y)) };
+  return { wt: { ...wt, rows, head }, map: null, reset: false };
+}
+
+/** Filled slots a fixed 1D length of `len` would drop. */
+export function droppedBy1DResize(wt: Wavetable, len: number): number {
+  return (wt.rows[0] ?? []).slice(Math.max(0, len)).filter((id) => id !== null).length;
+}
+
+/**
+ * 1D size: variable (grows; its slots are kept) or fixed at `len` slots (1..MAX_USER_SLOTS;
+ * default: the current count, at least 1): shrinking drops slots from the end, growing
+ * appends empty ones. Write settings are re-normalized (fixed: wrap / stop; variable:
+ * stop / grow); a head that can no longer write restarts at the line start.
+ */
+export function resize1D(wt: Wavetable, fixed: boolean, len?: number): WavetableEdit {
+  if (wt.shape !== '1d' || wt.builtin) return unchanged(wt);
+  const L = wt.rows[0].length;
+  const n = fixed ? Math.max(1, Math.min(MAX_USER_SLOTS, Math.round(len ?? L))) : L;
+  if (fixed === wt.fixed && n === L) return unchanged(wt);
+  const w = new Work(wt);
+  if (n < L) {
+    w.row(0).length = n;
+    w.axis().length = n;
+    w.x = Math.min(w.x, n);
+  } else for (let i = L; i < n; i++) w.ins(0, i, null);
+  const e = w.done();
+  const write = normalizeWrite('1d', fixed, wt.write);
+  return { wt: withValidHead({ ...e.wt, fixed, write }), map: e.map, reset: false };
+}
+
+/** Keep the head if it can still write, else restart it where a fresh head would start. */
+function withValidHead(wt: Wavetable): Wavetable {
+  if (previewWrites(wt, 1).writes.length) return wt;
+  const head = startHead(wt.shape, wt.rows, wt.write);
+  return head.x === wt.head.x && head.y === wt.head.y ? wt : { ...wt, head };
+}
+
+/** Change write head settings (coerced per shape; see normalizeWrite). */
+export function setWrite(wt: Wavetable, patch: Partial<WriteSettings>): Wavetable {
+  const write = normalizeWrite(wt.shape, wt.fixed, { ...wt.write, ...patch });
+  if ((Object.keys(write) as (keyof WriteSettings)[]).every((k) => wt.write[k] === write[k])) return wt;
+  return withValidHead({ ...wt, write });
+}
+
+/**
+ * Move the write head (clamped: 1D x in −1..length, i.e. one past either end of the line;
+ * 2D inside the grid; Rows y up to the row count (= a new row), x within that row ±1).
+ */
+export function setHead(wt: Wavetable, x: number, y: number): Wavetable {
+  let hx = Math.round(x);
+  let hy = Math.round(y);
+  if (wt.shape === '2d') {
+    const { w, h } = wavetableDims(wt);
+    hx = Math.max(0, Math.min(w - 1, hx));
+    hy = Math.max(0, Math.min(h - 1, hy));
+  } else {
+    hy = wt.shape === '1d' ? 0 : Math.max(0, Math.min(wt.rows.length, hy));
+    hx = Math.max(-1, Math.min(wt.rows[hy]?.length ?? 0, hx));
+  }
+  return hx === wt.head.x && hy === wt.head.y ? wt : { ...wt, head: { x: hx, y: hy } };
+}
+
+/**
+ * A new, empty user wavetable (frozen until made live): 1D variable (writes append);
+ * 2D W × H (default 8×8; fills row by row, wrapping); Rows (each batch a new row).
+ */
+export function newWavetable(id: WavetableId, name: string, shape: WavetableShape, W = GRID_SIZE, H = GRID_SIZE): Wavetable {
+  if (shape === '2d') {
+    W = Math.max(1, Math.min(MAX_GRID, Math.round(W)));
+    H = Math.max(1, Math.min(MAX_GRID, Math.round(H)));
+    return make2D(id, name, W, H, [], { write: { dir: '+x', edge: 'wrap', onWrap: 'next', mode: 'replace', batch: 'continue' } });
+  }
+  if (shape === 'rows') return makeRows(id, name, [], { write: { batch: 'newRow' } });
+  return make1D(id, name, []);
+}
+
+/**
+ * An editable copy (frozen: a snapshot until made live): same shape, slots, settings and
+ * head; it pins its waveforms. Copies over MAX_USER_SLOTS keep the newest slots / rows.
+ */
+export function duplicateWavetable(wt: Wavetable, id: WavetableId, name: string): Wavetable {
+  let rows = wt.rows.map((r) => r.slice());
+  let head = wt.head;
+  if (wt.shape === '1d' && rows[0].length > MAX_USER_SLOTS) {
+    const cut = rows[0].length - MAX_USER_SLOTS;
+    rows = [rows[0].slice(cut)];
+    head = { x: Math.max(-1, head.x - cut), y: 0 };
+  } else if (wt.shape === 'rows') {
+    let n = slotCount(wt);
+    let cut = 0;
+    while (n > MAX_USER_SLOTS) n -= rows[cut++].length;
+    if (cut) {
+      rows = rows.slice(cut);
+      head = { x: head.x, y: Math.max(0, head.y - cut) };
+    }
+  }
+  return {
+    id,
+    name,
+    shape: wt.shape,
+    rows,
+    fixed: wt.fixed,
+    interp: wt.interp,
+    live: false,
+    write: normalizeWrite(wt.shape, wt.fixed, wt.write),
+    head,
+    pins: true,
+  };
+}
+
+// ---- write preview ----
+
+/**
+ * One of the next writes, in the wavetable's current coordinates: `replace` overwrites
+ * cell (x, y); `insert` goes into the gap before slot x of row y; `append` grows row y
+ * (y may be a row that doesn't exist yet: a new row).
+ */
+export interface PendingWrite {
+  readonly n: number;
+  readonly kind: 'replace' | 'insert' | 'append';
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Where the next `n` waveforms (one batch) would land if the wavetable were live, by
+ * running the real write head on a copy. `fresh` = the batch starts the line afresh
+ * (1D "new row": the current slots are replaced). Empty when the head is stopped.
+ */
+export function previewWrites(wt: Wavetable, n: number): { writes: PendingWrite[]; fresh: boolean } {
+  const SPAN = 1 << 16;
+  const GHOST = 2 ** 40;
+  const rows = wt.rows.map((r, y) => r.map((_, x) => -2 - (y * SPAN + x)));
+  const w = new Work({ ...wt, live: true, rows });
+  if (wt.write.batch === 'newRow') startBatch(w);
+  const writes: PendingWrite[] = [];
+  const ghosts = new Map<number, PendingWrite>();
+  const insert = wt.write.mode === 'insert' && wt.shape !== '2d';
+  // A fixed line inserting towards −x puts the new slot after the head's slot.
+  const after = insert && wt.fixed && wt.write.dir === '-x' ? 1 : 0;
+  for (let k = 0; k < n; k++) {
+    const cur = w.rows[w.y]?.[w.x];
+    let pw: PendingWrite;
+    if (cur !== undefined && cur !== null && cur >= GHOST) pw = { ...ghosts.get(cur)!, n: k + 1 };
+    else if (cur !== undefined && cur !== null) {
+      const c = -2 - cur;
+      pw = { n: k + 1, kind: insert ? 'insert' : 'replace', x: (c % SPAN) + after, y: Math.floor(c / SPAN) };
+    } else pw = { n: k + 1, kind: 'append', x: -1, y: w.y };
+    if (!writeOne(w, GHOST + k)) break;
+    writes.push(pw);
+    ghosts.set(GHOST + k, pw);
+  }
+  return { writes, fresh: w.reset };
+}
+
+/**
+ * The slot holding table `id` nearest to `near` (same row first, then the closest row),
+ * or null if the wavetable doesn't hold it. Used to re-find a dragged slot after the
+ * wavetable changed under the drag (a live insert shifts slots).
+ */
+export function findSlot(wt: Wavetable, id: TableId, near: Cell): Cell | null {
+  let best: Cell | null = null;
+  let cost = Infinity;
+  wt.rows.forEach((r, y) =>
+    r.forEach((s, x) => {
+      const c = Math.abs(y - near.y) * 1e6 + Math.abs(x - near.x);
+      if (s === id && c < cost) {
+        cost = c;
+        best = { x, y };
+      }
+    }),
+  );
+  return best;
 }

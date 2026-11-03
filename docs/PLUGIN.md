@@ -80,8 +80,8 @@ plugin/
   tests/Snapshot.cpp        renders the native editor to a PNG
 src/audio/port.ts           EnginePort: WorkletPort (browser) | NativePort (plugin)
 src/audio/nativePort.ts     the page end: JUCE's window.__JUCE__.backend, one event id
-src/plugin/host.ts          plugin mode: saved project in / out, host changes → model
-src/app/project.ts          project save / load (AppModel.toProject / loadProject)
+src/plugin/host.ts          plugin mode: PluginSessionStore (the session backend), boot,
+                            host changes → model
 ```
 
 ## How the plugin works
@@ -92,7 +92,7 @@ src/app/project.ts          project save / load (AppModel.toProject / loadProjec
    ▲   (same reconcile code as the        (JSON; tables          │   (document, mip sets,      (audio thread)
    │    browser, raw tables)               as base64)            │    memory retirement)
    │                                                             ├─► parameters (V1–V4, Play, BPM)
-   └── PluginHost ◄── init / tables / status / transport / ──────┘   project JSON (saved with the state)
+   └── PluginHost ◄── init / records / status / transport / ─────┘   session (saved with the state)
                       voice/params / midi/cc
 ```
 
@@ -103,14 +103,16 @@ src/app/project.ts          project save / load (AppModel.toProject / loadProjec
   becomes one atomic command batch on the audio thread, as in the worklet.
 - **State lives natively.** `EngineHost`'s document (tables with samples, wavetables,
   voices, sequences) is what plays; it keeps playing with the editor closed and is saved
-  with the plugin state, together with the page's **project JSON** (`toProject` without
-  samples: recipes, ids, wavetables, voices, sequences, selection, Breed parents, MIDI
-  settings). Opening the editor: the page says `hello`, gets `init` (project, current
-  parameter values, transport, the ids the engine holds) and the tables in chunks,
-  restores the project with those samples (no tables are re-sent) or builds the start
-  state, reconciles with what the engine holds, and from then on saves the project
-  (debounced) on every change. A state load by the host while the editor is open reloads
-  the page.
+  with the plugin state, together with the page's **session** (the web app's own format,
+  `src/core/session.ts`: meta JSON + one record per waveform) and the plugin-only page
+  settings (MIDI routing). The page uses its regular restore (`app/restore.ts`) and
+  autosave (`app/autosave.ts`) with `PluginSessionStore` as the backend: opening the
+  editor, the page says `hello`, gets `init` (session meta, current parameter values,
+  transport, the ids the engine holds) and the waveform records in chunks, restores (or
+  starts the default session), reconciles with what the engine holds (a restored session
+  re-sends no tables), and autosave writes changes back (250 ms debounce, since the editor
+  can close at any time). A state load by the host while the editor is open reloads the
+  page. Session → Export / Import (.mkwz) is shared with the browser build.
 - **Host integration.** Voice slots V1–V4 (voice ids 1–4) expose 13 automatable
   parameters each; the page's voice edits set them, and automation flows back to the
   page's model (polled at 30 Hz, so nothing touches the web view from the audio thread).
@@ -129,8 +131,8 @@ src/app/project.ts          project save / load (AppModel.toProject / loadProjec
 | GC keeps a removed table alive while a voice fades it out | the engine retires pointers (`popRetired`) only once no voice plays them; `EngineHost::housekeeping` frees them |
 | Web MIDI (render-quantum jitter) | host MIDI, applied at its sample offset |
 | BPM / Play | host tempo / play state (Host sync) or the Play / BPM parameters |
-| localStorage MIDI settings | saved in the project |
-| (no save yet) | plugin state = parameters + native document + project JSON |
+| localStorage MIDI settings | saved with the plugin state |
+| IndexedDB autosave (one tab owns it) | the same autosave into the plugin state (one page per instance) |
 
 Audio-thread rules carried over: no allocation, no locks, no FFT in `processBlock`; the
 engine uses fixed pools (16 voices, 32 sequences, 64 wavetables, a 16384-slot open-
@@ -157,24 +159,25 @@ addressing table map) instead of Maps.
   instance's page syncs its start state into the native document and saves its project;
   Seed → Add batch clicked in the page reaches the engine; host automation of a voice
   parameter reaches the page's model and saved project; the saved state restores in a new
-  instance (same timeline, voice parameters, no tables re-sent); a MIDI note sounds.
-- **Page side** (`tests/pluginHost.test.ts`, `tests/project.test.ts`, vitest with a fake
-  JUCE backend): fresh / restored / corrupt / silent native side, transport echo
-  suppression, automation, project round-trip.
+  instance (same timeline, voice parameters, no tables re-sent) and an add there is saved
+  again; a MIDI note sounds.
+- **Page side** (`tests/pluginHost.test.ts`, vitest with a fake JUCE backend, running
+  main.ts's plugin boot): fresh / restored / unrestorable / silent native side, record
+  wire format, autosave to native, transport echo suppression, automation, init values.
 - Not yet run: pluginval and real DAWs.
 
 ## Plan
 
 1. **P0: engine + plugin shell (done).** Audio core, formats, host transport, MIDI,
    parameters, state, minimal editor, CI.
-2. **P1: the web app as the editor (done).** Engine port abstraction, project save /
-   load, plugin boot (restore / start state, reconcile, autosave), host transport /
+2. **P1: the web app as the editor (done).** Engine port abstraction, session save /
+   load (via the web app's session format), plugin boot (restore, reconcile, autosave), host transport /
    automation / MIDI settings sync, WebView editor with the embedded build. Every web
    feature (Seed / Mutate / Breed, formulas, Timeline, Wavetables, voices, sequences,
    undo, themes) works in the plugin because it is the same code.
 3. **P2: hardening.** pluginval and DAW testing (Reaper, Bitwig, Live, Logic, FL),
    WebView quirks per host (focus / keyboard, resizing, HiDPI, Linux embedding), project
-   import / export files (M5 can share `src/app/project.ts`), presets, a voice-count
+   Session export / import through native file dialogs, presets, a voice-count
    story beyond four automatable slots, more parameters (window / wavetable selection).
 4. **P3: release.** Signing / notarisation, installers, licence choice (see Build).
 
@@ -190,7 +193,12 @@ for the plugin; `plugin/core` stays the audio engine (and a base for hardware la
 - The sequencer follows the host's play state and tempo, not its bar position. With the
   host playing, Stop in the page can't stop it (the host transport wins).
 - Without the editor open nothing generates (generation is UI-driven, as in the browser).
-- Undo history isn't saved with the project.
+- Undo history isn't saved (as in the browser). The plugin state holds every waveform's
+  samples twice (the engine document and the session records); fine for typical sessions,
+  ~75 MB at the 4096 cap. A session that can't be restored (e.g. saved by a newer
+  version) is set aside in memory only while the editor is open.
+- Session → Export / Import use the browser's download / file picker, which embedded web
+  views may not offer; native file dialogs are a P2 item.
 - Not yet tested: real DAWs, pluginval, the macOS / Windows web views (CI builds them;
   the end-to-end web view test runs on Linux only).
 - The browser smoke test's "the strip follows the newest table" check fails in this

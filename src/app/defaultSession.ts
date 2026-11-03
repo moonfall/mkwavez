@@ -1,13 +1,15 @@
-/**
- * The start state (as the prototype): five basic tables (one batch), three voices, one
- * sequence each; only voice 1 starts unmuted. V1 plays the built-in Last batch, so each
- * new batch (or single add) becomes what it plays; V2 / V3 play windows of the Timeline.
- */
 import { generateBasic } from '../core/generators';
+import type { ModelState } from '../core/session';
 import { LAST_BATCH_WAVETABLE_ID } from '../core/wavetable';
-import type { AppModel } from './model';
+import { AppModel } from './model';
 
-export function applyStartState(model: AppModel): void {
+/**
+ * The fresh session (as the prototype): five basic waveforms (one batch), three voices, one
+ * sequence each; only voice 1 starts unmuted. V1 plays the built-in Last batch, so each new
+ * batch (or single add) becomes what it plays; V2 / V3 play windows of the Timeline.
+ */
+export function defaultSessionState(): ModelState {
+  const model = new AppModel();
   model.addTables(
     (['sine', 'tri', 'saw', 'square', 'p25'] as const).map((w) => generateBasic(w, 0)),
     false,
@@ -28,5 +30,5 @@ export function applyStartState(model: AppModel): void {
   model.addSequence(v2.id, [-1, -1, 7, -1, -1, 5, -1, -1, -1, -1, 6, -1, 4, -1, -1, -1]);
   model.addSequence(v3.id, [0, -1, -1, -1, 0, -1, -1, -1, 3, -1, -1, -1, 2, -1, -1, -1]);
   model.select(model.timeline[0].id);
-  model.clearUndo();
+  return model.exportState();
 }

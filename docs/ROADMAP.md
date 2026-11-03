@@ -147,13 +147,33 @@ Deviations / known gaps:
 - Window following: a batch now also extends Timeline windows that end on the newest
   table (previously only single adds did).
 
-## Wavetables — phase 2
+## Wavetables — phase 2 (done)
 
-- Expanded editor over the Generate row (see the mocks): wavetable list (built-in /
-  yours), strip / stack / grid / rows views, write-head settings, next-write markers.
-- User wavetables: + 1D / 2D / Rows, Duplicate (a built-in → an editable copy), rename,
-  Live / Frozen, interpolation, write-head settings; drag from the Timeline onto a slot
-  (replace) or between slots (insert); remove / reorder slots. These pin their tables.
+- Expanded editor over the Generate row (Edit / Collapse; Generate hidden, the Timeline
+  below is the drag source): wavetable list (built-in / yours, + 1D / 2D / Rows), 1D strip /
+  stack, 2D grid, Rows views with voice windows, write head and next-write markers
+  (`previewWrites`, the real write head on a copy), header (rename, size, Blend / Step,
+  Duplicate, Delete), Live / Frozen + write-head settings (inapplicable options disabled;
+  built-ins read-only), head moves (Alt-click / “Write head here”).
+- User wavetables: create, duplicate (built-ins into editable copies), rename, delete
+  (voices fall back to the Timeline), 1D fixed / variable + length and 2D X × Y resize
+  (confirm before dropping waveforms); pointer-event drags from the Timeline or slots:
+  replace, insert, new row, move / swap / copy, plus clear / remove; hovering a list
+  entry opens it, dropping on it adds there. Live user wavetables write every add. All
+  content edits undoable; pins follow every edit (unit-tested), smoke-tested end to end.
+
+Deviations / known gaps:
+- New wavetables and duplicates start Frozen (a duplicate is a snapshot; a live copy of
+  the Timeline would pin everything). A user wavetable holds at most 1024 slots (MAX_USER_SLOTS: a Live one that fills stops its head, shown as "full"; adds still go into the Timeline); the Timeline never exceeds
+  its cap — when every waveform is pinned, adds are refused with a notice.
+- Interpolation stays switchable on built-ins (the mock disables it) so voices on the
+  Timeline etc. can still use Step. Write-head settings can be changed while Frozen (to
+  prepare before going Live); next-write markers show only when Live.
+- The Stack view takes no drops (switch to Strip); confirmations use the browser's
+  `confirm()`; no context menu: the selected slot's actions (and Delete / Shift+Delete)
+  cover it, also on touch. On a phone the editor sits above the Timeline: dragging up
+  auto-scrolls the page.
+- The view marks the next 4 writes (as one batch).
 
 ## Native plugin (in progress)
 
@@ -168,15 +188,47 @@ build and verification in `docs/PLUGIN.md`.
   test; CI on Linux / macOS / Windows.
 - P1 (done): the web app is the editor, bundled into the plugin and shown in the system
   web view (no browser), driving the native engine through the same bridge protocol;
-  project save / load (`src/app/project.ts`) saved with the plugin state; host
-  automation / transport / MIDI settings in sync; end-to-end web view test.
+  the session (src/core/session.ts, via the regular autosave / restore and a plugin
+  session backend) saved with the plugin state; host automation / transport / MIDI
+  settings in sync; end-to-end web view test.
 - Next: P2 hardening (pluginval, DAWs, per-host web view quirks, project files, presets),
   P3 release (signing, installers, licence).
 
-## M5 — Save/load
 
-- Project save/load (IndexedDB + file export): tables (sample data + recipe), timeline
-  order, wavetables (already plain data), voices, sequences. Version tag on recipes.
+## M5 — Save/load (partly done: autosave / restore, export / import)
+
+Done:
+- The session survives reloads and browser restarts: autosaved to IndexedDB (debounced,
+  incremental: each waveform written once, chunked at idle time; flushed when the page
+  is hidden) and restored before the first render. Saved: timeline (samples, or the
+  recipe for exact cheap basic / pulse waveforms, or a reference for copies), id
+  allocators (incl. the monotonic wavetable id), selection, Breed parents, all wavetables
+  (built-ins' state, user wavetables from the editor with write heads and Live state;
+  stored generically), voices (incl. 2D / Rows), sequences,
+  BPM, voice tab and Generate tab. Theme, timeline view and MIDI settings stay in
+  localStorage.
+- Versioned schema (`SESSION_VERSION`, `MIGRATIONS`); corrupt / incompatible saves fall
+  back to a fresh session (bad save kept for debugging, notice offers to discard it);
+  missing waveforms are dropped with a warning. No storage (private mode, blocked) →
+  runs normally with autosave off and a notice.
+- Session menu in the transport bar: New session (confirm; clears the autosave), Export
+  / Import one `.mkwz` file (JSON + Float32 samples).
+- One tab autosaves at a time (Web Locks); others are paused and can take over. Orphan
+  records from an interrupted save are never reused; an unrestorable save is set aside
+  intact (exportable); at the storage quota unreferenced records are deleted first.
+
+Open:
+- Undo history isn't saved (it starts empty after a reload / import).
+- Named projects (several saves, a list, rename / delete), save-as; import without
+  replacing (merge into the current timeline).
+- Seed / Mutate / Breed panel settings (entry, formula edits, amounts) aren't saved.
+- Recipes still have no code-version tag (re-render determinism across versions is only
+  checked by a hash for recipe-only waveforms). Example: the Mutate spectral pipeline's
+  relative-silence gate (results keeping < 1e-3 of the source's strongest harmonic are
+  silence, residue below 1e-6 dropped) changes the re-render of a few old mutate
+  recipes — Toward sine / Odd only at ≥ ~0.97 or Formant at 1 on sources without a
+  fundamental now give silence instead of normalised residue. Saved sessions are
+  unaffected (only basic / pulse waveforms are stored as recipes).
 
 ## Deferred from M1 / known gaps
 
@@ -193,5 +245,6 @@ build and verification in `docs/PLUGIN.md`.
   sequences on one voice just retrigger it (monophonic, last note wins).
 - Formula language is JS (browser-only); a portable expression parser is needed for
   native targets.
-- No draw-a-waveform / image-contour generators yet (discussed in the prototype).
+- No draw-a-waveform generator yet (Glyph contour covers text outlines; arbitrary
+  image contours could reuse its polyline path).
 - No E2E audio-content assertion in the browser (engine output is unit-tested in node).

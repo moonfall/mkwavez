@@ -4,7 +4,7 @@ using namespace mkwavez;
 
 namespace {
 
-constexpr int TABLE_CHUNK = 64;
+constexpr int RECORD_CHUNK = 64;
 
 WavetableShape shapeOf(const juce::String& s) { return s == "2d" ? WavetableShape::twoD : s == "rows" ? WavetableShape::rows : WavetableShape::oneD; }
 
@@ -64,6 +64,9 @@ SequenceData decodeSequence(const juce::var& o) {
     s.voiceId = voice.isVoid() || voice.isUndefined() ? -1 : (int) voice;
     s.length = juce::jlimit(1, MAX_STEPS, (int) num(o, "length", 16));
     s.gate = juce::jlimit(0.05, 1.0, num(o, "gate", 0.5));
+    const auto len = o.getProperty("stepLength", "1/8").toString();
+    s.stepLength = len == "1/4" ? StepLength::quarter : len == "1/16" ? StepLength::sixteenth : len == "1/8T" ? StepLength::eighthTriplet
+                 : len == "1/16T" ? StepLength::sixteenthTriplet : StepLength::eighth;
     const auto steps = intArray(o.getProperty("steps", {}));
     for (size_t i = 0; i < s.steps.size(); ++i) s.steps[i] = (int8_t) (i < steps.size() && steps[i] >= 0 && steps[i] < SCALE_ROWS ? steps[i] : REST);
     return s;
@@ -86,10 +89,27 @@ void WebLink::handle(const juce::var& m, const Emit& emit) {
     const auto type = m.getProperty("type", {}).toString();
     if (type == "hello")
         sendInit(emit);
-    else if (type == "project") {
-        ++projectCount;
-        proc.setProjectJson(m.getProperty("json", {}).toString());
-    }
+    else if (type == "session/put" || type == "session/commit") {
+        proc.withSession([&](MkwavezProcessor::Session& s) {
+            if (type == "session/commit") {
+                ++commitCount;
+                s.meta = m.getProperty("meta", {}).toString();
+                for (int id : intArray(m.getProperty("remove", {}))) s.records.erase(id);
+            }
+            if (const auto* recs = m.getProperty("records", {}).getArray())
+                for (const auto& r : *recs) s.records[(int) r.getProperty("id", 0)] = r.getProperty("json", {}).toString();
+        });
+    } else if (type == "session/remove") {
+        proc.withSession([&](MkwavezProcessor::Session& s) {
+            for (int id : intArray(m.getProperty("ids", {}))) s.records.erase(id);
+        });
+    } else if (type == "session/clear") {
+        proc.withSession([](MkwavezProcessor::Session& s) {
+            s.meta = {};
+            s.records.clear();
+        });
+    } else if (type == "settings")
+        proc.withSession([&](MkwavezProcessor::Session& s) { s.settings = m.getProperty("json", {}).toString(); });
     else if (type == "batch")
         applyBatch(m.getProperty("ops", {}));
     else if (type == "log") {
@@ -129,28 +149,33 @@ void WebLink::sendInit(const Emit& emit) {
     sentPlaying = st.transportPlaying.load();
     sentBpm = st.transportBpm.load();
 
-    std::vector<std::pair<int, juce::String>> tables;
-    juce::Array<juce::var> wtIds, voiceIds, seqIds;
+    juce::Array<juce::var> tableIds, wtIds, voiceIds, seqIds;
     proc.host().read([&](const Document& doc) {
-        tables.reserve(doc.tables.size());
-        for (const auto& t : doc.tables) tables.emplace_back(t.id, juce::Base64::toBase64(t.data.data(), sizeof(Table)));
+        for (const auto& t : doc.tables) tableIds.add(t.id);
         for (const auto& w : doc.wavetables) wtIds.add(w.id);
         for (const auto& v : doc.voices) voiceIds.add(v.id);
         for (const auto& q : doc.sequences) seqIds.add(q.id);
     });
-    const auto project = proc.projectJson();
+    juce::String meta, settings;
+    std::vector<std::pair<int, juce::String>> records;
+    proc.withSession([&](const MkwavezProcessor::Session& sess) {
+        meta = sess.meta;
+        settings = sess.settings;
+        records.assign(sess.records.begin(), sess.records.end());
+    });
     emit(obj({{"type", "init"},
-              {"project", project.isEmpty() ? juce::var() : juce::var(project)},
-              {"tables", (int) tables.size()},
+              {"meta", meta.isEmpty() ? juce::var() : juce::var(meta)},
+              {"records", (int) records.size()},
+              {"settings", settings.isEmpty() ? juce::var() : juce::var(settings)},
               {"sampleRate", st.sampleRate.load()},
               {"voices", voices},
               {"transport", transportMessage(sentPlaying, sentBpm)},
               // What the engine holds now, so the page's first sync replaces exactly that.
-              {"engine", obj({{"wavetables", wtIds}, {"voices", voiceIds}, {"sequences", seqIds}})}}));
-    for (size_t i = 0; i < tables.size(); i += TABLE_CHUNK) {
+              {"engine", obj({{"tables", tableIds}, {"wavetables", wtIds}, {"voices", voiceIds}, {"sequences", seqIds}})}}));
+    for (size_t i = 0; i < records.size(); i += RECORD_CHUNK) {
         juce::Array<juce::var> items;
-        for (size_t k = i; k < std::min(tables.size(), i + TABLE_CHUNK); ++k) items.add(obj({{"id", tables[k].first}, {"data", tables[k].second}}));
-        emit(obj({{"type", "tables"}, {"items", items}}));
+        for (size_t k = i; k < std::min(records.size(), i + RECORD_CHUNK); ++k) items.add(obj({{"id", records[k].first}, {"json", records[k].second}}));
+        emit(obj({{"type", "records"}, {"items", items}}));
     }
 }
 
@@ -186,7 +211,7 @@ void WebLink::applyBatch(const juce::var& ops) {
                     c.kind = DocChange::addTable;
                     c.id = (int) it.getProperty("id", 0);
                     if (decodeTable(it.getProperty("data", {}).toString(), c.table)) changes.push_back(std::move(c));
-                    ++tableCount;
+                    ++tablesIn;
                 }
             }
         } else if (type == "tables/remove") {
@@ -284,7 +309,7 @@ void WebLink::poll(const Emit& emit) {
     int tableCount = 0;
     proc.host().read([&](const Document& doc) { tableCount = (int) doc.tables.size(); });
     emit(obj({{"type", "status"},
-              {"status", obj({{"step", (juce::int64) st.step.load()}, {"playing", st.playing.load()}, {"voices", voices}})},
+              {"status", obj({{"tick", (juce::int64) st.tick.load()}, {"playing", st.playing.load()}, {"voices", voices}})},
               {"tableCount", tableCount},
               {"sampleRate", st.sampleRate.load()}}));
 

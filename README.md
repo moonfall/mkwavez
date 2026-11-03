@@ -47,14 +47,17 @@ to `main` (or by hand: Actions → Deploy to GitHub Pages → Run workflow) and 
 ## Using it
 
 On a laptop / tablet (≥ 900 px wide) everything is on one screen: the transport bar
-(play, BPM, undo, MIDI, waveform count, sample rate, theme toggle), then Generate | Wavetables,
+(play, BPM, undo, Session menu, MIDI, waveform count, sample rate, theme toggle), then Generate | Wavetables,
 the Timeline strip, and Voice | Sequence. Panels scroll internally when their content
-doesn't fit (e.g. the Breed tab). Narrower screens get one scrolling column
+doesn't fit. Narrower screens get one scrolling column
 of the same panels, each collapsible. Dark theme by default; the sun / moon button
 switches (the choice is remembered).
 
 - **Generate → Seed**: pick from the library (basic waves, formula presets by
-  category, Perlin noise, cellular automaton, a blank formula). Search filters by name,
+  category, Perlin noise, cellular automaton, simulations — dynamical systems,
+  Karplus-Strong, reaction-diffusion, Life-like automata — and builders — additive
+  designer, number sequences, spline, glyph contour (type text; each character's outline
+  becomes a waveform) — and a blank formula). Search filters by name,
   category or formula text (Enter picks the first match, ↓ moves into the list, Esc
   clears); ▲/▼ or the arrow keys step through the (filtered) list. On a phone the library
   is one row (▲ · Category › Name · ▼); tap the name for the list. Edit the formula (JS in
@@ -78,13 +81,26 @@ switches (the choice is remembered).
   last waveform added (likewise the next source; Undo restores the selection).
   The previews are exactly what gets added; a seeded mutation draws a new seed after
   each Add.
-- **Generate → Breed**: combine 2–8 parents. Shift-click (or ⌘-click) or
-  long-press waveforms in the Timeline, "Add selected", or "Use window" of a voice; reorder
-  or remove them on their cards. Pick an operator (crossfade, spectral mix, magnitude /
-  phase swaps, envelope transfer, harmonic split, genetic masks, time splice), a Bias
-  (0 = parent A) and how it walks the parents (path, ring, custom weights), and a
-  Mutation rate. Breed adds one child; Breed N sweeps the bias or makes a seeded
-  generation of N children.
+- **Generate → Breed**: combine 2–8 parents. The operator library (Blend: Crossfade,
+  Spectral mix; Swap: Magnitudes / Phases from A; Shape: Envelope transfer; Crossover:
+  Harmonic split, Genetic per harmonic / per band; Time: Splice) works like Mutate's
+  (search by name, group or hint; ▲/▼ or the arrow keys); each thumbnail is that operator
+  applied to the parents at the current bias (faint = parent A), `rnd` marks seeded
+  operators. Parents are chips (A, B, …: thumbnail + waveform number): Shift-click (or
+  ⌘-click) or long-press waveforms in the Timeline, "Add selected" (+), or "Use window of"
+  ([ ]) the chosen voice;
+  drag a chip (or focus it and press ←/→) to reorder, × or Delete removes, Clear removes
+  all. Then Bias (0 = parent A), how the bias walks the parents
+  (Path, Ring, or Custom weights: a small slider on each chip), Mutation (seeded jitter,
+  strongest between parents) and the seed (Reroll; shown when the result uses it). The
+  large view shows one child (solid) over the parents (faint, in their chip colours) with
+  its spectrum (grey = A); the row under it names the operator (its hint in the tooltip,
+  as on the library entries), the shown child and the parents' weights. Batch: Sweep (child i of N at bias `B·i/N`) or Generation (N
+  children at B, each with its own seed); the strip shows all N (click, or ←/→ when
+  focused), the last by default. "Add shown" / "Add +N" add exactly the previews and
+  select the last waveform added (undo restores the selection); Add +N refuses batches of
+  copies (a sweep at bias 0; a generation with nothing seeded or one parent holding all
+  the weight) and both need two parents.
 - **Timeline**: every waveform, in order (cap 4096), as one horizontally scrolling strip
   (a vertical mouse wheel scrolls it sideways). Click to select (the header names the
   selection); Shift-click / long-press toggles Breed parents (badged A, B, …). A waveform
@@ -110,7 +126,38 @@ switches (the choice is remembered).
   click a slot to select its waveform. The summary line gives the shape, the interpolation
   (**Blend** / **Step**, switchable here; it applies to every voice on that wavetable),
   Live / Frozen and which voices use it. Waveforms in the Grid or Last batch are never evicted.
-  Creating / editing wavetables (the Edit button) is phase 2. Collapsed by default on a phone.
+  **+** makes a new 1D wavetable and opens the editor. Collapsed by default on a phone.
+- **Wavetables editor** (**Edit** in the Wavetables header; **Collapse** returns): it
+  takes over the whole Generate row (Generate is hidden meanwhile) and the Timeline stays
+  below as the source for drags. Left: the list (built-ins with a lock, yours below; green
+  dot = Live) and **+ 1D** (variable, empty), **+ 2D** (8×8, empty; set X × Y in the
+  header) and **+ Rows** (empty). New wavetables start Frozen. Centre: the header (name —
+  pencil or double-click a list entry to rename; shape; size: 1D Variable / Fixed + slot
+  count, 2D X × Y, asking before slots with waveforms would be dropped; Strip / Stack for
+  1D; Blend / Step; **Duplicate** — the way to edit a built-in: it makes an editable,
+  frozen copy; **Delete**, asking first: voices on it switch to the Timeline), then the
+  view with voice windows, the write head (green, “W”) and green numbers where the next
+  writes land, then the selected slot's actions. Right: Live / Frozen and the write head
+  settings (direction, at the edge, on wrap, replace / insert, each new batch; options a
+  shape can't use are disabled; built-ins are read-only). A Live wavetable gets every new
+  waveform (Seed / Mutate / Breed adds, Copy to end) at its write head.
+  - **Drag** a waveform from the Timeline (mouse: press and move; touch: move up out of
+    the strip — sideways still scrolls it, holding still is still the Breed long-press) or
+    from a slot (touch: hold first): onto a slot **replaces** it, between slots
+    **inserts** (1D and Rows; a fixed 1D shifts its slots into the next empty one),
+    between rows or below the last adds a **row** (Rows). Within a wavetable a drag moves
+    the slot (onto another slot: swaps; hold Alt / Ctrl / ⌘ to copy). Hovering a list
+    entry while dragging opens it; dropping on it adds the waveform there. Esc cancels.
+    The ghost says what a drop will do.
+  - Click a slot to select it (and its waveform in the Timeline); ←/→ (↑/↓ on 2D / Rows)
+    move the selection, **Delete** empties the slot, **Shift+Delete** removes it (the line
+    closes up). The slot actions do the same, plus “Replace with selected” / “Insert
+    selected” (the Timeline selection; handy on touch) and “Write head here” (or Alt-click
+    a slot). Every edit is undoable.
+  - Waveforms in your wavetables are never evicted from the Timeline; once no wavetable
+    holds them they can be again. A wavetable of yours holds at most 1024 slots: a Live one that fills up is marked **full** and stops taking new waveforms (they still go into the Timeline). The Timeline
+    never holds more than 4096 waveforms: when all of them are used by wavetables, adds
+    are refused (the Add buttons are disabled; a notice says which wavetables to clear).
 - **Voice**: one tab per voice (V1, V2 · muted, …, + adds one, × removes the selected
   one). The selected voice's wavetable (any wavetable; switching selects all of it) and
   its interpolation (read-only), octave, window, position, LFO, level, mute, plus a "now
@@ -122,6 +169,18 @@ switches (the choice is remembered).
 - **Sequence**: follows the selected voice tab: its 8-row pentatonic step grid (rows
   labelled with the voice's notes), steps, gate, copy / paste / clear / random; shared
   tempo. "+ Seq" adds another sequence to the voice (a picker appears).
+  - **Step length** ("Steps [16] of [1/8]"): each sequence's steps are 1/4, 1/8
+    (default), 1/16, 1/8T or 1/16T notes; BPM counts quarter notes, so a step lasts
+    (60 / BPM) × (4 × the fraction) seconds — 16 steps of 1/8 are 2 bars of 4/4. The
+    header shows the length in bars ("16 steps · 1/8 · 2 bars", "12 steps · 1/8 · 1.5
+    bars") and the transport position as bar.beat since Play ("5.3"), which keeps
+    counting across loops. The grid shades the first step of each beat (beats 1 and 3
+    at 1/4) and draws a line at each bar, counted from the pattern start: a pattern
+    that isn't a whole number of bars loops off the bar line, and the header says so.
+  - All sequences run on one clock from the moment Play is pressed, so different step
+    lengths (and pattern lengths) stay bar-aligned; changing the step length while
+    playing picks up at the next step of the new grid. Sessions saved before step
+    lengths existed load as 1/8 and sound exactly as before.
 - **MIDI** (Web MIDI: Chrome, Edge, Firefox, Opera; HTTPS or localhost): pick an input
   (or All inputs) in the transport bar — the choice is remembered and reconnects on load
   and on hot-plug. The LED in the **MIDI** button blinks on activity; the button opens
@@ -140,8 +199,21 @@ switches (the choice is remembered).
   when you pick an input, or on your first click if the input was remembered (browsers
   only start audio on a gesture). Unsupported browsers / denied permission show a short
   status; the rest of the app is unaffected.
+- **Session** (transport bar): your work is saved in the browser automatically (IndexedDB,
+  a second or two after each change and when the tab is hidden) and restored on reload —
+  waveforms, wavetables, voices, sequences, tempo, the selected voice tab and Generate
+  tab, Breed parents and the Breed operator / bias / walk / mutation / batch mode; not
+  undo history. The menu shows the autosave status and has **New session**
+  (asks first; clears the autosaved copy), **Export…** (one `.mkwz` file) and
+  **Import…** (asks first; replaces the current session). If the browser blocks storage
+  (e.g. some private windows) the app runs as usual with autosave off and a notice; a
+  save that can't be restored (damaged, or from a newer version) starts a fresh session
+  and is kept aside, with Export / Discard. With mkwavez open in several tabs only one
+  autosaves; the others say so and offer "Use autosave here…".
 - **Undo** (transport bar) covers waveform adds (including Mutate / Breed adds, Copy to end),
-  Timeline moves, window edits and note edits.
+  Timeline moves, window edits, a voice's wavetable switch, note edits and wavetable edits (create, duplicate, rename,
+  delete, resize, slot edits). Wavetable settings (Live / Frozen, write head, interpolation)
+  are kept across undo.
 
 ## Keyboard shortcuts
 
@@ -158,4 +230,8 @@ when other modifier keys are held. Controls show theirs in tooltips (and `aria-k
 | ← / → | Batch strips (Seed, Mutate): show the previous / next waveform; Home / End: first / last |
 | ↑ / ↓ | Seed / Mutate libraries: previous / next entry (↓ from the search moves into the list; Enter picks the first match, Esc clears) |
 | ← / → | Voice tabs (when a tab has focus): previous / next voice |
-| Esc | MIDI popover: cancel Learn |
+| ← / → (↑ / ↓) | Wavetables editor view (when it has focus): select the previous / next slot (row) |
+| Shift+← / Shift+→ | Wavetables editor view (when it has focus): move the selected slot (instead of the Timeline move) |
+| Delete / Shift+Delete | Wavetables editor: empty / remove the selected slot |
+| Alt / Ctrl / ⌘ (while dragging) | Copy instead of move within a wavetable |
+| Esc | MIDI popover: cancel Learn; while dragging a waveform: cancel the drag (no other shortcut acts during a drag) |

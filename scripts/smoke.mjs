@@ -10,16 +10,28 @@
 // in view and follows the newest table; "Copy to end" / Ctrl+D (only while the strip has
 // focus) appends a copy of the selection, selects and reveals it; Mutate (library search /
 // stepping / thumbnails, amount → preview, Linear / Log / Chain, strip arrow keys, Add shown /
-// Add +N recipes, no Evolve, fits the Generate panel) while playing; Breed picks parents
-// (timeline Shift-click / long-press, Add selected,
-// voice window), previews and applies every operator, sweeps and generations; evicted parents
-// drop out. Wavetables: the built-ins (Timeline, Last batch, Batches, Grid) exist, update on
+// Add +N recipes, no Evolve, fits the Generate panel) while playing; Breed (operator library
+// search / stepping / thumbnails, parent chips: Timeline Shift-click / long-press, Add
+// selected, Use window of Vn, reorder by keyboard and drag, remove; bias / walk / custom
+// weights / seed; Sweep / Generation strip, Add shown / Add +N recipes and selection, guards;
+// fits the Generate panel) while playing; evicted parents drop out. Wavetables: the built-ins (Timeline, Last batch, Batches, Grid) exist, update on
 // Seed Add shown / Add batch and show their views; no "Sets window of" checkboxes; V1 on the
 // Grid shows the X/Y pad (sliders move the dot, live dot while playing), the worklet plays it,
 // Step on the wavetable plays one cell; the Voice panel fits at 1440×900 / 1180×820 and 390px
 // doesn't overflow; the CC map has Position Y. Keyboard shortcuts: Space (also with a button
 // focused; types in text fields), [ / ], M, Shift+←/→ moves in the Timeline (ends no-op,
 // one undo step, ignored in text fields); no UI text says "table" (only "wavetable").
+// Sequence timing: step length selector (default 1/8), "16 steps · 1/8 · 2 bars", beat /
+// bar marks on the grid follow the step length, the playhead steps twice as fast at 1/16,
+// the bar.beat readout advances; the step length survives a reload.
+// Wavetables editor: expand / collapse over the
+// Generate row (fits 1440×900 / 1180×820, 390px no overflow), + 1D / 2D / Rows, 2D resize,
+// duplicate a built-in, rename, a Live wavetable receives Seed adds, Timeline drags (mouse
+// replace / insert, touch insert via synthetic pointer events), slot reorder, Delete, undo,
+// built-ins refuse drops, delete moves its voice to the Timeline.
+// Session: autosave survives a reload, New session, Export / Import, two tabs (one
+// autosaves; take over), unrestorable save set aside and exportable, no-storage paths
+// (sessionChecks).
 //
 // Usage: npm run smoke            (builds, then tests `vite preview` and `vite dev`)
 //        CHROME=/path/to/chrome   (default /usr/bin/google-chrome)
@@ -71,7 +83,7 @@ async function run(label, url, browser) {
   // Tabs.
   await page.click('#tab-breed');
   assert(await page.isVisible('#panel-breed'), 'Breed tab shows');
-  assert(await page.isDisabled('#breed-apply1'), 'Breed disabled without parents');
+  assert(await page.isDisabled('#breed-add-shown'), 'Breed: Add disabled without parents');
   await page.click('#tab-seed');
   assert(await page.isVisible('#panel-seed'), 'Seed tab visible again');
 
@@ -92,9 +104,10 @@ async function run(label, url, browser) {
   await page.click('#play');
   await page.waitForFunction(() => document.body.dataset.audio === 'running', null, { timeout: 10000 });
   assert(true, 'audio worklet running');
-  await page.waitForFunction(() => Number(document.body.dataset.step) >= 4, null, { timeout: 10000 });
+  await page.waitForFunction(() => Number(document.body.dataset.tick) >= 24, null, { timeout: 10000 });
   assert(true, 'sequencer steps advance');
   await voiceTabChecks(page);
+  await sequenceTimingChecks(page);
   await collapsedRedrawChecks(page);
   await page.click('#seed-add-shown');
   await page.waitForFunction(
@@ -105,12 +118,13 @@ async function run(label, url, browser) {
   assert(true, 'worklet holds every timeline table');
   await timelineMarkerChecks(page);
   await wavetableChecks(page);
+  await wavetableEditorChecks(page, tlCount);
   await timelineCopyChecks(page, tlCount);
   await shortcutChecks(page);
   await wordingCheck(page, 'after Seed / Timeline');
   await mutateChecks(page, tlCount, label);
   await wordingCheck(page, 'after Mutate');
-  await breedChecks(page, tlCount);
+  await breedChecks(page, tlCount, label);
   await wordingCheck(page, 'after Breed');
   await page.click('#add-voice');
   let vs = await page.evaluate(() => ({ n: window.mkwavez.model.voices.length, sel: window.mkwavez.ui.voiceId }));
@@ -160,9 +174,51 @@ async function run(label, url, browser) {
   await page.waitForTimeout(300);
   const ev = await page.evaluate(() => ({
     parents: window.mkwavez.model.breedParents.length,
-    cards: document.querySelectorAll('#breed-parents .parent-card').length,
+    chips: document.querySelectorAll('#breed-parents .br-chip').length,
   }));
-  assert(ev.parents === 0 && ev.cards === 0, 'evicted Breed parents drop out of the list and its cards');
+  assert(ev.parents === 0 && ev.chips === 0, 'evicted Breed parents drop out of the list and its chips');
+  // Timeline full of waveforms wavetables use: adds are refused with a notice, buttons say so.
+  const full = await page.evaluate(() => {
+    const m = window.mkwavez.model;
+    // Four copies of the Timeline (each keeps its newest 1024), then each given a quarter.
+    const ids = m.timeline.map((t) => t.id);
+    const ds = [0, 1, 2, 3].map(() => m.duplicateWavetable(0).id);
+    m.wavetables = m.wavetables.map((w) => (ds.includes(w.id) ? { ...w, rows: [ids.slice(ds.indexOf(w.id) * 1024, (ds.indexOf(w.id) + 1) * 1024)] } : w));
+    m.setWavetableInterp(ds[0], 'step'); // emits 'wavetables'
+    const n = m.timeline.length;
+    const added = m.addTables([{ data: m.timeline[0].data, recipe: m.timeline[0].recipe }]).length;
+    return { ids: ds, n, added, after: m.timeline.length };
+  });
+  await page.waitForTimeout(100);
+  const fullUi = await page.evaluate(() => ({
+    notice: !document.querySelector('#notice').hidden && document.querySelector('#notice').textContent,
+    copy: document.querySelector('#timeline-copy').disabled && document.querySelector('#timeline-copy').title,
+  }));
+  assert(
+    full.n === 4096 && full.added === 0 && full.after === 4096 && String(fullUi.notice).startsWith('Timeline full: all 4096 waveforms') && String(fullUi.copy).startsWith('Timeline full'),
+    `Timeline full: add refused, notice shown, Copy to end disabled (${fullUi.notice})`,
+  );
+  const breedFull = await page.evaluate(() => {
+    const m = window.mkwavez.model;
+    m.setBreedParents(m.timeline.slice(-2).map((t) => t.id));
+    const s = document.querySelector('#breed-add-shown');
+    const b = document.querySelector('#breed-add-batch');
+    const r = { s: s.disabled && s.title, b: b.disabled && b.title, note: document.querySelector('#breed-blocked').textContent };
+    // Forced through anyway (stale button): refused, no "Added", no new seed.
+    const seed = document.querySelector('#breed-seed').textContent;
+    const n = m.timeline.length;
+    s.disabled = false;
+    s.click();
+    r.refused = m.timeline.length === n && !document.querySelector('#breed-status').textContent.includes('Added') && document.querySelector('#breed-seed').textContent === seed;
+    return r;
+  });
+  assert(
+    String(breedFull.s).startsWith('Timeline full') && String(breedFull.b).startsWith('Timeline full') && breedFull.note.startsWith('Timeline full') && breedFull.refused,
+    'Timeline full: Breed Add shown / Add +N disabled with the reason; a forced add is refused without "Added" or a new seed',
+  );
+  await page.evaluate((ids) => ids.forEach((id) => window.mkwavez.model.deleteWavetable(id)), full.ids);
+  await page.waitForTimeout(50);
+  assert(!(await page.isDisabled('#timeline-copy')) && !(await page.isDisabled('#breed-add-shown')), 'room again once the wavetables are deleted (Copy to end, Breed)');
   await page.click('#play');
   assert((await page.evaluate(() => window.mkwavez.model.playing)) === false, 'transport stops');
   // Leave eight parents showing (layout / overflow / screenshots).
@@ -171,19 +227,23 @@ async function run(label, url, browser) {
     const m = window.mkwavez.model;
     m.setBreedParents(m.timeline.slice(0, 8).map((t) => t.id));
   });
-  assert((await page.$$('#breed-parents .parent-card')).length === 8, 'eight parent cards');
+  assert((await page.$$('#breed-parents .br-chip')).length === 8, 'eight parent chips');
   await page.waitForTimeout(200);
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   assert(!overflow, 'no horizontal page overflow at 390px (eight parents, 4096 tables)');
-  // The wide shell still fits one screen with everything loaded (Breed tab scrolls inside Generate).
+  // The wide shell still fits one screen with everything loaded, the Breed tab its panel.
   for (const [w, hh] of [
     [1440, 900],
     [1180, 820],
   ]) {
     await page.setViewportSize({ width: w, height: hh });
     await page.waitForTimeout(250);
-    assert(await fitsScreen(page), `${w}×${hh}: no page scroll with 4096 tables and eight parents`);
+    const genFits = await page.evaluate(() => {
+      const b = document.querySelector('#sec-generate-body');
+      return b.scrollHeight <= b.clientHeight + 1 && b.scrollWidth <= b.clientWidth + 1;
+    });
+    assert((await fitsScreen(page)) && genFits, `${w}×${hh}: no page or Generate panel scroll with 4096 tables and eight parents`);
   }
   if (SHOTS) {
     for (const theme of ['dark', 'light']) {
@@ -442,6 +502,20 @@ async function seedChecks(page, tlCount) {
   await page.click('#seed-n-inc');
   assert((await page.inputValue('#seed-n')) === '8', 'N back to 8');
 
+  // Glyph contour: the browser traces each character; the strip shows one per card.
+  await page.click('#seed-current');
+  await page.fill('#seed-search', 'glyph');
+  await page.press('#seed-search', 'Enter');
+  assert((await title()) === 'Builders › Glyph contour' && (await page.isVisible('#seed-glyph-text')), 'Glyph contour shows a text field');
+  await page.waitForTimeout(400);
+  const g1 = await canvasInk(page, '#seed-strip .gen-card:nth-child(1) canvas');
+  const g2 = await canvasInk(page, '#seed-strip .gen-card:nth-child(2) canvas');
+  assert(g1.n > 0 && g2.n > 0 && g1.sum !== g2.sum, 'glyph cards render, one character each');
+  await page.fill('#seed-glyph-text', 'O');
+  assert(await page.isVisible('#seed-edited'), 'editing the text marks it edited');
+  await page.click('#seed-revert');
+  assert((await page.inputValue('#seed-glyph-text')) === 'mkwavez' && !(await page.isVisible('#seed-edited')), 'Revert restores the text');
+
   // Basic wave (additive), selected for later adds.
   await page.click('#seed-current');
   await page.fill('#seed-search', 'saw');
@@ -612,6 +686,167 @@ async function voiceTabChecks(page) {
   await page.click('#undo');
 }
 
+/**
+ * Sequence timing (while playing, V1's sequence): the step length selector defaults to 1/8,
+ * the header reads "16 steps · 1/8 · 2 bars", the grid marks beats / bars for the step
+ * length, the playhead follows the clock tick (twice as fast at 1/16), the bar.beat readout
+ * advances; the header fits at 1440×900 / 1180×820 and 390px doesn't overflow.
+ */
+async function sequenceTimingChecks(page) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  await page.$eval('#seq-grid', (c) => c.scrollIntoView({ block: 'center' }));
+  const lens = await M(() => window.mkwavez.model.sequences.map((s) => s.stepLength));
+  assert(lens.length === 3 && lens.every((l) => l === '1/8'), `every default sequence steps in 1/8 (${lens.join()})`);
+  const opts = await page.$$eval('#seq-step-length option', (os) => os.map((o) => o.value).join());
+  assert(opts === '1/4,1/8,1/16,1/8T,1/16T' && (await page.inputValue('#seq-step-length')) === '1/8', `step length selector present, 1/8 selected (${opts})`);
+  const grid = () =>
+    M(() => {
+      const g = document.querySelector('#seq-grid');
+      return {
+        len: g.dataset.stepLength,
+        beats: g.dataset.beats,
+        bars: g.dataset.bars,
+        step: Number(g.dataset.step),
+        tick: Number(g.dataset.tick),
+        length: Number(g.dataset.length),
+        pos: document.querySelector('#seq-pos').textContent,
+        summary: document.querySelector('#seq-summary').textContent,
+      };
+    });
+  /** Playhead steps per second, from the drawn grid over ~1.5 s. */
+  const rate = () =>
+    M(
+      () =>
+        new Promise((res) => {
+          const g = document.querySelector('#seq-grid');
+          const len = Number(g.dataset.length);
+          let last = Number(g.dataset.step);
+          let sum = 0;
+          const t0 = performance.now();
+          const f = () => {
+            const s = Number(g.dataset.step);
+            if (s >= 0 && last >= 0) sum += (s - last + len) % len;
+            last = s;
+            const dt = performance.now() - t0;
+            if (dt < 1500) requestAnimationFrame(f);
+            else res(sum / (dt / 1000));
+          };
+          requestAnimationFrame(f);
+        }),
+    );
+  /** Bar-line pixel (between steps k-1 and k) vs an ordinary step boundary's. */
+  const lineAt = (k) =>
+    M((k) => {
+      const c = document.querySelector('#seq-grid');
+      const len = Number(c.dataset.length);
+      const cw = (c.clientWidth - 30) / len;
+      const sx = c.width / c.clientWidth;
+      const x = Math.round(30 + k * cw) - 0.5;
+      return Array.from(c.getContext('2d').getImageData(Math.floor(x * sx), Math.floor(c.height / 2), 1, 1).data).join();
+    }, k);
+  /** The transport bar clock (48 ticks a bar, 12 a beat), counted from Play. */
+  const barBeat = (tick) => `${Math.floor(tick / 48) + 1}.${Math.floor((tick % 48) / 12) + 1}`;
+
+  let g = await grid();
+  assert(g.summary === '16 steps · 1/8 · 2 bars', `header shows the length in bars (“${g.summary}”)`);
+  assert(g.len === '1/8' && g.beats === '0,2,4,6,8,10,12,14' && g.bars === '0,8', `1/8 grid: beats every 2 steps, bar line at 8 (beats ${g.beats}; bars ${g.bars})`);
+  assert((await lineAt(8)) !== (await lineAt(4)), 'bar line drawn between bars');
+  assert(g.step === Math.floor(g.tick / 6) % 16 && g.pos === barBeat(g.tick), `playhead step ${g.step} = tick ${g.tick} / 6, readout ${g.pos} on the bar clock`);
+  const pos0 = g.pos;
+  await page.waitForFunction((p) => document.querySelector('#seq-pos').textContent !== p, pos0, { timeout: 3000 });
+  g = await grid();
+  assert(/^\d+\.[1-4]$/.test(g.pos) && g.pos !== pos0 && g.pos === barBeat(g.tick), `bar.beat readout advances (${pos0} → ${g.pos})`);
+  const r8 = await rate();
+
+  await page.selectOption('#seq-step-length', '1/16');
+  assert((await M(() => window.mkwavez.model.sequences.find((s) => s.voiceId === 1).stepLength)) === '1/16', 'selector sets the sequence’s step length');
+  await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.stepLength === '1/16', null, { timeout: 3000 });
+  g = await grid();
+  assert(g.summary === '16 steps · 1/16 · 1 bar' && g.beats === '0,4,8,12' && g.bars === '0', `1/16: “${g.summary}”, beats every 4 steps (${g.beats}), one bar`);
+  assert(g.step === Math.floor(g.tick / 3) % 16 && g.pos === barBeat(g.tick), `1/16 playhead step ${g.step} = tick ${g.tick} / 3, readout ${g.pos}`);
+  const r16 = await rate();
+  assert(r16 / r8 > 1.6 && r16 / r8 < 2.4, `1/16 steps twice as fast as 1/8 (${r8.toFixed(1)} → ${r16.toFixed(1)} steps/s)`);
+
+  await page.selectOption('#seq-step-length', '1/8T');
+  await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.stepLength === '1/8T', null, { timeout: 3000 });
+  g = await grid();
+  assert(g.summary === '16 steps · 1/8T · ≈1.33 bars' && g.beats === '0,3,6,9,12,15' && g.bars === '0,12', `1/8T: “${g.summary}”, beats every 3 steps, bar line at 12`);
+  await page.selectOption('#seq-step-length', '1/4');
+  await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.stepLength === '1/4', null, { timeout: 3000 });
+  g = await grid();
+  assert(
+    g.summary === '16 steps · 1/4 · 4 bars' && g.beats === '0,2,4,6,8,10,12,14' && g.bars === '0,4,8,12',
+    `1/4: beats 1 and 3 shaded (${g.beats}), not every step; bar lines every 4 (“${g.summary}”)`,
+  );
+
+  // A pattern that isn't a whole number of bars (12 × 1/8 = 1.5 bars): the header says so,
+  // the grid stays pattern-relative, and the readout stays on the bar clock across loops
+  // (a loop starts on beat 1 or beat 3, alternately).
+  await M(() => {
+    const m = window.mkwavez.model;
+    m.updateSequence(m.sequences.find((s) => s.voiceId === 1).id, { stepLength: '1/8', length: 12 });
+  });
+  await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.length === '12', null, { timeout: 3000 });
+  // Read the grid in the same frame it shows step 0 (it lasts ~¼ s).
+  g = await (
+    await page.waitForFunction(
+      () => {
+        const c = document.querySelector('#seq-grid');
+        if (c.dataset.step !== '0') return null;
+        const d = c.dataset;
+        return { step: 0, tick: Number(d.tick), beats: d.beats, bars: d.bars, wholeBars: d.wholeBars, pos: document.querySelector('#seq-pos').textContent, summary: document.querySelector('#seq-summary').textContent };
+      },
+      null,
+      { timeout: 5000, polling: 'raf' },
+    )
+  ).jsonValue();
+  const wholeBars = g.wholeBars;
+  const loopN = Math.floor(g.tick / 72);
+  assert(
+    g.summary === '12 steps · 1/8 · 1.5 bars' && wholeBars === 'false' && g.beats === '0,2,4,6,8,10' && g.bars === '0,8',
+    `12 × 1/8: “${g.summary}”, pattern-relative grid (beats ${g.beats}; bars ${g.bars})`,
+  );
+  assert(
+    g.step === 0 && g.pos === barBeat(g.tick) && g.pos.endsWith(loopN % 2 ? '.3' : '.1'),
+    `loop ${loopN} of 12 × 1/8 starts at ${g.pos} on the bar clock (tick ${g.tick})`,
+  );
+
+  // Layout with a crowded header (muted target, two sequences, a long length).
+  await M(() => {
+    const m = window.mkwavez.model;
+    m.updateSequence(m.sequences.find((s) => s.voiceId === 1).id, { stepLength: '1/16T', length: 61 });
+    m.updateVoice(1, { mute: true });
+    m.addSequence(1);
+  });
+  for (const [w, hh] of [
+    [1440, 900],
+    [1180, 820],
+    [390, 844],
+  ]) {
+    await page.setViewportSize({ width: w, height: hh });
+    await page.waitForTimeout(200);
+    const r = await M(() => {
+      const head = document.querySelector('#sec-sequences .panel-head');
+      const sum = document.querySelector('#seq-summary').getBoundingClientRect();
+      const kids = [...document.querySelectorAll('#sec-sequences .panel-tools > *')].map((e) => e.getBoundingClientRect()).filter((b) => b.width);
+      const overlap = kids.some((b) => b.right > sum.left + 0.5 && b.left < sum.right - 0.5 && b.bottom > sum.top + 0.5 && b.top < sum.bottom - 0.5);
+      return { fits: head.scrollWidth <= head.clientWidth + 1, overlap, page: document.documentElement.scrollWidth <= innerWidth };
+    });
+    const screen = w < 900 ? r.page : await fitsScreen(page);
+    assert(r.fits && !r.overlap && screen, `${w}×${hh}: crowded Sequence header fits without overlap${w < 900 ? ', no overflow' : ', one screen'}`);
+  }
+  await M(() => {
+    const m = window.mkwavez.model;
+    const own = m.sequences.filter((s) => s.voiceId === 1);
+    m.removeSequence(own[1].id);
+    m.updateSequence(own[0].id, { stepLength: '1/8', length: 16 });
+    m.updateVoice(1, { mute: false });
+  });
+  await page.$eval('#seq-grid', (c) => c.scrollIntoView({ block: 'center' }));
+  await page.waitForFunction(() => document.querySelector('#seq-summary').textContent === '16 steps · 1/8 · 2 bars', null, { timeout: 3000 });
+  assert((await page.inputValue('#seq-step-length')) === '1/8', 'back to 1/8');
+}
+
 /** A collapsed panel (phone column) stops redrawing while playing, and redraws when expanded. */
 async function collapsedRedrawChecks(page) {
   for (const [panel, canvas] of [
@@ -699,22 +934,25 @@ async function mutateChecks(page, tlCount, label) {
   assert((await page.textContent('#mutate-src-no')).trim() === `#${src.idx + 1}`, `source chip shows the selection (#${src.idx + 1})`);
 
   // Library.
+  // Offered mutations (core/mutations.ts MUTATION_CHOICES) and the seeded ones among them.
+  const MUTATION_COUNT = 48;
+  const SEEDED = 'toNoise,ring,nwarp,grains,stutter,cheby,formant,multiples,phaseRandom,jitter,scramble';
   const all = await visibleIds();
-  assert(all.length === 23 && !all.includes('breed'), 'library lists 23 mutations (legacy Breed hidden)');
-  assert((await page.$$('#mutate-list .gen-tag')).length === 6, 'six seeded mutations tagged rnd');
+  assert(all.length === MUTATION_COUNT && !all.includes('breed'), `library lists ${MUTATION_COUNT} mutations (legacy Breed hidden)`);
+  assert((await page.$$('#mutate-list .gen-tag')).length === SEEDED.split(',').length, 'seeded mutations tagged rnd');
   assert((await title()) === 'Waveshape › Fold' && (await page.textContent('#mutate-hint')).includes('gain 1 + 3a · 0% = unchanged'), 'Group › Name and its amount mapping');
   assert(!(await page.isVisible('#mutate-seedbox')), 'no seed / Reroll for an unseeded mutation');
   await waitInk(page, '#mutate-list .gen-entry[data-id="foldSmooth"] canvas');
   assert(true, 'library thumbnails render');
   await page.fill('#mutate-search', 'SPECTRAL');
-  assert((await visibleIds()).length === 7, 'search matches the group');
+  assert((await visibleIds()).length === 16, 'search matches the group');
   await page.fill('#mutate-search', 'seeded');
   const seededIds = await visibleIds();
-  assert(seededIds.join() === 'toNoise,ring,nwarp,formant,jitter,scramble', `search matches mapping hints (${seededIds.join()})`);
+  assert(seededIds.join() === SEEDED, `search matches mapping hints (${seededIds.join()})`);
   await page.fill('#mutate-search', 'zzzz');
   assert((await page.isVisible('#mutate-empty')) && !(await visibleIds()).length, 'no-matches state');
   await page.press('#mutate-search', 'Escape');
-  assert((await visibleIds()).length === 23, 'Escape clears the search');
+  assert((await visibleIds()).length === MUTATION_COUNT, 'Escape clears the search');
   await page.fill('#mutate-search', 'warp');
   await page.press('#mutate-search', 'ArrowDown');
   assert((await title()) === 'Waveshape › Phase warp' && (await focusedId()) === 'warp', 'ArrowDown moves into the results');
@@ -1452,7 +1690,7 @@ async function wavetableChecks(page) {
     !(await page.$('.gen-targets')) && !(await M(() => document.body.textContent.includes('Sets window of'))),
     'no "Sets window of" checkboxes',
   );
-  assert((await page.isDisabled('#wt-edit')) && (await page.isDisabled('#wt-new')), 'Edit / + present but disabled (phase 2)');
+  assert(!(await page.isDisabled('#wt-edit')) && !(await page.isDisabled('#wt-new')), 'Edit / + enabled');
   const shapes = {};
   for (const [id, shape, label] of [
     [0, '1d', '1D'],
@@ -1581,26 +1819,113 @@ const waitInk = (page, sel) =>
     { timeout: 5000 },
   );
 
-async function breedChecks(page, tlCount) {
+/**
+ * Generate → Breed (while playing): operator library (groups, search incl. hints, ▲/▼,
+ * arrow keys, rnd tags, thumbnails of each operator on the parents that follow bias /
+ * seed); parent chips (Timeline Shift-click / long-press, Add selected, Use window of Vn,
+ * × / Delete remove, ←/→ and drag reorder, Clear); bias / walk (path, ring, custom weights
+ * on the chips) / mutation / seed; result-over-parents view; Sweep / Generation batch strip
+ * (labels, ←/→, click); Add shown / Add +N (recipes, the previews are what gets added, each
+ * selects the last waveform added, undo restores the selection); guards (≥ 2 parents, no
+ * batches of copies); fits the Generate panel at 1440×900 and 1180×820 (no page or panel
+ * scroll); the phone column has the compact library row and no overflow. Ends on Seed.
+ */
+async function breedChecks(page, tlCount, label) {
   const M = (fn, arg) => page.evaluate(fn, arg);
-  const seedOf = async () => parseInt((await page.textContent('#breed-seed')).replace('seed ', '').trim(), 16);
+  const seedHex = async () => (await page.textContent('#breed-seed')).trim();
   const parents = () => M(() => [...window.mkwavez.model.breedParents]);
   const same = async (want) => JSON.stringify(await parents()) === JSON.stringify(want);
   const ids = (from, to) => M(([a, b]) => window.mkwavez.model.timeline.slice(a, b).map((t) => t.id), [from, to]);
+  const title = async () => (await page.textContent('#breed-title')).trim();
+  const shownTxt = async () => (await page.textContent('#breed-shown')).trim();
+  const visibleIds = () => page.$$eval('#breed-list .gen-entry', (bs) => bs.filter((b) => !b.hidden).map((b) => b.dataset.id));
+  const focusedId = () => M(() => document.activeElement?.dataset?.id ?? document.activeElement?.id ?? '');
+  const chipCount = async () => (await page.$$('#breed-parents .br-chip')).length;
+  const checksum = (sel) =>
+    M((sel) => {
+      const c = document.querySelector(sel);
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let s = 0;
+      for (let i = 0; i < d.length; i += 4) s = (s * 31 + d[i] + d[i + 1] * 7 + d[i + 3] * 13) % 1000000007;
+      return s;
+    }, sel);
+  const waitChange = (sel, sum) =>
+    page.waitForFunction(
+      ([sel, b]) => {
+        const c = document.querySelector(sel);
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let s = 0;
+        for (let i = 0; i < d.length; i += 4) s = (s * 31 + d[i] + d[i + 1] * 7 + d[i + 3] * 13) % 1000000007;
+        return s !== b;
+      },
+      [sel, sum],
+      { timeout: 5000 },
+    );
+  const genFits = () =>
+    M(() => {
+      const b = document.querySelector('#sec-generate-body');
+      return b.scrollHeight <= b.clientHeight + 1 && b.scrollWidth <= b.clientWidth + 1;
+    });
+  const pick = async (id) => {
+    await page.click(`#breed-list .gen-entry[data-id="${id}"]`);
+    await page.waitForTimeout(60);
+  };
+
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.click('#tab-breed');
+  assert(await page.isVisible('#panel-breed'), 'Breed tab visible');
   await M(() => window.mkwavez.model.setBreedParents([]));
-  assert(await page.isDisabled('#breed-apply1'), 'Breed disabled with no parents');
+  assert((await page.isDisabled('#breed-add-shown')) && (await page.isDisabled('#breed-add-batch')), 'no parents: Add shown / Add +N disabled');
+  assert((await page.textContent('#breed-parents')).includes('Shift-click'), 'empty parents row explains how to add parents');
+  assert((await genFits()) && (await fitsScreen(page)), '1440×900: Breed fits the Generate panel (no parents), no page scroll');
+
+  // Library.
+  const all = await visibleIds();
+  assert(all.length === 9, `library lists 9 operators (${all.join()})`);
+  const groups = await page.$$eval('#breed-list .gen-lib-group', (g) => g.map((x) => x.textContent));
+  assert(groups.join() === 'Blend,Swap,Shape,Crossover,Time', `grouped: ${groups.join(', ')}`);
+  assert(
+    (await page.$$eval('#breed-list .gen-entry', (bs) => bs.filter((b) => b.querySelector('.gen-tag')).map((b) => b.dataset.id))).join() === 'genetic,bands,splice',
+    'seeded operators tagged rnd',
+  );
+  assert((await title()) === 'Blend › Crossfade' && (await page.getAttribute('#breed-title', 'title')).includes('bias 0 = A'), 'Group › Name, its hint as the tooltip');
+  assert((await page.getAttribute('#breed-list .gen-entry[data-id="split"]', 'title')).includes('harmonic bands'), 'library entries carry their hint');
+  await page.fill('#breed-search', 'crossover');
+  assert((await visibleIds()).join() === 'split,genetic,bands', 'search matches the group');
+  await page.fill('#breed-search', 'third-octave');
+  assert((await visibleIds()).join() === 'bands', 'search matches the hint');
+  await page.fill('#breed-search', 'zzzz');
+  assert((await page.isVisible('#breed-empty')) && !(await visibleIds()).length, 'no-matches state');
+  await page.press('#breed-search', 'Escape');
+  assert((await visibleIds()).length === 9, 'Escape clears the search');
+  await page.fill('#breed-search', 'swap');
+  await page.press('#breed-search', 'ArrowDown');
+  assert((await title()) === 'Swap › Magnitudes from A' && (await focusedId()) === 'magsA', 'ArrowDown moves into the results');
+  await page.keyboard.press('ArrowDown');
+  assert((await title()) === 'Swap › Phases from A', 'ArrowDown steps');
+  assert(await page.isDisabled('#breed-down'), '▼ disabled at the end of the results');
+  await page.click('#breed-up');
+  assert((await title()) === 'Swap › Magnitudes from A', '▲ steps back');
+  await page.press('#breed-search', 'Escape');
+  await pick('splice');
+  assert((await page.isDisabled('#breed-down')) && (await title()) === 'Time › Splice', '▼ disabled on the last operator');
+  await page.click('#breed-up');
+  await page.click('#breed-up');
+  assert((await title()) === 'Crossover › Genetic per harmonic', '▲ steps through the full list');
+  await pick('mix');
 
   // Timeline: Shift-click toggles parents without changing the selection.
   const sel0 = await M(() => window.mkwavez.model.selectedId);
   await page.click('#timeline-grid', { position: await cellPos(page, 1), modifiers: ['Shift'] });
   await page.click('#timeline-grid', { position: await cellPos(page, 2), modifiers: ['Shift'] });
   const [t1, t2, t3] = await ids(1, 4);
-  assert(await same([t1, t2]), 'Shift-click adds timeline tables as parents A, B');
+  assert(await same([t1, t2]), 'Shift-click adds timeline waveforms as parents A, B');
   assert((await M(() => window.mkwavez.model.selectedId)) === sel0, 'Shift-click leaves the selection alone');
-  assert((await page.$$('#breed-parents .parent-card')).length === 2, 'two parent cards');
-  await waitInk(page, '#breed-parents .parent-card canvas');
-  assert(true, 'parent thumbnails render');
+  assert((await chipCount()) === 2, 'two parent chips');
+  await waitInk(page, '#breed-parents .br-chip canvas');
+  const chipNo = (await page.textContent('#breed-parents .br-chip:nth-child(1) .br-chip-no')).trim();
+  assert(chipNo === '#2', `chips show thumbnail and waveform number (${chipNo})`);
+  assert(!(await page.isDisabled('#breed-add-shown')) && !(await page.isDisabled('#breed-add-batch')), 'two parents: Add enabled');
 
   // Touch long-press toggles a parent and swallows the click.
   const p3 = await cellPos(page, 3);
@@ -1619,17 +1944,47 @@ async function breedChecks(page, tlCount) {
   }, p3);
   assert(await same([t1, t2, t3]), 'long-press adds parent C');
   assert((await M(() => window.mkwavez.model.selectedId)) === sel0, 'long-press does not select');
+  assert((await page.$$eval('.br-legend .br-key', (k) => k.map((x) => x.textContent))).join() === 'A,B,C', 'view legend names the parents');
 
-  // Remove, reorder, Add selected.
+  // Remove, reorder (keyboard, drag), Delete, Add selected.
   await page.click('button[aria-label="Remove parent C"]');
   assert(await same([t1, t2]), '× removes a parent');
-  await page.click('button[aria-label="Move A later"]');
-  assert(await same([t2, t1]), '› reorders parents');
-  await page.click('button[aria-label="Move B earlier"]');
+  await page.focus('#breed-parents .br-chip:nth-child(1)');
+  await page.keyboard.press('ArrowRight');
+  assert(await same([t2, t1]), '→ on a chip moves it later');
+  assert((await focusedId()) === String(t1), 'focus stays on the moved chip');
+  await page.keyboard.press('ArrowLeft');
+  assert(await same([t1, t2]), '← moves it back');
+  await page.keyboard.press('Alt+ArrowRight');
+  await page.keyboard.press('Control+ArrowRight');
+  assert(await same([t1, t2]), 'modified arrows (Alt+← = browser Back) do not reorder');
+  const box = async (n) => page.locator(`#breed-parents .br-chip:nth-child(${n})`).boundingBox();
+  const a = await box(1);
+  const b = await box(2);
+  await page.mouse.move(a.x + 10, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(a.x + 30, a.y + a.height / 2, { steps: 3 });
+  await page.mouse.move(b.x + b.width - 6, b.y + b.height / 2, { steps: 6 });
+  await page.mouse.up();
+  assert(await same([t2, t1]), 'dragging chip A past B reorders');
+  // Vertical drift off a single row doesn't snap the chip to the first / last slot.
+  const c1 = await box(1);
+  await page.mouse.move(c1.x + 10, c1.y + c1.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(c1.x + 20, c1.y + c1.height + 14, { steps: 4 });
+  await page.mouse.move(c1.x + 24, c1.y + c1.height + 20, { steps: 4 });
+  await page.mouse.up();
+  assert(await same([t2, t1]), 'a short drag with vertical drift keeps the order');
+  await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2, t3]);
+  await page.focus('#breed-parents .br-chip:nth-child(3)');
+  await page.keyboard.press('Delete');
+  assert(await same([t1, t2]), 'Delete on a chip removes it');
   await page.click('#timeline-grid', { position: await cellPos(page, 3) });
   await page.click('#breed-add-selected');
-  assert(await same([t1, t2, t3]), 'Add selected appends the selection');
+  assert(await same([t1, t2, t3]), 'Add selected appends the Timeline selection');
   assert(await page.isDisabled('#breed-add-selected'), 'Add selected disabled when already a parent');
+  await page.click('#breed-clear');
+  assert((await parents()).length === 0 && (await chipCount()) === 0, 'Clear removes every parent');
 
   // Use a voice's window.
   const win = await M(() => {
@@ -1640,39 +1995,68 @@ async function breedChecks(page, tlCount) {
   });
   await page.selectOption('#breed-window-voice', { index: 0 });
   await page.click('#breed-use-window');
-  assert(await same(win), `Use window takes the voice window (${win.length} parents)`);
+  assert(await same(win), `Use window of V1 takes the voice window (${win.length} parents)`);
 
-  // Back to tri + saw for the operator pass; preview renders and follows Bias.
+  // Back to two parents; preview, thumbnails and the weights readout follow Bias.
   await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2]);
-  await waitInk(page, '#breed-pv-wave');
-  const before = await canvasInk(page, '#breed-pv-wave');
+  await waitInk(page, '#breed-wave');
+  await waitInk(page, '#breed-list .gen-entry[data-id="spectral"] canvas');
+  assert(true, 'result view and library thumbnails render');
+  await page.waitForTimeout(300);
+  const w0 = await checksum('#breed-wave');
+  const th0 = await checksum('#breed-list .gen-entry[data-id="spectral"] canvas');
   await page.fill('#breed-bias', '0.3');
-  await page.waitForFunction(
-    (b) => {
-      const c = document.querySelector('#breed-pv-wave');
-      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-      let sum = 0;
-      for (let i = 0; i < d.length; i += 4) sum = (sum * 31 + d[i] + d[i + 1] * 7 + d[i + 3] * 13) % 1000000007;
-      return sum !== b;
-    },
-    before.sum,
-    { timeout: 5000 },
-  );
-  assert(true, 'preview renders and updates with Bias');
-  assert((await page.textContent('#breed-weights')).includes('A 70'), 'weights readout shows A 70 · B 30');
-  const s0 = await seedOf();
-  await page.click('#breed-reroll');
-  assert((await seedOf()) !== s0, 'Reroll draws a new seed');
+  await waitChange('#breed-wave', w0);
+  await waitChange('#breed-list .gen-entry[data-id="spectral"] canvas', th0);
+  assert((await page.textContent('#breed-bias-val')).trim() === '30%', 'Bias updates the preview and the thumbnails');
+  assert((await page.textContent('#breed-weights')).trim() === 'A 70 · B 30', `weights readout (${(await page.textContent('#breed-weights')).trim()})`);
 
-  // Every operator: Breed adds one selected child with a full recipe.
-  const opIds = await page.$$eval('#breed-op option', (os) => os.map((o) => o.value));
-  assert(opIds.length >= 7, `${opIds.length} operators`);
-  for (const op of opIds) {
-    await page.selectOption('#breed-op', op);
-    await page.waitForTimeout(80);
-    const seed = await seedOf();
+  // Walks.
+  for (const w of ['ring', 'weights', 'path']) {
+    await page.click(`#breed-walk-${w}`);
+    assert((await page.getAttribute(`#breed-walk-${w}`, 'aria-pressed')) === 'true' && (await page.getAttribute(`#breed-walk-${w}`, 'title')).length > 20, `walk ${w} pressed, tooltip`);
+    assert((await page.isVisible('#breed-parents .br-chip-weight')) === (w === 'weights'), `custom weights sliders ${w === 'weights' ? 'shown' : 'hidden'}`);
+  }
+
+  // Seed: shown for a seeded operator or a mutation rate > 0; Reroll changes the preview.
+  await page.fill('#breed-rate', '0');
+  assert(!(await page.isVisible('#breed-seedbox')), 'unseeded operator at 0% mutation: no seed');
+  await pick('genetic');
+  assert(await page.isVisible('#breed-seedbox'), 'seeded operator: seed / Reroll');
+  await page.fill('#breed-rate', '0.05');
+  await page.waitForTimeout(300);
+  const s0 = await seedHex();
+  const gw = await checksum('#breed-wave');
+  const gt = await checksum('#breed-list .gen-entry[data-id="genetic"] canvas');
+  await page.click('#breed-reroll');
+  assert(/^[0-9a-f]{8}$/.test(await seedHex()) && (await seedHex()) !== s0, 'Reroll draws a new seed');
+  await waitChange('#breed-wave', gw);
+  await waitChange('#breed-list .gen-entry[data-id="genetic"] canvas', gt);
+  assert(true, 'Reroll updates the preview and the seeded thumbnail');
+
+  // Strip: N cards, the last (bias B) shown by default; ←/→ and click move it.
+  assert((await page.$$('#breed-strip .gen-card')).length === 8, 'strip shows N = 8 cards');
+  assert((await shownTxt()) === '#8 of 8 · bias 30%', `last card shown by default (${await shownTxt()})`);
+  assert((await page.textContent('#breed-strip .gen-card:nth-child(1)')).trim().startsWith('b 3.'), 'sweep cards labelled by bias');
+  await page.focus('#breed-strip .gen-card[aria-pressed="true"]');
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowLeft');
+  assert((await shownTxt()) === '#6 of 8 · bias 22%', `ArrowLeft moves the shown card (${await shownTxt()})`);
+  await page.waitForTimeout(150);
+  const w6 = await checksum('#breed-wave');
+  await page.keyboard.press('ArrowRight');
+  assert((await shownTxt()).startsWith('#7 of 8'), 'ArrowRight moves back');
+  await waitChange('#breed-wave', w6);
+  assert(true, 'large view follows the shown card');
+  await page.click('#breed-strip .gen-card:nth-child(6)');
+  assert((await shownTxt()).startsWith('#6 of 8'), 'clicking a card shows it');
+
+  // Every operator: Add shown adds that child (sweep #6 of 8) with its recipe and selects it.
+  for (const op of all) {
+    await pick(op);
+    const seed = parseInt(await seedHex(), 16);
     const n = await tlCount();
-    await page.click('#breed-apply1');
+    await page.click('#breed-add-shown');
     const r = await M(() => {
       const m = window.mkwavez.model;
       const t = m.timeline.at(-1);
@@ -1682,78 +2066,194 @@ async function breedChecks(page, tlCount) {
       (await tlCount()) === n + 1 &&
         r.op === 'breed' &&
         r.params.breed === op &&
-        r.params.bias === 0.3 &&
+        r.params.mode === 'sweep' &&
+        Math.abs(r.params.bias - (0.3 * 6) / 8) < 1e-12 &&
+        r.params.batchBias === 0.3 &&
+        r.batch.index === 5 &&
+        r.batch.count === 8 &&
         r.seed === seed &&
         JSON.stringify(r.parents) === JSON.stringify([t1, t2]) &&
         r.sel === r.id &&
         Math.abs(r.peak - 1) < 1e-4,
-      `Breed (${op}) adds one child with its recipe`,
+      `Add shown (${op}) adds child #6 with its recipe and selects it`,
     );
-    assert((await seedOf()) !== seed, `${op}: new seed after Breed`);
+    assert((await seedHex()) !== hex8(seed), `${op}: new seed after Add`);
   }
+  assert((await page.textContent('#breed-status')).includes('selected'), 'status confirms the add');
 
-  // Breed N: sweep, then a generation.
-  await page.selectOption('#breed-op', 'spectral');
-  await page.selectOption('#breed-mode', 'sweep');
+  // Sweep: Add +8 adds exactly the previewed batch; Add shown afterwards = that card.
+  await pick('spectral');
+  await page.click('#breed-mode-sweep');
+  await page.waitForTimeout(300);
   let n = await tlCount();
-  let seed = await seedOf();
-  await page.click('#breed-applyN');
+  let seed = parseInt(await seedHex(), 16);
+  await page.click('#breed-add-batch');
   let r = await M(() => {
     const m = window.mkwavez.model;
     const b = m.timeline.slice(-8);
     const v = m.voices[0];
-    return { biases: b.map((t) => t.recipe.params.bias), seeds: [...new Set(b.map((t) => t.recipe.seed))], plays: m.windowTables(v).map((t) => t.id).join() === b.map((t) => t.id).join() };
+    return {
+      biases: b.map((t) => t.recipe.params.bias),
+      seeds: [...new Set(b.map((t) => t.recipe.seed))],
+      idx: b.map((t) => t.recipe.batch.index).join(),
+      plays: m.windowTables(v).map((t) => t.id).join() === b.map((t) => t.id).join(),
+      sel: m.selectedId === b[7].id,
+    };
   });
-  assert((await tlCount()) === n + 8, 'Breed N (sweep) adds 8');
+  assert((await tlCount()) === n + 8, 'Add +8 (sweep) adds 8');
   assert(
-    r.biases.every((b, i) => Math.abs(b - (0.3 * (i + 1)) / 8) < 1e-12) && r.seeds.length === 1 && r.seeds[0] === seed,
-    'sweep biases 0.3·i/8, one seed',
+    r.biases.every((b, i) => Math.abs(b - (0.3 * (i + 1)) / 8) < 1e-12) && r.seeds.length === 1 && r.seeds[0] === seed && r.idx === '0,1,2,3,4,5,6,7',
+    'sweep biases 0.3·i/8, one seed, indices 0…7',
   );
   assert(r.plays, 'sweep is the Last batch V1 plays');
-
-  await page.selectOption('#breed-op', 'genetic');
-  await page.selectOption('#breed-mode', 'gen');
-  n = await tlCount();
-  await page.click('#breed-applyN');
-  r = await M(() => {
-    const b = window.mkwavez.model.timeline.slice(-8);
-    const distinct = new Set(b.map((t) => Array.from(t.data.slice(0, 64), (v) => v.toFixed(5)).join())).size;
-    return { biases: [...new Set(b.map((t) => t.recipe.params.bias))], modes: [...new Set(b.map((t) => t.recipe.params.mode))], distinct };
-  });
-  assert((await tlCount()) === n + 8 && r.biases.length === 1 && r.modes[0] === 'gen', 'Breed N (generation) adds 8 at one bias');
-  assert(r.distinct > 1, `generation children differ (${r.distinct} distinct)`);
+  assert(r.sel, 'Add +8 selects the last waveform added');
   await page.click('#undo');
-  assert((await tlCount()) === n, 'undo removes the generation');
+  assert((await tlCount()) === n, 'undo of Add +8');
 
-  // Generation of a deterministic operator without mutation is disabled.
-  await page.selectOption('#breed-op', 'mix');
+  // Unseeded at 0% mutation (no new seed after Add): Add shown = that card of Add +8.
+  await pick('mix');
   await page.fill('#breed-rate', '0');
-  assert(await page.isDisabled('#breed-applyN'), 'generation of Crossfade at 0% mutation is disabled');
+  assert(!(await page.isVisible('#breed-seedbox')), 'Crossfade at 0% mutation needs no seed');
+  await page.click('#breed-strip .gen-card:nth-child(6)');
+  await page.waitForTimeout(200);
+  const selBefore = await M(() => window.mkwavez.model.selectedId);
+  n = await tlCount();
+  await page.click('#breed-add-batch');
+  const b6 = await M(() => Array.from(window.mkwavez.model.timeline.at(-3).data));
+  await page.click('#undo');
+  assert((await tlCount()) === n && (await M(() => window.mkwavez.model.selectedId)) === selBefore, 'undo of Add +8 restores the selection');
+  await page.click('#breed-add-shown');
+  r = await M((b6) => {
+    const m = window.mkwavez.model;
+    const t = m.timeline.at(-1);
+    return { sel: m.selectedId === t.id, same: t.data.length === b6.length && t.data.every((v, i) => v === b6[i]), idx: t.recipe.batch.index };
+  }, b6);
+  assert(r.same && r.idx === 5 && r.sel, 'Add shown = card #6 of Add +8 (same data), selected');
+  await page.click('#undo');
+  assert((await M(() => window.mkwavez.model.selectedId)) === selBefore, 'undo of Add shown restores the selection');
   await page.fill('#breed-rate', '0.05');
-  assert(!(await page.isDisabled('#breed-applyN')), 're-enabled with mutation');
-  // A generation at a pure parent (path stop on B of three) would be copies even for a seeded operator.
-  await page.selectOption('#breed-op', 'genetic');
+
+  // Generation: N children at one bias, child labels, distinct; selects the last; undo.
+  await pick('genetic');
+  await page.click('#breed-mode-gen');
+  assert((await page.getAttribute('#breed-mode-gen', 'aria-pressed')) === 'true', 'Generation pressed');
+  assert((await page.textContent('#breed-strip .gen-card:nth-child(1)')).trim() === 'child 1', 'generation cards labelled by child #');
+  assert((await shownTxt()) === 'child 6 of 8 · bias 30%', `generation header (${await shownTxt()})`);
+  await page.waitForTimeout(300);
+  n = await tlCount();
+  const selGen = await M(() => window.mkwavez.model.selectedId);
+  await page.click('#breed-add-batch');
+  r = await M(() => {
+    const m = window.mkwavez.model;
+    const b = m.timeline.slice(-8);
+    const distinct = new Set(b.map((t) => Array.from(t.data.slice(0, 64), (v) => v.toFixed(5)).join())).size;
+    return {
+      biases: [...new Set(b.map((t) => t.recipe.params.bias))],
+      modes: [...new Set(b.map((t) => t.recipe.params.mode))],
+      distinct,
+      sel: m.selectedId === b[7].id,
+    };
+  });
+  assert((await tlCount()) === n + 8 && r.biases.length === 1 && r.biases[0] === 0.3 && r.modes[0] === 'gen', 'Add +8 (generation) adds 8 at one bias');
+  assert(r.distinct > 1, `generation children differ (${r.distinct} distinct)`);
+  assert(r.sel, 'generation: Add +8 selects the last waveform added');
+  await page.click('#undo');
+  assert((await tlCount()) === n && (await M(() => window.mkwavez.model.selectedId)) === selGen, 'undo removes the generation and restores the selection');
+  await page.click('#breed-strip .gen-card:nth-child(3)');
+  n = await tlCount();
+  await page.click('#breed-add-shown');
+  const rec3 = await M(() => window.mkwavez.model.timeline.at(-1).recipe);
+  assert(rec3.params.mode === 'gen' && rec3.batch.index === 2 && rec3.batch.count === 8, 'Add shown (generation) adds child 3 of 8');
+  await page.click('#undo');
+  assert((await tlCount()) === n, 'undo of Add shown');
+
+  // Guards: Add +N refuses batches of copies.
+  await pick('mix');
+  await page.fill('#breed-rate', '0');
+  assert(await page.isDisabled('#breed-add-batch'), 'generation of Crossfade at 0% mutation is disabled');
+  assert((await page.textContent('#breed-blocked')).includes('Identical'), `the reason is shown (${(await page.textContent('#breed-blocked')).trim()})`);
+  assert(!(await page.isDisabled('#breed-add-shown')), 'Add shown still adds one child');
+  await page.fill('#breed-rate', '0.05');
+  assert(!(await page.isDisabled('#breed-add-batch')) && !(await page.textContent('#breed-blocked')).trim(), 're-enabled with mutation');
+  await pick('genetic');
   await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2, t3]);
   await page.fill('#breed-bias', '0.5');
-  assert(await page.isDisabled('#breed-applyN'), 'generation at a pure parent is disabled');
+  assert(await page.isDisabled('#breed-add-batch'), 'generation at a pure parent (path stop on B of three) is disabled');
   await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2]);
-  assert(!(await page.isDisabled('#breed-applyN')), 'generation between two parents enabled');
-  await page.selectOption('#breed-mode', 'sweep');
+  assert(!(await page.isDisabled('#breed-add-batch')), 'generation between two parents enabled');
+  await page.click('#breed-mode-sweep');
   await page.fill('#breed-bias', '0');
-  assert(await page.isDisabled('#breed-applyN'), 'sweep at bias 0 is disabled');
+  assert(await page.isDisabled('#breed-add-batch'), 'sweep at bias 0 is disabled');
   await page.fill('#breed-bias', '0.3');
-  assert(!(await page.isDisabled('#breed-applyN')), 'sweep re-enabled above bias 0');
+  assert(!(await page.isDisabled('#breed-add-batch')), 'sweep re-enabled above bias 0');
+  await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1]);
+  assert((await page.isDisabled('#breed-add-shown')) && (await page.isDisabled('#breed-add-batch')), 'one parent: both Adds disabled');
+  await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2]);
 
-  // Custom weights.
-  await page.selectOption('#breed-walk', 'weights');
-  assert(await page.isVisible('#breed-parents .pc-weight'), 'custom weights show per-parent sliders');
-  await page.fill('#breed-parents .parent-card:nth-child(2) .pc-weight', '0.5');
-  await page.click('#breed-apply1');
+  // Custom weights on the chips.
+  await page.click('#breed-walk-weights');
+  await page.fill('#breed-parents .br-chip:nth-child(2) .br-chip-weight', '0.5');
+  await page.click('#breed-strip .gen-card:nth-child(8)');
+  assert((await page.textContent('#breed-weights')).trim() === 'A 90 · B 10', `custom weights readout (${(await page.textContent('#breed-weights')).trim()})`);
+  await page.click('#breed-add-shown');
   r = await M(() => window.mkwavez.model.timeline.at(-1).recipe.params);
   assert(r.walk === 'weights' && r.weights === '1,0.5', `custom weights recorded (${r.weights})`);
-  await page.selectOption('#breed-walk', 'path');
+
+  // N stepper.
+  await page.click('#breed-n-dec');
+  assert((await page.$$('#breed-strip .gen-card')).length === 7 && (await page.textContent('#breed-add-batch')).trim() === 'Add +7', 'N stepper: 7 cards, Add +7');
+  await page.click('#breed-n-inc');
+  assert((await page.inputValue('#breed-n')) === '8', 'N back to 8');
+
+  // Fits at both laptop / tablet sizes, also with custom weights on three chips.
+  await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2, t3]);
+  for (const [w, hh] of [
+    [1440, 900],
+    [1180, 820],
+  ]) {
+    await page.setViewportSize({ width: w, height: hh });
+    await page.waitForTimeout(250);
+    assert((await genFits()) && (await fitsScreen(page)), `${w}×${hh}: Breed fits the Generate panel (custom weights), no page scroll`);
+    const wave = await page.$eval('#breed-wave', (c) => c.parentElement.getBoundingClientRect().height);
+    assert(wave >= 100, `${w}×${hh}: the result view keeps ${Math.round(wave)} px (≥ 100)`);
+    const off = await M(() => {
+      const w = document.querySelector('#breed-wave').parentElement.getBoundingClientRect();
+      const t = document.querySelector('.br-tagrow').getBoundingClientRect();
+      return t.top >= w.bottom - 0.5;
+    });
+    assert(off, `${w}×${hh}: operator / shown label and legend sit below the waveform`);
+  }
+  if (SHOTS) {
+    for (const theme of ['dark', 'light']) {
+      await page.evaluate((t) => window.mkwavez.setTheme(t, false), theme);
+      for (const [w, hh] of [
+        [1440, 900],
+        [1180, 820],
+        [390, 844],
+      ]) {
+        await page.setViewportSize({ width: w, height: hh });
+        await page.waitForTimeout(300);
+        if (w < 900) await page.$eval('#sec-generate', (s) => s.scrollIntoView());
+        await page.screenshot({ path: `${SHOTS}/${label}-breed-${w}x${hh}-${theme}.png` });
+      }
+    }
+    await page.evaluate(() => window.mkwavez.setTheme('dark', false));
+  }
+  await page.click('#breed-walk-path');
+
+  // Phone: compact library row, chips wrap, no overflow.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(250);
+  assert((await page.isVisible('#breed-current')) && !(await page.isVisible('#breed-list')), 'phone: library collapses to one row');
+  await page.click('#breed-current');
+  await page.click('#breed-list .gen-entry[data-id="split"]');
+  assert((await title()) === 'Crossover › Harmonic split' && !(await page.isVisible('#breed-list')), 'phone: picking closes the list');
+  assert(!(await M(() => document.documentElement.scrollWidth > window.innerWidth)), 'Breed: no horizontal overflow at 390px');
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.click('#tab-seed');
 }
+
+const hex8 = (s) => (s >>> 0).toString(16).padStart(8, '0');
 
 /**
  * Fake Web MIDI (init script): navigator.requestMIDIAccess resolves to a mock MIDIAccess
@@ -1976,6 +2476,7 @@ async function midiChecks(label, url, browser) {
     Object.defineProperty(navigator, 'requestMIDIAccess', { configurable: true, value: undefined });
   });
   await p2.goto(url, { waitUntil: 'load' });
+  await p2.waitForSelector('#midi-status', { state: 'attached' }); // the UI is built once the session is restored
   await p2.waitForFunction(() => document.querySelector('#midi-status').textContent !== '', null, { timeout: 3000 });
   assert(
     (await p2.textContent('#midi-status')) === 'No Web MIDI' &&
@@ -2010,6 +2511,309 @@ async function midiChecks(label, url, browser) {
   assert(errors.length === 0, `no console errors (MIDI)${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 }
 
+/**
+ * Autosave / restore: changes survive a reload (timeline count, selection, voices incl. a
+ * 2D one, wavetables, sequences, BPM, voice tab, Generate tab); playback works after a
+ * restore; Export → New session (clears the autosave) → Import round-trips; a bad file is
+ * refused with a notice; an unreadable save falls back to a fresh session (kept for
+ * debugging); without IndexedDB the app runs with autosave off and a notice.
+ */
+async function sessionChecks(label, url, browser) {
+  console.log(`\n[${label}] session autosave / restore`);
+  const errors = [];
+  const watch = (page) => {
+    page.on('console', (m) => {
+      if (m.type() === 'error') errors.push(m.text());
+    });
+    page.on('pageerror', (e) => errors.push(String(e)));
+  };
+  const ctx = await browser.newContext({ viewport: { width: 1180, height: 820 }, acceptDownloads: true });
+  const page = await ctx.newPage();
+  watch(page);
+  const E = (fn, arg) => page.evaluate(fn, arg);
+  const load = async (reload = true) => {
+    if (reload) await page.reload({ waitUntil: 'load' });
+    else await page.goto(url, { waitUntil: 'load' });
+    await page.waitForSelector('#sec-generate');
+  };
+  const saved = () =>
+    page.waitForFunction(() => window.mkwavez.saver.status === 'saved' && window.mkwavez.saver.lastSaved, null, { timeout: 10000 }).catch(async (e) => {
+      const st = await E(() => ({ status: window.mkwavez.saver.status, error: window.mkwavez.saver.lastError, vis: document.visibilityState }));
+      throw new Error(`autosave didn't finish: ${JSON.stringify(st)} (${e.message})`);
+    });
+  const snap = () =>
+    E(() => {
+      const { model: m, ui } = window.mkwavez;
+      return JSON.stringify({
+        ids: m.timeline.map((t) => t.id),
+        recipes: m.timeline.map((t) => t.recipe),
+        data: m.timeline.map((t) => Array.from(t.data.subarray(0, 64))),
+        selectedId: m.selectedId,
+        bpm: m.bpm,
+        voices: m.voices,
+        wavetables: m.wavetables,
+        nextWavetableId: m.nextWavetableId,
+        sequences: m.sequences,
+        voiceTab: ui.voiceId,
+      });
+    });
+  await load(false);
+  assert((await E(() => window.mkwavez.model.timeline.length)) === 5 && (await page.isVisible('#session-menu')), 'fresh session: 5 waveforms, Session menu in the transport bar');
+  await saved();
+  assert(true, 'fresh session autosaved');
+
+  // Make changes through the UI and the model.
+  await page.click('#seed-add-shown');
+  await page.click('#seed-add-batch');
+  await E(() => {
+    const { model: m, ui } = window.mkwavez;
+    m.copyToEnd(m.timeline[2].id);
+    m.setTransport({ bpm: 111 });
+    m.updateVoice(2, { mute: false, position: 0.42, lfoDepth: 0.1 });
+    m.addVoice({ wavetableId: 3, windowStart: 1, windowEnd: 4, windowStartY: 0, windowEndY: 1, positionY: 0.8 });
+    m.setWavetableInterp(3, 'step');
+    m.updateSequence(1, { gate: 0.7, length: 12, stepLength: '1/16' });
+    m.select(m.timeline[3].id);
+    ui.setVoice(2);
+  });
+  // User wavetables (editor): a 2D one created and resized in the UI, renamed, slots edited,
+  // Live with a moved write head; another created and deleted (its id is never reused).
+  await page.click('#wt-edit');
+  await page.click('#wte-new-2d');
+  const g2 = await E(() => window.mkwavez.model.wavetables.at(-1).id);
+  await page.fill('#wte-w', '3');
+  await page.press('#wte-w', 'Tab');
+  await page.fill('#wte-h', '2');
+  await page.press('#wte-h', 'Tab');
+  await page.click('#wte-rename');
+  await page.fill('#wte-name-input', 'Saved pad');
+  await page.press('#wte-name-input', 'Enter');
+  await E((id) => {
+    const m = window.mkwavez.model;
+    m.placeInWavetable(id, { kind: 'slot', x: 0, y: 0 }, m.timeline[1].id);
+    m.placeInWavetable(id, { kind: 'slot', x: 2, y: 1 }, m.timeline[4].id);
+    m.setWavetableLive(id, true);
+    m.setWavetableWrite(id, { dir: '+y', edge: 'stop' });
+    m.setWavetableHead(id, 1, 0);
+    m.addVoice({ wavetableId: id, windowStart: 0, windowEnd: 2, windowStartY: 0, windowEndY: 1, positionY: 0.6 });
+    const gone = m.createWavetable('rows');
+    m.deleteWavetable(gone.id);
+  }, g2);
+  const wt2 = await E((id) => window.mkwavez.model.wavetable(id), g2);
+  assert(wt2.name === 'Saved pad' && wt2.shape === '2d' && wt2.rows.length === 2 && wt2.rows[0].length === 3 && wt2.live, 'user 2D wavetable created, resized, renamed, edited');
+  const nextWt = await E(() => window.mkwavez.model.nextWavetableId);
+  await page.click('#wt-collapse');
+  // Breed: parents (model) and operator / parameters (UI prefs).
+  const bp = await E(() => {
+    const m = window.mkwavez.model;
+    m.setBreedParents([m.timeline[1].id, m.timeline[3].id]);
+    return [...m.breedParents];
+  });
+  await page.click('#tab-breed');
+  await page.click('#breed-list .gen-entry[data-id="bands"]');
+  await page.fill('#breed-bias', '0.4');
+  await page.click('#breed-walk-ring');
+  await page.click('#breed-mode-gen');
+  await page.click('#tab-mutate');
+  const before = await snap();
+  const n = await E(() => window.mkwavez.model.timeline.length);
+  await saved();
+  const t0 = Date.now();
+  await load();
+  assert((await snap()) === before, `reload restores the session (${n} waveforms, selection, voices, wavetables, sequences, BPM; ${Date.now() - t0} ms)`);
+  assert(
+    (await page.getAttribute('#tab-mutate', 'aria-selected')) === 'true' && (await page.getAttribute('#voice-tab-2', 'aria-selected')) === 'true',
+    'reload restores the Generate tab and the voice tab',
+  );
+  await page.click('#tab-breed');
+  assert(
+    JSON.stringify(await E(() => window.mkwavez.model.breedParents)) === JSON.stringify(bp) &&
+      (await page.$$('#breed-parents .br-chip')).length === 2 &&
+      (await page.textContent('#breed-title')) === 'Crossover › Genetic per band' &&
+      (await page.textContent('#breed-bias-val')) === '40%' &&
+      (await page.getAttribute('#breed-walk-ring', 'aria-pressed')) === 'true' &&
+      (await page.getAttribute('#breed-mode-gen', 'aria-pressed')) === 'true',
+    'reload restores the Breed parents, operator, bias, walk and batch mode',
+  );
+  await page.click('#tab-mutate');
+  assert((await page.inputValue('#bpm')) === '111' && (await E(() => window.mkwavez.model.undoDepth)) === 0, 'BPM control shows the restored tempo; undo history starts empty');
+  await page.click('#voice-tab-1');
+  assert(
+    (await E(() => window.mkwavez.model.sequences.find((s) => s.id === 1).stepLength)) === '1/16' &&
+      (await page.inputValue('#seq-step-length')) === '1/16' &&
+      (await page.textContent('#seq-summary')) === '12 steps · 1/16 · 0.75 bars',
+    'reload keeps the step length (selector and “12 steps · 1/16 · 0.75 bars”)',
+  );
+  await page.click('#voice-tab-2');
+  assert((await E(() => window.mkwavez.model.nextWavetableId)) === nextWt, 'wavetable id counter restored (deleted ids not reused)');
+  await page.click('#wt-edit');
+  await page.click(`#wte-item-${g2}`);
+  assert((await page.textContent('#wte-name')) === 'Saved pad' && (await page.getAttribute('#wte-canvas', 'data-shape')) === '2d', 'restored user wavetable opens in the editor');
+  await page.click('#wt-collapse');
+
+  // Playback after restore.
+  await page.click('#play');
+  await page.waitForFunction(() => document.body.dataset.audio === 'running', null, { timeout: 10000 });
+  await page.waitForFunction(() => window.mkwavez.bridge.workletTableCount === window.mkwavez.model.timeline.length && Number(document.body.dataset.tick) >= 12, null, { timeout: 10000 });
+  assert(true, 'restored session plays (worklet holds every waveform, sequencer runs)');
+
+  // Export.
+  await page.click('#session-menu');
+  assert(await page.isVisible('#session-pop'), 'Session menu opens');
+  assert((await page.textContent('#session-status')).includes('Autosave on'), 'menu shows autosave status');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#session-export')]);
+  const file = await dl.path();
+  assert(dl.suggestedFilename().endsWith('.mkwz') && file, `export downloads ${dl.suggestedFilename()}`);
+
+  // New session (confirm), while playing: clears the autosave too.
+  page.once('dialog', (d) => d.accept());
+  await page.click('#session-menu').catch(() => {});
+  if (!(await page.isVisible('#session-new'))) await page.click('#session-menu');
+  await page.click('#session-new');
+  await page.waitForFunction(() => window.mkwavez.model.timeline.length === 5 && window.mkwavez.model.bpm === 132, null, { timeout: 5000 });
+  await page.waitForFunction(() => window.mkwavez.bridge.workletTableCount === 5, null, { timeout: 5000 });
+  assert(true, 'New session: back to the default (worklet follows)');
+  await page.click('#play');
+  await saved();
+  await load();
+  assert((await E(() => window.mkwavez.model.timeline.length)) === 5 && (await E(() => window.mkwavez.model.bpm)) === 132, 'New session cleared the autosave (reload stays fresh)');
+
+  // Import (confirm) round-trips the exported session.
+  page.once('dialog', (d) => d.accept());
+  await page.setInputFiles('#session-file', file);
+  await page.waitForFunction((k) => window.mkwavez.model.timeline.length === k, n, { timeout: 10000 });
+  assert((await snap()) === before, 'import restores the exported session exactly');
+  await saved();
+  await load();
+  assert((await snap()) === before, 'imported session survives a reload');
+
+  // A bad file is refused.
+  await page.setInputFiles('#session-file', { name: 'bad.mkwz', mimeType: 'application/octet-stream', buffer: Buffer.from('not a session at all') });
+  await page.waitForSelector('#session-notice:not([hidden])', { timeout: 3000 });
+  assert((await page.textContent('#session-notice')).includes('Couldn’t import'), 'bad file: notice, session unchanged');
+  assert((await snap()) === before, 'session unchanged after a bad import');
+
+  // Two tabs: the second one restores the save but autosave is paused there; it can take over.
+  const pageB = await ctx.newPage();
+  watch(pageB);
+  await pageB.goto(url, { waitUntil: 'load' });
+  await pageB.waitForSelector('#sec-generate');
+  // It renders at once (autosave paused) and gives up waiting for the lock after ~1.5 s.
+  await pageB.waitForFunction(() => document.querySelector('#session-notice')?.textContent.includes('open in another tab'), null, { timeout: 5000 });
+  assert(
+    (await pageB.evaluate(() => window.mkwavez.saver.status)) === 'paused' &&
+      (await pageB.textContent('#session-notice')).includes('open in another tab') &&
+      (await pageB.evaluate(() => window.mkwavez.model.timeline.length)) === n,
+    'second tab: restores the save, autosave paused, notice',
+  );
+  await pageB.evaluate(() => window.mkwavez.model.setTransport({ bpm: 77 }));
+  await pageB.waitForTimeout(2000);
+  await E(() => window.mkwavez.model.setTransport({ bpm: 112 }));
+  await saved();
+  const storedBpm = () =>
+    E(
+      () =>
+        new Promise((res) => {
+          const r = indexedDB.open('mkwavez');
+          r.onsuccess = () => {
+            const g = r.result.transaction('meta').objectStore('meta').get('session');
+            g.onsuccess = () => {
+              r.result.close();
+              res(g.result?.bpm);
+            };
+          };
+        }),
+    );
+  assert((await storedBpm()) === 112, 'paused tab writes nothing; the owning tab keeps saving');
+  pageB.once('dialog', (d) => d.accept());
+  await pageB.click('#session-notice button:not(.session-notice-close)');
+  await pageB.waitForFunction(() => window.mkwavez.saver.status === 'saved' && window.mkwavez.saver.isActive, null, { timeout: 10000 });
+  await page.waitForFunction(() => window.mkwavez.saver.status === 'paused', null, { timeout: 5000 });
+  assert((await storedBpm()) === 77 && (await page.textContent('#session-notice')).includes('open in another tab'), 'take over: the second tab saves, the first one pauses');
+  await pageB.close();
+  // The first tab takes it back (via the Session menu).
+  page.once('dialog', (d) => d.accept());
+  await page.click('#session-menu');
+  await page.click('#session-takeover');
+  await page.waitForFunction(() => window.mkwavez.saver.status === 'saved' && window.mkwavez.saver.isActive, null, { timeout: 10000 });
+  assert((await storedBpm()) === 112, 'Session menu: take over again');
+  await page.keyboard.press('Escape');
+
+  // An unreadable save: set aside intact (meta + waveforms), fresh session, notice.
+  const storedCount = await E(() => window.mkwavez.model.timeline.length);
+  const maxStored = await E(() => Math.max(...window.mkwavez.model.timeline.map((t) => t.id)));
+  await E(
+    () =>
+      new Promise((res, rej) => {
+        const r = indexedDB.open('mkwavez');
+        r.onsuccess = () => {
+          const tx = r.result.transaction('meta', 'readwrite');
+          tx.objectStore('meta').put({ format: 'mkwavez-session', version: 99, timeline: [] }, 'session');
+          tx.oncomplete = () => {
+            r.result.close();
+            res();
+          };
+          tx.onerror = rej;
+        };
+        r.onerror = rej;
+      }),
+  );
+  await load();
+  assert((await E(() => window.mkwavez.model.timeline.length)) === 5, 'unrestorable save: starts a fresh session');
+  assert((await page.textContent('#session-notice')).includes('newer version'), 'unrestorable save: notice says why');
+  const kept = await E(
+    () =>
+      new Promise((res) => {
+        const r = indexedDB.open('mkwavez');
+        r.onsuccess = () => {
+          const tx = r.result.transaction(['kept', 'keptWaveforms']);
+          const g = tx.objectStore('kept').getAll();
+          const c = tx.objectStore('keptWaveforms').count();
+          tx.oncomplete = () => {
+            r.result.close();
+            const last = g.result.at(-1);
+            res({ version: last?.meta?.version, records: last?.count === c.result ? c.result : -1 });
+          };
+        };
+      }),
+  );
+  assert(kept.version === 99 && kept.records >= storedCount, `unrestorable save kept intact (meta + ${kept.records} waveforms)`);
+  await page.click('#seed-add-shown');
+  assert((await E(() => window.mkwavez.model.selectedId)) > maxStored, 'new waveform ids never collide with the kept session');
+  const [dlKept] = await Promise.all([page.waitForEvent('download'), page.click('#session-notice button:not(.session-notice-close)')]);
+  assert(dlKept.suggestedFilename().includes('unrestored') && (await dlKept.path()), 'kept session can be exported');
+  await page.click('#session-menu');
+  assert(await page.isVisible('#session-kept'), 'Session menu lists the kept session');
+  page.once('dialog', (d) => d.accept());
+  await page.click('#session-kept-discard');
+  await page.waitForFunction(() => document.querySelector('#session-kept').hidden, null, { timeout: 3000 });
+  assert(true, 'kept session discarded');
+  await ctx.close();
+
+  // No IndexedDB (blocked / private mode): runs normally, autosave off, notice.
+  const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p2 = await ctx2.newPage();
+  watch(p2);
+  await p2.addInitScript(() => {
+    Object.defineProperty(window, 'indexedDB', { configurable: true, get: () => undefined });
+  });
+  await p2.goto(url, { waitUntil: 'load' });
+  await p2.waitForSelector('#sec-generate');
+  assert((await p2.evaluate(() => window.mkwavez.model.timeline.length)) === 5, 'no storage: app starts normally');
+  assert((await p2.textContent('#session-notice')).includes('Autosave is off'), 'no storage: non-blocking notice');
+  assert((await p2.getAttribute('#session-menu', 'data-state')) === 'off', 'no storage: Session menu shows autosave off');
+  await p2.click('#seed-add-shown');
+  assert((await p2.evaluate(() => window.mkwavez.model.timeline.length)) === 6, 'no storage: adds still work');
+  const bar = await p2.evaluate(() => {
+    const t = document.querySelector('.transport');
+    return t.scrollWidth <= t.clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth;
+  });
+  assert(bar, '390px: transport bar fits with the Session button');
+  await ctx2.close();
+
+  assert(errors.length === 0, `no console errors (session)${errors.length ? `: ${errors.join(' | ')}` : ''}`);
+}
+
 const browser = await chromium.launch({
   executablePath: CHROME,
   headless: true,
@@ -2022,11 +2826,13 @@ try {
   servers.push(prev);
   await run('preview', prev.resolvedUrls.local[0], browser);
   await midiChecks('preview', prev.resolvedUrls.local[0], browser);
+  await sessionChecks('preview', prev.resolvedUrls.local[0], browser);
   const dev = await createServer({ server: { port: 0 }, logLevel: 'warn' });
   servers.push(dev);
   await dev.listen();
   await run('dev', dev.resolvedUrls.local[0], browser);
   await midiChecks('dev', dev.resolvedUrls.local[0], browser);
+  await sessionChecks('dev', dev.resolvedUrls.local[0], browser);
   console.log('\nsmoke: PASS');
 } catch (e) {
   failed = true;
@@ -2036,3 +2842,235 @@ try {
   for (const s of servers) await (s.close?.() ?? s.httpServer?.close());
 }
 process.exit(failed ? 1 : 0);
+
+/**
+ * Wavetables editor (phase 2): Edit expands it over the Generate row (Generate hidden, the
+ * Timeline stays) and Collapse returns; it fits 1440×900 / 1180×820 and 390px doesn't
+ * overflow; + 1D / 2D / Rows create user wavetables (2D resized to X × Y); a built-in
+ * duplicates into an editable copy; rename; a Live 1D receives Seed adds at its write head
+ * (next-write markers shown); mouse drags from the Timeline replace and insert, a touch
+ * drag (synthetic pointer events) inserts, a slot drag reorders, Delete empties a slot,
+ * undo reverts, built-ins refuse drops; delete (confirmed) moves its voice to the Timeline.
+ */
+async function wavetableEditorChecks(page, tlCount) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const last = () => M(() => window.mkwavez.model.wavetables.at(-1));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
+  const n0 = await M(() => window.mkwavez.model.wavetables.length);
+
+  // Expand / fit.
+  await page.click('#wt-edit');
+  await page.waitForTimeout(150);
+  const fitEditor = () =>
+    M(() => {
+      const b = document.querySelector('#sec-wavetables-body');
+      const s = document.querySelector('#sec-wavetables').getBoundingClientRect();
+      return {
+        editing: document.querySelector('.shell').classList.contains('wt-editing'),
+        gen: getComputedStyle(document.querySelector('#sec-generate')).display,
+        editor: !document.querySelector('#wt-editor').hidden,
+        compact: !document.querySelector('#wavetable-overview').closest('.wt-box').hidden,
+        wide: s.width / innerWidth,
+        fits: b.scrollHeight <= b.clientHeight + 1,
+        timeline: document.querySelector('#sec-timeline').getBoundingClientRect().top > s.bottom,
+      };
+    });
+  for (const [w, hh] of [
+    [1440, 900],
+    [1180, 820],
+  ]) {
+    await page.setViewportSize({ width: w, height: hh });
+    await page.waitForTimeout(250);
+    const f = await fitEditor();
+    assert(
+      f.editing && f.gen === 'none' && f.editor && !f.compact && f.wide > 0.95 && f.fits && f.timeline && (await fitsScreen(page)),
+      `${w}×${hh}: editor over the Generate row, Timeline below, fits one screen (${JSON.stringify(f)})`,
+    );
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/editor-${w}x${hh}.png` });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
+
+  // Create each shape.
+  for (const [btn, shape] of [
+    ['#wte-new-1d', '1d'],
+    ['#wte-new-2d', '2d'],
+    ['#wte-new-rows', 'rows'],
+  ]) {
+    await page.click(btn);
+    await page.waitForTimeout(50);
+    const wt = await last();
+    const r = await M((id) => ({ sel: document.querySelector(`#wte-item-${id}`)?.getAttribute('aria-selected'), shape: document.querySelector('#wte-canvas').dataset.shape }), wt.id);
+    assert(wt.shape === shape && !wt.builtin && !wt.live && r.sel === 'true' && r.shape === shape, `${btn}: new ${shape} wavetable “${wt.name}”, selected`);
+  }
+  assert((await M(() => window.mkwavez.model.wavetables.length)) === n0 + 3, 'three user wavetables');
+  // 2D: X × Y.
+  const g2 = (await M(() => window.mkwavez.model.wavetables.at(-2))).id;
+  await page.click(`#wte-item-${g2}`);
+  await page.fill('#wte-w', '4');
+  await page.press('#wte-w', 'Tab');
+  await page.fill('#wte-h', '3');
+  await page.press('#wte-h', 'Tab');
+  const dims = await M((id) => window.mkwavez.model.wavetable(id).rows.map((r) => r.length).join(), g2);
+  assert(dims === '4,4,4', `2D resized to 4 × 3 (${dims})`);
+
+  // Duplicate a built-in (the primary action there), then rename it.
+  await page.click('#wte-item-3');
+  assert((await page.getAttribute('#wte-duplicate', 'class')).includes('primary') && (await page.isHidden('#wte-delete')), 'built-in: Duplicate is primary, no Delete');
+  await page.click('#wte-duplicate');
+  let d = await last();
+  const grid = await M(() => window.mkwavez.model.wavetable(3));
+  assert(d.name === 'Grid copy' && !d.builtin && d.pins && JSON.stringify(d.rows) === JSON.stringify(grid.rows), 'Duplicate of Grid: editable copy with its slots');
+  await page.click('#wte-rename');
+  await page.fill('#wte-name-input', 'Bells');
+  await page.press('#wte-name-input', 'Enter');
+  d = await last();
+  assert(d.name === 'Bells' && (await page.textContent(`#wte-item-${d.id}`)).includes('Bells') && (await page.textContent('#wte-name')) === 'Bells', 'renamed inline');
+
+  // A Live 1D receives Seed adds at its write head.
+  const a = (await M(() => window.mkwavez.model.wavetables.find((w) => w.name === 'Wavetable 1'))).id;
+  await page.click(`#wte-item-${a}`);
+  await page.click('#wte-live');
+  await page.waitForTimeout(150);
+  const writes = await page.getAttribute('#wte-canvas', 'data-writes');
+  assert((await M((id) => window.mkwavez.model.wavetable(id).live, a)) && writes.startsWith('append'), `Live: next writes marked (${writes})`);
+  await page.click('#wt-collapse');
+  assert(!(await page.isHidden('#sec-generate')) && (await page.isVisible('#wavetable-overview')), 'Collapse: Generate and the compact panel are back');
+  const before = await tlCount();
+  await page.click('#tab-seed');
+  await page.click('#seed-add-batch');
+  const added = await M((n) => window.mkwavez.model.timeline.slice(n).map((t) => t.id), before);
+  const rowsA = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(added.length > 1 && rowsA.join() === added.join(), `Live 1D received the Seed batch (${rowsA.length})`);
+  await page.click('#wt-edit');
+  await page.click(`#wte-item-${a}`);
+  await page.click('#wte-frozen');
+  await page.waitForTimeout(150);
+
+  // Drags from the Timeline (mouse): onto slot 1 = replace, at slot 3's left edge = insert.
+  const geo = () =>
+    M(() => {
+      const s = document.querySelector('#wte-scroll');
+      s.scrollLeft = 0;
+      document.querySelector('#timeline-scroll').scrollLeft = 0;
+      const r = s.getBoundingClientRect();
+      const t = document.querySelector('#timeline-grid').getBoundingClientRect();
+      return { vx: r.left + 1 + 8, vy: r.top + 60, tx: t.left, ty: t.top + t.height / 2 };
+    });
+  const slotX = (g, x, dx = 33) => g.vx + x * 72 + dx;
+  const dragFromTimeline = async (cell, toX, toY) => {
+    const g = await geo();
+    await page.waitForTimeout(50);
+    await page.mouse.move(g.tx + cell * 63 + 31, g.ty);
+    await page.mouse.down();
+    await page.mouse.move(g.tx + cell * 63 + 31, g.ty - 12, { steps: 2 });
+    await page.mouse.move(toX, toY, { steps: 8 });
+    await page.waitForTimeout(80);
+    const label = await page.textContent('#wave-drag-ghost .wdrag-label');
+    await page.mouse.up();
+    await page.waitForTimeout(50);
+    return label;
+  };
+  const tid = (i) => M((i) => window.mkwavez.model.timeline[i].id, i);
+  let g = await geo();
+  let label = await dragFromTimeline(0, slotX(g, 1), g.vy);
+  let row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[1] === (await tid(0)) && row.length === rowsA.length && label.startsWith('replace'), `drag onto a slot replaces it (“${label}”)`);
+  label = await dragFromTimeline(1, slotX(g, 3, 4), g.vy);
+  row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[3] === (await tid(1)) && row.length === rowsA.length + 1 && label.startsWith('insert'), `drag between slots inserts (“${label}”)`);
+  assert(!(await page.$('#wave-drag-ghost')) && (await page.getAttribute('#wte-canvas', 'data-drop')) === '', 'drag ghost and drop indicator cleared');
+
+  // Touch: synthetic pointer events, a vertical move out of the strip.
+  g = await geo();
+  const parents0 = await M(() => window.mkwavez.model.breedParents.length);
+  await M(
+    ({ g, to }) => {
+      const el = document.querySelector('#timeline-grid');
+      const ev = (type, x, y) =>
+        el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, clientX: x, clientY: y }));
+      const x0 = g.tx + 2 * 63 + 31;
+      ev('pointerdown', x0, g.ty);
+      ev('pointermove', x0, g.ty - 6);
+      ev('pointermove', x0, g.ty - 20);
+      ev('pointermove', to.x, to.y);
+      ev('pointerup', to.x, to.y);
+    },
+    { g, to: { x: slotX(g, 0, 4), y: g.vy } },
+  );
+  row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[0] === (await tid(2)) && row.length === rowsA.length + 2, 'touch drag (synthetic pointer events) inserts');
+  await page.waitForTimeout(500);
+  assert((await M(() => window.mkwavez.model.breedParents.length)) === parents0, 'the touch drag did not toggle a Breed parent');
+
+  // Reorder by dragging a slot; Delete empties the selected slot; undo.
+  g = await geo();
+  const first = row[0];
+  await page.mouse.move(slotX(g, 0), g.vy);
+  await page.mouse.down();
+  await page.mouse.move(slotX(g, 0) + 10, g.vy, { steps: 2 });
+  await page.mouse.move(slotX(g, 2, 64), g.vy, { steps: 6 });
+  await page.waitForTimeout(50);
+  await page.mouse.up();
+  await page.waitForTimeout(50);
+  row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[2] === first && row.length === rowsA.length + 2, `dragging a slot moves it (reorder: ${row.slice(0, 4)})`);
+  await page.mouse.click(slotX(g, 1), g.vy);
+  await page.keyboard.press('Delete');
+  row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[1] === null && (await page.textContent('#wte-slot-info')).includes('empty'), 'Delete empties the selected slot');
+  await page.click('#undo');
+  row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row[1] !== null, 'undo restores the slot');
+  // Shift+→ in the focused view moves the slot (not the waveform in the Timeline).
+  const order = () => M(() => window.mkwavez.model.timeline.map((t) => t.id).join());
+  const ord0 = await order();
+  await page.mouse.click(slotX(g, 1), g.vy);
+  await page.keyboard.press('Shift+ArrowRight');
+  const row2 = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row2[2] === row[1] && row2[1] === row[2] && (await order()) === ord0, 'Shift+→ in the editor moves the selected slot; the Timeline is unchanged');
+  // During a drag no shortcut acts; Esc cancels it.
+  g = await geo();
+  await page.mouse.move(g.tx + 31, g.ty);
+  await page.mouse.down();
+  await page.mouse.move(g.tx + 31, g.ty - 12, { steps: 2 });
+  await page.mouse.move(slotX(g, 0), g.vy, { steps: 4 });
+  const playing0 = await M(() => window.mkwavez.model.playing);
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.keyboard.press('Space');
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  const row3 = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(
+    (await order()) === ord0 && (await M(() => window.mkwavez.model.playing)) === playing0 && row3.join() === row2.join() && !(await page.$('#wave-drag-ghost')),
+    'during a drag Shift+→ / Space do nothing; Esc cancels the drop',
+  );
+  // Built-ins refuse drops.
+  await page.click('#wte-item-1');
+  g = await geo();
+  label = await dragFromTimeline(0, g.vx + 30, g.vy);
+  assert(label.includes('read-only'), `built-in: drop refused (“${label}”)`);
+
+  // Delete (confirmed): its voice falls back to the Timeline.
+  await M((id) => window.mkwavez.model.updateVoice(2, { wavetableId: id }), d.id);
+  await page.click(`#wte-item-${d.id}`);
+  page.once('dialog', (dlg) => dlg.accept());
+  await page.click('#wte-delete');
+  const v2 = await M(() => window.mkwavez.model.voice(2).wavetableId);
+  assert(!(await M((id) => !!window.mkwavez.model.wavetable(id), d.id)) && v2 === 0 && !(await page.$(`#wte-item-${d.id}`)), 'Delete: gone, its voice on the Timeline');
+
+  // Phone width.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(250);
+  assert(!(await M(() => document.documentElement.scrollWidth > innerWidth)) && (await page.isVisible('#wte-scroll')), '390px: editor shown, no horizontal overflow');
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/editor-390.png`, fullPage: true });
+  await page.click('#wt-collapse');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
+  // Leave no user wavetables (they would pin waveforms through the later eviction checks).
+  await M(() => {
+    const m = window.mkwavez.model;
+    for (const w of m.wavetables.filter((w) => !w.builtin)) m.deleteWavetable(w.id);
+  });
+}

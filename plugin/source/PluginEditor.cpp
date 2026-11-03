@@ -108,7 +108,9 @@ void MkwavezEditor::selectVoice(int newSlot) {
 
 void MkwavezEditor::timerCallback() {
     const auto& st = proc.liveStatus();
-    stepLabel.setText(st.playing.load() ? "step " + juce::String(st.step.load() + 1) : "stopped", juce::dontSendNotification);
+    const auto tick = st.tick.load();
+    stepLabel.setText(st.playing.load() && tick >= 0 ? juce::String(tick / 48 + 1) + "." + juce::String((tick % 48) / 12 + 1) : "stopped",
+                      juce::dontSendNotification);
     view.repaint();
 }
 

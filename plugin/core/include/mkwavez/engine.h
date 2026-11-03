@@ -38,7 +38,8 @@ struct VoiceStatus {
 
 struct EngineStatus {
     static constexpr int MAX = 16;
-    int64_t step = -1;
+    /** Shared clock: ticks since the transport started (TICKS_PER_BEAT per beat; -1 before the first). */
+    int64_t tick = -1;
     bool playing = false;
     int voiceCount = 0;
     VoiceStatus voices[MAX];
@@ -160,7 +161,7 @@ private:
     void zombie(Retired::Kind kind, const void* ptr);
     void collectZombies();
 
-    void triggerStep(double stepLen);
+    void triggerTick();
     void control(int blockLen);
     void resolvePitch(VoiceRuntime& v);
     void resolve(VoiceRuntime& v);
@@ -184,8 +185,14 @@ private:
 
     bool playing = false;
     double bpm = 132;
-    int64_t step = -1;
+    /** Clock tick; -1 before the first. */
+    int64_t tick = -1;
+    /** Samples until the next eighth note (fractional accumulator). */
     double toNext = 0;
+    /** Length of the eighth in progress (a tempo change takes effect on the next one). */
+    double eighthLen = 0;
+    /** Ticks into the eighth in progress (0..TICKS_PER_EIGHTH-1). */
+    int sub = 0;
     int ctrlCountdown = 0;
 
     std::array<Retired, MAX_ZOMBIES> zombies{};

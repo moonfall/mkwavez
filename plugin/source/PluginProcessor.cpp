@@ -40,7 +40,10 @@ void MkwavezProcessor::timerCallback() { engineHost.housekeeping(); }
 
 void MkwavezProcessor::resetDocument() {
     engineHost.load(Document::makeDefault());
-    setProjectJson({});
+    withSession([](Session& s) {
+        s.meta = {};
+        s.records.clear();
+    });
     ++stateGen;
 }
 
@@ -100,7 +103,7 @@ void MkwavezProcessor::handleMidi(SynthEngine& e, const juce::MidiMessage& m) {
 
 void MkwavezProcessor::publishStatus(const SynthEngine& e) {
     e.status(scratchStatus);
-    status.step.store(scratchStatus.step, std::memory_order_relaxed);
+    status.tick.store(scratchStatus.tick, std::memory_order_relaxed);
     status.playing.store(scratchStatus.playing, std::memory_order_relaxed);
     for (int i = 0; i < scratchStatus.voiceCount; ++i) {
         const auto& s = scratchStatus.voices[i];
@@ -162,20 +165,21 @@ void MkwavezProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
 
 // ---- state ----
 
-juce::String MkwavezProcessor::projectJson() const {
-    const juce::ScopedLock lock(projectLock);
-    return project;
-}
-
-void MkwavezProcessor::setProjectJson(const juce::String& json) {
-    const juce::ScopedLock lock(projectLock);
-    project = json;
-}
-
 void MkwavezProcessor::getStateInformation(juce::MemoryBlock& destData) {
     juce::ValueTree root("mkwavez");
     root.setProperty("version", state::VERSION, nullptr);
-    root.setProperty("project", projectJson(), nullptr);
+    withSession([&](const Session& s) {
+        juce::ValueTree t("session");
+        t.setProperty("meta", s.meta, nullptr);
+        t.setProperty("settings", s.settings, nullptr);
+        for (const auto& [id, json] : s.records) {
+            juce::ValueTree r("record");
+            r.setProperty("id", id, nullptr);
+            r.setProperty("json", json, nullptr);
+            t.appendChild(r, nullptr);
+        }
+        root.appendChild(t, nullptr);
+    });
     root.appendChild(apvts.copyState(), nullptr);
     engineHost.read([&](const Document& doc) { root.appendChild(state::toValueTree(doc), nullptr); });
     juce::MemoryOutputStream out(destData, false);
@@ -187,11 +191,17 @@ void MkwavezProcessor::setStateInformation(const void* data, int sizeInBytes) {
     if (!root.hasType("mkwavez")) return;
     if (const auto p = root.getChildWithName(apvts.state.getType()); p.isValid()) apvts.replaceState(p);
     Document doc;
-    if (state::fromValueTree(root.getChildWithName("document"), doc)) {
-        engineHost.load(std::move(doc));
-        setProjectJson(root.getProperty("project").toString());
-    } else
-        setProjectJson({});
+    const bool ok = state::fromValueTree(root.getChildWithName("document"), doc);
+    if (ok) engineHost.load(std::move(doc));
+    withSession([&](Session& s) {
+        s = {};
+        const auto t = root.getChildWithName("session");
+        if (!ok || !t.isValid()) return;
+        s.meta = t.getProperty("meta").toString();
+        s.settings = t.getProperty("settings").toString();
+        for (const auto& r : t)
+            if (r.hasType("record")) s.records[(int) r.getProperty("id")] = r.getProperty("json").toString();
+    });
     ++stateGen;
 }
 

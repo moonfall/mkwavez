@@ -21,7 +21,7 @@ import { basicWave } from '../src/core/generators/basic';
 import { midiNoteFreq, velocityGain } from '../src/core/midi';
 import { buildMipSet, mipLevelFor } from '../src/core/mipmap';
 import { deriveSeed, Prng } from '../src/core/prng';
-import { emptySteps } from '../src/core/sequence';
+import { emptySteps, STEP_LENGTHS, type StepLength } from '../src/core/sequence';
 import { shape } from '../src/core/shape';
 import { DEFAULT_VOICE, modulatedPosition, type VoiceParams } from '../src/core/voice';
 import type { WavetableShape } from '../src/core/wavetable';
@@ -151,7 +151,7 @@ const OP = {
   wavetable: 3, // id shape interp nRows lens… ids…
   voice: 4, // VOICE_FIELDS
   removeVoice: 5, // id
-  sequence: 6, // id voiceId(-1 = none) length gate steps×64
+  sequence: 6, // id voiceId(-1 = none) length gate stepLength(index into STEP_LENGTHS) steps×64
   transport: 7, // playing bpm
   noteOn: 8, // voice note velocity
   noteOff: 9, // voice note
@@ -178,10 +178,10 @@ function voiceOp(frame: number, v: Partial<VoiceParams> & { id: number }): Op {
 function wavetableOp(frame: number, id: number, sh: WavetableShape, interp: 'blend' | 'step', rows: number[][]): Op {
   return [frame, OP.wavetable, id, SHAPES.indexOf(sh), interp === 'step' ? 1 : 0, rows.length, ...rows.map((x) => x.length), ...rows.flat()];
 }
-function sequenceOp(frame: number, id: number, voiceId: number | null, steps: number[], gate: number): Op {
+function sequenceOp(frame: number, id: number, voiceId: number | null, steps: number[], gate: number, len: StepLength = '1/8'): Op {
   const s = emptySteps();
   steps.forEach((x, i) => (s[i] = x));
-  return [frame, OP.sequence, id, voiceId ?? -1, steps.length, gate, ...s];
+  return [frame, OP.sequence, id, voiceId ?? -1, steps.length, gate, STEP_LENGTHS.indexOf(len), ...s];
 }
 function patchOp(frame: number, voice: number, patch: Partial<Record<(typeof PATCH_FIELDS)[number], number>>): Op {
   let mask = 0;
@@ -221,7 +221,7 @@ function applyOp(e: SynthEngine, op: Op): void {
     case OP.removeVoice:
       return e.removeVoice(a[0]);
     case OP.sequence:
-      return e.setSequence({ id: a[0], voiceId: a[1] < 0 ? null : a[1], length: a[2], gate: a[3], steps: a.slice(4) });
+      return e.setSequence({ id: a[0], voiceId: a[1] < 0 ? null : a[1], length: a[2], gate: a[3], stepLength: STEP_LENGTHS[a[4]], steps: a.slice(5) });
     case OP.transport:
       return e.setTransport(a[0] !== 0, a[1]);
     case OP.noteOn:
@@ -303,6 +303,28 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // Step lengths on the shared clock: 1/16, 1/8T, 1/4 and 1/16T sequences on three voices,
+    // a tempo change mid-eighth, a step-length change, and a restart.
+    name: 'steplen',
+    sampleRate: 48000,
+    frames: 16000,
+    ops: [
+      ...WAVES.slice(0, 4).map((_, i): Op => [0, OP.table, i + 1, i]),
+      wavetableOp(0, 0, '1d', 'blend', [[1, 2, 3, 4]]),
+      voiceOp(0, { id: 1, windowEnd: 3, attack: 0.001, decay: 0.05, sustain: 0.3, release: 0.02 }),
+      voiceOp(0, { id: 2, windowEnd: 3, position: 0.8, octave: 1, attack: 0.001, decay: 0.03, sustain: 0.5, release: 0.01, level: 0.6 }),
+      voiceOp(0, { id: 3, windowEnd: 3, position: 0.1, octave: -1, attack: 0.002, release: 0.05, level: 0.7 }),
+      sequenceOp(0, 1, 1, [0, 2, 4, -1, 3], 0.4, '1/16'),
+      sequenceOp(0, 2, 2, [5, -1, 7], 0.7, '1/8T'),
+      sequenceOp(0, 3, 3, [0, 3], 0.9, '1/4'),
+      [0, OP.transport, 1, 300],
+      [5000, OP.transport, 1, 377],
+      sequenceOp(9000, 2, 2, [5, 6, 7, 1], 0.5, '1/16T'),
+      [12000, OP.transport, 0, 377],
+      [12500, OP.transport, 1, 240],
+    ],
+  },
+  {
     // Rows + Step with tables that arrive late and are removed; sequence on an octave; stop.
     name: 'rows',
     sampleRate: 48000,
@@ -342,7 +364,7 @@ function scenarioCases() {
     record('render', s.name, [s.sampleRate, s.frames, CHUNK]);
     record('out', s.name, out, 9);
     const st = e.status(emptyStatus());
-    record('status', s.name, [st.step, st.playing ? 1 : 0, st.voices.length, ...st.voices.flatMap((v) => [v.id, v.pos, v.posY, v.index, v.y, v.env, v.note])]);
+    record('status', s.name, [st.tick, st.playing ? 1 : 0, st.voices.length, ...st.voices.flatMap((v) => [v.id, v.pos, v.posY, v.index, v.y, v.env, v.note])]);
   }
 }
 

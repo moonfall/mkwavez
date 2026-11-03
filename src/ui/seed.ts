@@ -1,4 +1,5 @@
 import { compileFormula } from '../browser/formulaEval';
+import { traceGlyph } from '../browser/glyphTrace';
 import {
   batchU,
   FormulaAborted,
@@ -31,6 +32,8 @@ const THUMB_H = 18;
 /** Library thumbnails: default params, middle of a 3-table batch (u = 0.5), fixed seed. */
 const THUMB_SEED = 1;
 const DEFAULT_ENTRY = 'chebyshev';
+/** Glyph contour: the default text (each character is one waveform of a batch). */
+const DEFAULT_GLYPH_TEXT = 'mkwavez';
 const CUSTOM_ENTRY = 'blank-formula';
 
 export interface SeedPanelOpts {
@@ -79,12 +82,36 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const entry = () => SEED_LIBRARY[sel];
   const exprOf = (e: SeedEntry) => edits.get(e.id) ?? e.expr ?? '';
   const paramsOf = (e: SeedEntry) => seedParams(e, paramEdits.get(e.id));
+
+  // Glyph contour: the text and the traced contours (browser layer; recipes store the contour).
+  const glyphTexts = new Map<string, string>();
+  const glyphTextOf = (e: SeedEntry) => glyphTexts.get(e.id) ?? DEFAULT_GLYPH_TEXT;
+  const contours = new Map<string, string>();
+  const contourOf = (ch: string, weight: number) => {
+    const k = `${weight}|${ch}`;
+    let c = contours.get(k);
+    if (c === undefined) contours.set(k, (c = traceGlyph(ch, weight)));
+    return c;
+  };
+  /** Per-table inputs: Next characters (char i of the text), or the first character at a swept weight. */
+  const glyphInputs = (e: SeedEntry, p: Record<string, number>, count: number) => {
+    const chars = [...glyphTextOf(e)].filter((c) => c.trim());
+    if (!chars.length) return [];
+    return Array.from({ length: count }, (_, i) => {
+      const ch = p.batch === 0 ? chars[i % chars.length] : chars[0];
+      const w = p.batch === 1 ? p.weight + (p.weightEnd - p.weight) * batchU(i, count) : p.weight;
+      return { glyph: ch, contour: contourOf(ch, Math.round(w / 100) * 100) };
+    });
+  };
+
   const request = (): SeedRequest => {
     const e = entry();
-    return { entry: e, expr: exprOf(e), params: paramsOf(e), seed, count: opts.count() };
+    const params = paramsOf(e);
+    const inputs = e.mode === 'glyph' ? glyphInputs(e, params, opts.count()) : undefined;
+    return { entry: e, expr: exprOf(e), params, seed, count: opts.count(), inputs };
   };
   const keyOf = (r: SeedRequest) =>
-    `${r.entry.id}|${r.entry.mode === 'formula' ? r.expr : JSON.stringify(r.params)}|${r.seed}|${r.count}`;
+    `${r.entry.id}|${r.entry.mode === 'formula' ? r.expr : JSON.stringify(r.params)}|${r.entry.mode === 'glyph' ? glyphTextOf(r.entry) : ''}|${r.seed}|${r.count}`;
 
   let compiledExpr: string | null = null;
   let compiled: { fn?: FormulaFn; err?: string } = {};
@@ -108,6 +135,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   let cardsDirty = true;
   let thumbsDirty = true;
   let statusDirty = true;
+  // Room in the Timeline changes with it and with the wavetables (Add buttons).
+  model.on('timeline', () => (statusDirty = true));
+  model.on('wavetables', () => (statusDirty = true));
 
   // ---- library ----
   const thumbData: (Float32Array | undefined)[] = [];
@@ -146,7 +176,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     errEl,
   );
 
-  const isEdited = (e: SeedEntry) => (e.mode === 'formula' ? edits.has(e.id) : paramEdits.has(e.id));
+  const isEdited = (e: SeedEntry) => (e.mode === 'formula' ? edits.has(e.id) : paramEdits.has(e.id) || glyphTexts.has(e.id));
 
   const onEdit = () => {
     const e = entry();
@@ -160,6 +190,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const e = entry();
     edits.delete(e.id);
     paramEdits.delete(e.id);
+    glyphTexts.delete(e.id);
     renderEditor();
     onEdit();
   };
@@ -241,7 +272,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       );
     } else {
       const vals = paramsOf(e);
-      const controls = (e.params ?? []).map((p) => {
+      const controls: HTMLElement[] = (e.params ?? []).map((p) => {
         if (p.options) {
           const f = selectField(
             p.label,
@@ -269,7 +300,26 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         perlin: 'Loop-seamless noise. A batch shares one noise region (the seed) and drifts through z.',
         ca: 'Each generation’s cells become ±1 steps of one waveform; a batch is N consecutive generations from the start.',
       };
-      edBody.replaceChildren(h('div', { class: 'seed-params' }, ...controls), h('p', { class: 'hint' }, hints[e.mode] ?? ''));
+      if (e.mode === 'glyph') {
+        const text = h('input', {
+          type: 'text',
+          id: 'seed-glyph-text',
+          class: 'seed-expr',
+          value: glyphTextOf(e),
+          maxlength: 64,
+          'aria-label': 'Characters (one waveform each)',
+          spellcheck: false,
+          autocapitalize: 'off',
+          autocomplete: 'off',
+        });
+        text.addEventListener('input', () => {
+          if (text.value === DEFAULT_GLYPH_TEXT) glyphTexts.delete(e.id);
+          else glyphTexts.set(e.id, text.value);
+          onEdit();
+        });
+        controls.unshift(h('label', { class: 'seed-formula' }, h('span', { class: 'seed-f' }, 'Text'), text));
+      }
+      edBody.replaceChildren(h('div', { class: 'seed-params' }, ...controls), h('p', { class: 'hint' }, e.about ?? hints[e.mode] ?? ''));
     }
   };
 
@@ -442,11 +492,15 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     }
     errEl.textContent = err;
     exprInput?.classList.toggle('invalid', !!blocking);
-    addShownBtn.disabled = !!blocking || !!j?.errors[shown];
-    addBatchBtn.disabled = !!blocking || failed.length > 0;
-    addBatchBtn.title = failed.length ? 'Every waveform of the batch must evaluate; Add shown still works for the others' : '';
+    // Timeline full (every waveform used by a wavetable): adds are refused.
+    const room1 = model.roomFor(1);
+    const roomN = model.roomFor(opts.count());
+    addShownBtn.disabled = !!blocking || !!j?.errors[shown] || !room1;
+    addBatchBtn.disabled = !!blocking || failed.length > 0 || !roomN;
+    addShownBtn.title = room1 ? '' : model.fullMessage();
+    addBatchBtn.title = !roomN ? model.fullMessage() : failed.length ? 'Every waveform of the batch must evaluate; Add shown still works for the others' : '';
     el.classList.toggle('seed-stale', !!blocking);
-    seedBox.hidden = !seedUsesRandomness(e, exprOf(e));
+    seedBox.hidden = !seedUsesRandomness(e, exprOf(e), paramsOf(e));
   };
 
   // ---- actions ----
@@ -454,7 +508,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const j = currentJob();
     const shown = strip.shown();
     if (!j || !computeOne(j, shown)) return updateStatus();
-    model.addTables([finalTable(j, shown)!], true);
+    if (!model.addTables([finalTable(j, shown)!], true).length) return; // refused (Timeline full): the notice says why
     flash(`Added #${shown + 1} to the Timeline`);
   };
 
@@ -469,9 +523,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         flash(`Batch not added: ${failed.length} of ${j.req.count} waveforms failed (first #${failed[0] + 1}). Fix the formula, or Add shown for single waveforms.`, true);
       return;
     }
-    model.addTables(j.tables.map((_, i) => finalTable(j, i)!), true);
+    if (!model.addTables(j.tables.map((_, i) => finalTable(j, i)!), true).length) return; // refused: keep the seed
     const n = j.req.count;
-    if (seedUsesRandomness(j.req.entry, j.req.expr)) {
+    if (seedUsesRandomness(j.req.entry, j.req.expr, j.req.params)) {
       newSeed();
       flash(`Added ${n} waveform${n > 1 ? 's' : ''} to the Timeline · new seed`);
     } else flash(`Added ${n} waveform${n > 1 ? 's' : ''} to the Timeline`);

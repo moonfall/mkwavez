@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { f32ToBase64 } from '../src/app/base64';
+import { Autosaver } from '../src/app/autosave';
 import { AppModel } from '../src/app/model';
-import { applyStartState } from '../src/app/startState';
+import { restoreSession } from '../src/app/restore';
 import { AudioBridge } from '../src/audio/bridge';
 import { NATIVE_EVENT, NativePort, type JuceBackend } from '../src/audio/nativePort';
 import { DEFAULT_PERLIN, generatePerlin } from '../src/core/generators';
-import { PluginHost } from '../src/plugin/host';
+import { encodeMeta, encodeWaveforms } from '../src/core/session';
+import { decodeRecord, encodeRecord, PluginHost } from '../src/plugin/host';
+import { defaultSessionState } from '../src/app/defaultSession';
 
 /** A stand-in for JUCE's backend: records what the page sends, lets the test answer. */
 class FakeBackend implements JuceBackend {
@@ -31,7 +33,10 @@ class FakeBackend implements JuceBackend {
   }
 }
 
-function setup(answer: (b: FakeBackend) => void) {
+const immediate = { now: () => Date.now(), setTimer: (fn: () => void, ms: number) => setTimeout(fn, ms), clearTimer: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>), idle: (fn: () => void) => setTimeout(fn, 0) };
+
+/** The plugin boot sequence of src/main.ts. */
+async function boot(answer: (b: FakeBackend) => void) {
   const backend = new FakeBackend();
   backend.onSend = (m) => {
     if (m.type === 'hello') answer(backend);
@@ -40,66 +45,86 @@ function setup(answer: (b: FakeBackend) => void) {
   const model = new AppModel();
   const bridge = new AudioBridge(model, port);
   const host = new PluginHost(model, bridge, port);
-  return { backend, port, model, bridge, host };
+  await host.connect();
+  const b = await restoreSession(() => Promise.resolve(host.session), () => Promise.resolve(true));
+  model.loadState(b.state.model);
+  await host.start(b.restored);
+  const saver = new Autosaver(model, () => ({}), b.store, immediate, { delay: 0, maxWait: 0 });
+  saver.init(b.stored);
+  if (!b.restored) saver.markDirty();
+  return { backend, port, model, bridge, host, boot: b, saver };
 }
 
-const flush = () => new Promise((r) => setTimeout(r, 0));
+const flush = () => new Promise((r) => setTimeout(r, 20));
 
 afterEach(() => vi.useRealTimers());
 
 describe('PluginHost (plugin mode)', () => {
-  it('fresh instance: start state, every table sent raw, project saved', async () => {
-    const { backend, model, host } = setup((b) => b.reply({ type: 'init', project: null, tables: 0, sampleRate: 44100 }));
-    await host.connect();
+  it('fresh instance: default session, every table sent raw, session autosaved to native', async () => {
+    const { backend, model, boot: b } = await boot((x) => x.reply({ type: 'init', meta: null, records: 0, sampleRate: 44100, engine: { tables: [1, 2, 3, 4, 5], wavetables: [0, 1], voices: [1, 2, 3, 4], sequences: [1, 2, 3] } }));
     await flush();
+    expect(b.restored).toBe(false);
     expect(model.timeline.length).toBe(5);
     const ops = backend.ops();
     const added = ops.filter((o) => o.type === 'tables/addData').flatMap((o) => o.items as { id: number; data: string }[]);
-    expect(added.map((t) => t.id).sort()).toEqual([1, 2, 3, 4, 5]);
+    expect(added.map((t) => t.id).sort()).toEqual([1, 2, 3, 4, 5]); // replaced: not the same session
     expect(typeof added[0].data).toBe('string');
-    // Tables precede the wavetables that reference them; voices and sequences follow.
     const order = ops.map((o) => o.type);
     expect(order.indexOf('tables/addData')).toBeLessThan(order.indexOf('wavetable/set'));
-    expect(order).toContain('voice/set');
-    expect(order).toContain('sequence/set');
+    expect(ops.some((o) => o.type === 'voice/remove' && o.id === 4)).toBe(true); // the engine's extra voice goes
     expect(order).not.toContain('tables/add'); // never mip sets
-    const saved = backend.sent.filter((m) => m.type === 'project');
-    expect(saved.length).toBe(1);
-    expect(JSON.parse(saved[0].json as string).tables.length).toBe(5);
+    const commits = backend.sent.filter((m) => m.type === 'session/commit');
+    expect(commits.length).toBeGreaterThan(0);
+    const meta = JSON.parse(commits.at(-1)!.meta as string);
+    expect(meta.format).toBe('mkwavez-session');
+    expect(meta.timeline).toEqual([1, 2, 3, 4, 5]);
+    const recs = backend.sent.filter((m) => m.type === 'session/put' || m.type === 'session/commit').flatMap((m) => m.records as { id: number }[]);
+    expect(new Set(recs.map((r) => r.id)).size).toBe(5);
   });
 
-  it('restores a saved project with samples from the native side and sends no tables', async () => {
+  it('restores a saved session from the native side and sends no tables', async () => {
     const src = new AppModel();
-    applyStartState(src);
+    src.loadState(defaultSessionState());
     src.addTables(generatePerlin(DEFAULT_PERLIN, 9, 3));
-    const project = JSON.stringify(src.toProject(false));
-    const items = src.timeline.map((t) => ({ id: t.id, data: f32ToBase64(t.data) }));
-    const { backend, model, host } = setup((b) => {
-      b.reply({ type: 'init', project, tables: items.length });
-      b.reply({ type: 'tables', items: items.slice(0, 4) });
-      b.reply({ type: 'tables', items: items.slice(4) });
+    const state = { model: src.exportState(), ui: {} };
+    const meta = JSON.stringify(encodeMeta(state, 123));
+    const records = encodeWaveforms(src.timeline).map(encodeRecord);
+    const { backend, model, boot: b } = await boot((x) => {
+      x.reply({ type: 'init', meta, records: records.length, engine: { tables: src.timeline.map((t) => t.id), wavetables: [0, 1, 2, 3], voices: [1, 2, 3], sequences: [1, 2, 3] } });
+      x.reply({ type: 'records', items: records.slice(0, 4) });
+      x.reply({ type: 'records', items: records.slice(4) });
     });
-    await host.connect();
     await flush();
+    expect(b.restored).toBe(true);
     expect(model.timeline.map((t) => t.id)).toEqual(src.timeline.map((t) => t.id));
     expect(Array.from(model.timeline[6].data)).toEqual(Array.from(src.timeline[6].data));
-    expect(model.selectedId).toBe(src.selectedId);
     expect(backend.ops().some((o) => o.type === 'tables/addData')).toBe(false);
     expect(backend.ops().some((o) => o.type === 'wavetable/set')).toBe(true);
   });
 
-  it('a corrupt saved project falls back to the start state', async () => {
-    const { model, host } = setup((b) => b.reply({ type: 'init', project: '{"format":"nope"}', tables: 0 }));
+  it('records survive the wire', () => {
+    const src = new AppModel();
+    src.loadState(defaultSessionState());
+    for (const r of encodeWaveforms(src.timeline)) {
+      const back = decodeRecord(JSON.parse(JSON.stringify(encodeRecord(r))));
+      expect(back.id).toBe(r.id);
+      expect(back.enc).toBe(r.enc);
+      if (r.samples) expect(Array.from(back.samples!)).toEqual(Array.from(r.samples));
+    }
+  });
+
+  it('an unrestorable session is set aside: fresh session, native session cleared', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await host.connect();
+    const { backend, model, boot: b } = await boot((x) => x.reply({ type: 'init', meta: '{"format":"mkwavez-session","version":999}', records: 0 }));
+    expect(b.restored).toBe(false);
     expect(model.timeline.length).toBe(5);
-    expect(warn).toHaveBeenCalled();
+    expect(backend.sent.some((m) => m.type === 'session/clear')).toBe(true);
+    expect(await b.store!.keptList()).toHaveLength(1);
     warn.mockRestore();
   });
 
   it('follows host transport and automation without echoing transport back', async () => {
-    const { backend, model, host } = setup((b) => b.reply({ type: 'init', project: null, tables: 0 }));
-    await host.connect();
+    const { backend, model } = await boot((x) => x.reply({ type: 'init', meta: null, records: 0 }));
     await flush();
     backend.sent = [];
     backend.reply({ type: 'transport', playing: true, bpm: 128 });
@@ -113,19 +138,23 @@ describe('PluginHost (plugin mode)', () => {
     const ops = backend.ops();
     expect(ops.some((o) => o.type === 'transport')).toBe(false);
     expect(ops.some((o) => o.type === 'voice/set')).toBe(true);
-    // A transport change made in the UI does go out.
     model.setTransport({ playing: false });
     await flush();
     expect(backend.ops().filter((o) => o.type === 'transport').length).toBe(1);
   });
 
+  it('applies the host parameter values sent with init over the saved session', async () => {
+    const { model } = await boot((x) => x.reply({ type: 'init', meta: null, records: 0, voices: [{ id: 2, patch: { position: 0.123, mute: false } }] }));
+    expect(model.voice(2)!.position).toBeCloseTo(0.123, 6);
+    expect(model.voice(2)!.mute).toBe(false);
+  });
+
   it('starts fresh if the native side never answers', async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { model, host } = setup(() => {});
-    const done = host.connect();
+    const p = boot(() => {});
     await vi.advanceTimersByTimeAsync(5000);
-    await done;
+    const { model } = await p;
     expect(model.timeline.length).toBe(5);
     warn.mockRestore();
   });

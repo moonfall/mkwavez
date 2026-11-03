@@ -12,6 +12,8 @@ src/
                         exact (fractional) fundamental phase alignment, peak normalise
     perlin.ts           improved Perlin noise, fBm, seeded NoiseField, loop-seamless pnoise
     generators/         basic, formula (FormulaFn interface only), Perlin, CA, presets,
+                        paramModes.ts (further parameter modes: library entry + pure
+                        render(params, seed, index, count); dynamical.ts, …),
                         seed.ts (Seed library entries + seedTable/seedBatch),
                         renderRecipe() to re-render a table from its recipe
                         (mutations need env.resolveTable for parent data)
@@ -20,26 +22,38 @@ src/
     mutateBatch.ts      a batch (lin, log, chain) → tables + recipes, or one table of
                         it (mutateBatchTable, for incremental previews); seeding
                         rules; renderMutateRecipe() re-renders from parent tables
-    breed.ts            multi-parent breed operators, bias walks → per-parent weights,
-                        breedBatch (single / sweep / gen), renderBreedRecipe()
+    breed.ts            multi-parent breed operators (group, hint, seeded flag), bias
+                        walks → per-parent weights, breedBatch (single / sweep / gen) or
+                        one child of it (breedBatchTable, for incremental previews),
+                        renderBreedRecipe()
     mipmap.ts           per-octave band-limited mip sets, packed in one Float32Array
     table.ts            WaveTable, Recipe, IdAllocator
     timeline.ts         appendWithEviction (oldest-first, pin-aware), index/window remap
     wavetable.ts        Wavetable (1D / 2D / Rows slots), built-ins, write head
-                        (writeTables), eviction (removeTables), pinnedIds()
+                        (writeTables, previewWrites), eviction (removeTables),
+                        pinnedIds(), hand edits (placeTable, moveSlot, clearSlot,
+                        removeSlot, resize1D / resize2D, setWrite, setHead),
+                        newWavetable / duplicateWavetable
     wavetablePlayback.ts  packed wavetable (engine form), position → tables + weights
                         (resolveMix: Blend / bilinear / row-aligned, Step, empty slots)
     voice.ts            VoiceParams (X / Y window, position, LFOs), followEdit()
-    sequence.ts         SequenceData, scale → frequency, step helpers
+    sequence.ts         SequenceData, step lengths / clock ticks / bars, scale → frequency
     midi.ts             MIDI bytes → messages, MidiRouter (channel / Omni routing, held-note
                         tracking per source), velocity curve, bend scale, CC map + learn
+    session.ts          session schema (meta + per-waveform records), encode / decode,
+                        migrations, the .mkwz file container
     engine/             SynthEngine (audio-thread engine), Adsr, NoteStack (held keys)
   browser/formulaEval.ts  JS expression → FormulaFn (browser-only convenience)
+  browser/glyphTrace.ts character → canvas → outer contour polyline (Glyph contour mode)
   browser/webMidi.ts    Web MIDI access: permission, inputs + hot-plug, chosen input(s),
                         unsupported / insecure / denied states
+  browser/sessionStore.ts  IndexedDB store for the autosaved session (meta + waveforms)
   app/model.ts          AppModel: main-thread state, actions, undo, topic events
   app/midi.ts           MidiController: router → bridge (notes, bend) and → AppModel (CCs);
                         persisted settings (input, Omni, CC map), learn
+  app/autosave.ts       Autosaver: debounced, incremental, chunked session saves (backend
+                        and scheduler injected)
+  app/defaultSession.ts the fresh session (5 basic waveforms, 3 voices, 3 sequences)
   audio/                protocol.ts (messages), worklet.ts (AudioWorkletProcessor adapter),
                         bridge.ts (AudioContext owner, state → messages, mip building)
   ui/                   Plain DOM + canvas panels (no framework), styles.css tokens
@@ -50,16 +64,22 @@ src/
                         stored in localStorage); transport.ts the top bar;
                         generate.ts hosts the tabs: seed.ts (Seed tab), mutate.ts
                         (Mutate tab) and breed.ts (Breed tab); library.ts (the
-                        shared library list) and batch.ts (N stepper, voice
-                        targets, card strip) are used by Seed and Mutate; timeline.ts (strip,
-                        toggles Breed parents); wavetables.ts (compact panel: chips,
-                        view, summary; editor in phase 2); voicePad.ts (X/Y pad of
+                        shared library list) and batch.ts (N stepper, card strip)
+                        are used by Seed, Mutate and Breed; timeline.ts (strip,
+                        toggles Breed parents; drag source); wavetables.ts (compact
+                        panel: chips, view, summary; Edit / Collapse); wavetableEditor.ts
+                        (the expanded editor: list, views, header, write head settings,
+                        drop zones); waveDrag.ts (pointer-event waveform drags: ghost,
+                        drop zones, auto-scroll); voicePad.ts (X/Y pad of
                         a 2D / Rows voice); playing.ts (what a voice plays, as the
                         engine resolves it); midi.ts (transport MIDI picker,
                         LED, popover with routing and CC map); shortcuts.ts
                         (page-wide keys: Space, [ / ], M, Shift+←/→; one
-                        capture-phase listener, skipped in text fields)
-  main.ts               initial state, shell assembly, frame loop
+                        capture-phase listener, skipped in text fields); session.ts
+                        (Session menu: autosave status, New / Export / Import;
+                        notices)
+  main.ts               session restore (before the first render), shell assembly,
+                        autosave wiring, frame loop
 tests/                  vitest unit tests (core + AppModel)
 scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 ```
@@ -75,7 +95,14 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   `params.preset` the library entry id, plus the generator's params: `wave`;
   `width, widthEnd` (duty sweeps linearly across the batch); `expr, name, edited`
   (the expression actually used); `freq, z, zDrift, octaves, persistence`;
-  `rule, cells, start, generation (= start + index)`. `seed` and `batch {index, count}`
+  `rule, cells, start, generation (= start + index)`. Parameter modes from
+  `PARAM_MODES` (`dynamical`, `karplus`, `additive`, `numseq`, `rd`, `life`, `spline`,
+  `glyph`) record `op` = the mode, every param plus `name`, and re-render through the
+  mode's `render(params, seed, index, count)` (missing params take the mode's defaults).
+  Data only the host can make arrives as per-table `SeedRequest.inputs` merged into the
+  params and recorded: Glyph contour's `contour` (the outer contour polyline traced by
+  `browser/glyphTrace.ts` from an offscreen canvas, "x,y x,y …") and `glyph` (the
+  character) — the recipe carries the polyline, never the font. `seed` and `batch {index, count}`
   are always set (also for single "Add shown" tables, which keep their batch position),
   so every Seed table re-renders exactly (tested for every library entry).
 - **Mutation recipe** — `op: 'mutate'`, `params { mutation, amount (this table's),
@@ -93,8 +120,10 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   batchBias (B), mode: single|sweep|gen, walk: path|ring|weights, weights ('' or
   comma-separated per parent), rate }`, `seed` (the Apply's seed), `parents` (all
   parent ids, A first), `batch {index, count}`. Sweep table i uses bias `B·(i+1)/N`
-  and the seed; generation child j uses `childSeed(seed, j)` (child 0 = seed = the
-  preview). Weights come from `breedWeights(P, bias, walk, weights)`; bias 0 is
+  and the seed; generation child j uses `childSeed(seed, j)` (child 0 = seed). The UI
+  makes sweep / gen batches; "Add shown" adds one child of one, keeping its batch
+  position (so it re-renders exactly); `single` (one child at B) is older recipes' mode
+  and equals the last child of a sweep. Weights come from `breedWeights(P, bias, walk, weights)`; bias 0 is
   always `[1, 0, …]`, so every operator returns shape(A) there.
 - **Copy recipe** — Timeline "Copy to end" (`AppModel.copyToEnd`, a single add) gives
   the copy a new id and the same (shared, immutable) data; its recipe is the source's
@@ -105,8 +134,13 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   topic `parents`. Filtered whenever the timeline changes (eviction, undo); not part
   of undo snapshots.
 - **Timeline** — ordered `WaveTable[]`, cap 4096. Eviction is oldest-first and skips
-  tables referenced by a pinning wavetable (`pinnedIds`). If everything is pinned the
-  timeline may exceed the cap. `AppModel.moveTable(id, ±1)` (Shift+←/→) swaps a table
+  tables referenced by a pinning wavetable (`pinnedIds`). The timeline never exceeds the
+  cap: an add that would have to evict one of its own new waveforms (too few unpinned
+  ones left) is refused (`roomFor(n)`, cached per state, is the same check; Add buttons
+  are disabled with the reason as their tooltip) and the model emits a 'notice'
+  (`fullMessage()`: "Timeline full: all N waveforms are used by wavetables — remove some
+  from …"), shown as a toast. So live wavetables only ever reference waveforms that were
+  added. `AppModel.moveTable(id, ±1)` (Shift+←/→) swaps a table
   with its neighbour and the Timeline built-in's slots with it; voice windows are index
   ranges and stay put (the engine crossfades by table id as the window's contents change);
   wavetables referencing ids are untouched. Consecutive moves of one table with no other
@@ -117,8 +151,30 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   1D = one row (fixed or variable size); 2D = a fixed X×Y grid; Rows = rows of differing
   lengths. Plain, serializable data (persistence is M5). Built-ins (ids 0–3): Timeline
   (1D, mirrors the timeline, doesn't pin), Last batch (1D, pins), Batches (Rows, one row
-  per batch, doesn't pin), Grid (2D 8×8, pins); user wavetables (phase 2) start at id 16
-  and pin.
+  per batch, doesn't pin), Grid (2D 8×8, pins); user wavetables get ids from
+  `AppModel.nextWavetableId` (from 16, monotonic, never reused — not even after an undone
+  create or a delete; plain data to persist alongside the wavetables), pin, and start Frozen (`newWavetable`; `duplicateWavetable` copies slots, settings and head of any
+  wavetable). Growing writes / inserts stop at `MAX_USER_SLOTS` (1024) slots per user
+  wavetable (a Live write past it stops the head, as "stop at the edge", while the add
+  itself still goes into the Timeline; `isFull` marks it "full" in the list, chips and
+  editor), so a growing wavetable never blocks generation. A voice whose wavetable disappears (delete, undone create / duplicate) moves
+  to the Timeline (whole window).
+- **Hand edits** (pure functions in `core/wavetable.ts`, each a `WavetableEdit` with the
+  follow-axis map, so voice windows follow like on adds): a `SlotTarget` is a slot
+  (replace), a gap before slot x of row y (insert; x = length appends) or a new row at y
+  (Rows). `canTarget` validates (built-ins read-only; 2D replace only; a fixed 1D inserts
+  only before an existing slot, shifting slots towards the end into the first empty slot
+  at or after it, else the last drops out). `moveSlot`: onto a slot swaps, into a gap
+  reorders (a fixed line keeps its size), as a row moves to a new row; Rows rows emptied
+  by a move / remove are dropped. `clearSlot` empties; `removeSlot` closes up (fixed 1D
+  appends an empty slot; 2D empties). `resize2D` keeps cells by (x, y), drops the rest
+  (`droppedBy2DResize` counts filled ones for the confirm) and clamps the head; `resize1D`
+  switches fixed / variable and pads / truncates. Every edit keeps the head on the slot /
+  row it pointed at; `setWrite` / `resize1D` restart a head that can no longer write.
+- **Write preview** (`previewWrites(wt, n)`): runs the real write head on a copy whose
+  slots are encoded with their original coordinates, giving each of the next n writes
+  (one batch) as replace (x, y) / insert before (x, y) / append to row y, so the markers
+  always match `writeTables`.
 - **Write head** (`writeTables`, live wavetables; every add is a batch, a single add a
   batch of one): settings `dir ±x/±y`, `edge wrap|stop|grow`, `onWrap next|same`, `mode
   replace|insert`, `batch continue|newRow`, coerced per shape by `normalizeWrite` (1D:
@@ -138,11 +194,102 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   (`windowStartY/EndY`), positions X / Y, LFO depth / rate / phase per axis, octave,
   level, mute, ADSR. Interpolation belongs to the wavetable. Switching wavetable selects
   all of it. Plain data shared verbatim with the engine.
-- **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate.
+- **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate, step
+  length (`'1/4' | '1/8' | '1/16' | '1/8T' | '1/16T'`, default `'1/8'`). Timing helpers
+  live in `core/sequence.ts`: `STEP_TICKS` (clock ticks per step: 12 / 6 / 3 / 4 / 2 at
+  `TICKS_PER_BEAT` = 12 per quarter note, 48 per 4/4 bar), `stepSeconds` =
+  (60 / BPM) × (4 × fraction), `stepSamples`, `stepAtTick`, `stepBarBeat`
+  (pattern-relative), `tickBarBeat` (the transport bar clock), `isShadedStep` /
+  `isBarStep` (grid, pattern-relative; shading is per beat, per half bar at 1/4),
+  `lengthInBars`, `sequenceSummary`.
+- **Session** (`core/session.ts`, M5 part 1) — what is saved: the timeline (ids in order
+  plus one record per waveform), the id allocators (`nextTableId`, `nextWavetableId` —
+  monotonic, a deleted wavetable's id is never reused after a restore — `nextVoiceId`,
+  `nextSeqId`), selection and Breed parents, every wavetable (built-ins' contents / heads /
+  interpolation and user wavetables, stored verbatim so new fields round-trip without
+  schema changes; decode validates known fields and keeps unknown ones), voices (all
+  params; unknown keys kept, bad values → defaults), sequences, BPM, and UI prefs
+  (`UiState.exportPrefs()`: the selected voice tab, the Generate tab, the Breed operator, bias, walk, mutation and batch mode; Breed parents are model state). Not saved: undo
+  history, transport play state. Theme, timeline view and MIDI settings stay per browser
+  in localStorage.
+  - Two parts: **meta** (`SessionMeta`, small, JSON-safe, `format` + `version`), rewritten
+    on every save, and **waveform records** (`WaveformRecord`, one per id, written once:
+    waveforms are immutable). A record is `samples` (Float32, the default), `recipe`
+    (only `basic` / `pulse`, which re-render cheaply and exactly — and only if the
+    re-render matches bit for bit when encoded; a sample hash flags a later code change)
+    or `ref` (same samples as another record: copies share data, so a copy costs a few
+    bytes). Formula, Perlin, CA, mutate and breed waveforms always store samples (no user
+    JS is evaluated at load; parents may be gone).
+  - Versioned: `migrateMeta` runs `MIGRATIONS[v]` (v → v+1) up to `SESSION_VERSION`;
+    a newer or unmigratable version is a `SessionError` ('incompatible'). Version 2
+    added `nextWavetableId` (1 → 2: the highest wavetable id + 1); version 3 added each
+    sequence's `stepLength` (2 → 3: `'1/8'`, what every earlier sequence played; decode
+    also maps a missing / unknown value to `'1/8'`).
+  - User wavetables (editor) are stored like the built-ins: every field, write head and
+    Live state; "full" (`isFull`, MAX_USER_SLOTS) is derived, so it round-trips. Decoding
+    keeps them within the editor's limits (≤ MAX_USER_SLOTS slots, keeping the newest as
+    Duplicate does; 2D sides ≤ MAX_GRID); a voice whose wavetable is missing moves to the
+    Timeline (whole window). The decoded Timeline never exceeds its cap (oldest unpinned
+    first, then the oldest).
+  - Decoding never trusts input: missing / malformed / non-finite waveform records are
+    dropped (with warnings; wavetables drop the slots the way eviction does, voices are
+    clamped); if no waveform survives, or the meta is unusable, it throws and the app
+    starts fresh.
+  - **.mkwz file** (Export / Import): `'MKWZ'`, u32 container version, u32 JSON length,
+    JSON `{ meta, waveforms }` (sample records carry `offset` / `length` in floats), padding
+    to 4 bytes, little-endian Float32 sample block. Exports store samples (no recipe-only
+    records), so files don't depend on re-render determinism.
+- **Autosave** (`app/autosave.ts`, `app/restore.ts`, `browser/sessionStore.ts`,
+  `browser/tabLock.ts`): IndexedDB database `mkwavez` with stores `meta` (key
+  `session`), `waveforms` (keyPath `id`), `kept` (one small entry per session that
+  couldn't be restored: meta, error, max id, count; several may accumulate) and
+  `keptWaveforms` (their records, key `[kept key, id]`). Any model topic or UI pref
+  change marks the session dirty; the save runs 1.5 s after the last change (at most 6 s
+  after the first), writes new waveform records in chunks of ≤ 64 / ≤ 4 ms with idle-time
+  yields, then the meta and the deletion of unreferenced records (evicted waveforms; a
+  `ref`'s target is kept while referenced) in one transaction — so the stored meta never
+  references a missing record. Page hidden / `pagehide`: `flushNow()` issues one
+  transaction synchronously (meta + every unwritten waveform + deletions); a chunked save
+  in progress is superseded (it never commits its older meta).
+  - Restore: only records the restored meta reaches count as saved; any other record
+    (from a save whose meta never landed) is deleted, and new ids are allocated above
+    every stored id (`AppModel.reserveTableIds`), so a stale record can't stand in for a
+    new waveform. A tab that doesn't own autosave deletes nothing (the owner may be
+    mid-save: its new records are "orphans" only until its meta lands).
+  - Quota: if a write fails with QuotaExceededError, the current meta is committed
+    together with the deletion of records it doesn't reference (so no saved meta points
+    at a deleted record; until the rest is written that meta lacks some new waveforms,
+    which a restore would drop with a warning) and the write is retried once; still
+    full → error status and a notice (Export).
+    Other write errors set an error status and retry on the next change.
+  - Tabs: one tab owns autosave (Web Locks, `mkwavez-autosave`). A tab that can't take
+    the lock at startup renders at once with autosave paused and waits ≤ 1.5 s in the
+    background (a reload's previous document releasing it); then `becomeOwner`: if the
+    store still holds the save it restored, it carries on incrementally (`init`), else
+    rewrites everything. Otherwise it shows a notice + Session menu "Use autosave
+    here…"; taking over steals the lock (the old owner pauses) and rewrites every
+    waveform, the meta and the deletions in one transaction (`adopt`), so an interruption
+    never pairs the old meta with overwritten records. Without Web Locks every tab saves
+    (last writer wins).
+  - Startup (`restoreSession`, before the UI is built; the page shows "Loading…"):
+    storage unavailable → fresh session, autosave off, a notice; unrestorable save
+    (corrupt, or a newer version) → moved to `kept` intact in one transaction, fresh
+    session (new ids above the kept ones), a notice offering Export / Discard (also in the
+    Session menu, for the latest; earlier kept sessions stay); if it can't be moved, it is
+    left untouched (autosave off); if another tab owns the store, it is set aside when
+    this tab becomes the owner (unless replaced meanwhile).
+  - New session / Import replace the model (`AppModel.loadState`, undo cleared), clear
+    the store and save everything. Imports are capped (256 MB, 4×4096 records, exactly
+    2048 samples per waveform) and the timeline is cut to the cap like an add (oldest
+    unpinned first).
 - **Undo** — snapshots of the timeline array and wavetables (references), selection,
-  voice windows (X and Y, restored only if the voice is still on that wavetable) and
-  sequence steps; 40 deep. Interpolation changes are kept across undo. Covers adds, note edits and window edits (a slider
-  drag is one step); other slider moves are not undoable.
+  voice windows with their wavetable (X and Y; switching a voice's wavetable is an undo
+  step, so undo puts voices back) and sequence steps; 40 deep. Covers adds, note edits, window edits (a slider drag is one
+  step) and wavetable content edits (create, duplicate, rename, delete, resize, slot
+  edits; `AppModel.editWavetable`); other slider moves are not undoable. Wavetable
+  settings (interpolation, Live / Frozen, write settings, head moves) are not undo steps
+  and are kept across undo (write settings re-normalized for the restored size). Deleting
+  a wavetable moves its voices to the Timeline; undoing the delete puts them back.
 
 ## UI layout
 
@@ -153,14 +300,43 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   body scrolls if its content overflows. The Seed tab fills Generate (library column;
   formula row; wave + spectrum flex; batch row + strip), and so does Mutate (library
   column | source + parameters row; wave + spectrum flex; batch row + strip; the batch
-  row wraps when the column is narrower than ~700 px, via a container query); Breed
-  lays out in two columns and scrolls inside it. The shared Generate pieces use `gen-*`
+  row wraps when the column is narrower than ~700 px, via a container query), and so
+  does Breed (library column | parent chips row with a compact Add selected / Use window
+  group; one controls row (bias, walk, mutation, seed); wave + spectrum flex, ≥ 100 px,
+  with the operator / shown child / weights / legend in the row under the waveform;
+  batch row + strip, cards without their spectrum below 860 px tall; it fits the panel at
+  1440×900 and 1180×820 without scrolling, the chip row scrolls sideways when there are
+  more parents than fit). The shared Generate pieces use `gen-*`
   classes (`.gen-tab`, `.gen-lib`, `.gen-strip`, …).
 - **Narrow shell (< 900 px)**: the same panels in the same order, one scrolling
   column, each collapsible (Wavetables starts collapsed); the transport bar is sticky.
+- **Wavetables editor**: `.shell.wt-editing` hides Generate and gives Wavetables the
+  whole first row (`grid-area: 1 / 1 / 2 / 4`); the panel body becomes a 200 px list |
+  view | 244 px write-head grid (one column on the narrow shell: the list a scrolling
+  row, the view 240 px tall). The view is a virtualized canvas like the Timeline (a
+  sticky stage in a scroller sized to the content; only visible slots drawn; redrawn when
+  dirty or playing), with hit boxes from the same layout used for clicks and drop
+  targets (within 14 px of a slot edge = the gap, between Rows rows = a new row).
+- **Drags** (`ui/waveDrag.ts`): sources call `beginDrag` once a press becomes a drag
+  (Timeline: mouse > 5 px, touch: a vertical move > 10 px — `touch-action: pan-x` on the
+  strip while the editor is open, so sideways still scrolls and a still press is the
+  Breed long-press; editor slots: mouse > 5 px, touch: a 350 ms hold, then touchmove is
+  cancelled so the page doesn't scroll). The module captures the pointer, moves a ghost,
+  asks every active drop zone each frame (so zones auto-scroll near their edges; the page
+  auto-scrolls on the narrow shell) and drops on release; Esc cancels; the click after a
+  drop is swallowed. Zones: the editor view and its list (hover 600 ms opens an entry,
+  dropping adds to it).
 - Voice tabs: `UiState.voiceId` (kept valid as voices come and go: a removed voice's
   neighbour is selected). The Voice panel shows only that voice's controls; the
-  Sequence panel shows its sequence(s).
+  Sequence panel shows its sequence(s). Its playhead is `stepAtTick(status.tick, …)` of
+  the shown sequence; `#seq-pos` is `tickBarBeat(status.tick)`, the transport bar.beat
+  (not the pattern's). The grid canvas carries `data-step-length`, `data-beats` (shaded
+  steps), `data-bars`, `data-whole-bars`, `data-step` and `data-tick` for tests. A crowded
+  header (muted target, several sequences, a long length) wraps to a second line on the
+  wide shell; the grid gives up the height.
+- Session menu: a native popover like the MIDI one (`#session-pop`); notices are one
+  fixed element at the bottom centre (`#session-notice`, `role=status`), hidden after 9 s
+  unless they carry an action.
 - Remembered per browser (localStorage, try/catch): `mkwavez.theme` (only once
   toggled; default dark, applied before first paint by an inline script in
   index.html), `mkwavez.timelineView` (Waveform / Spectral / both) and `mkwavez.midi`
@@ -185,15 +361,16 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   Int32Arrays, -1 = empty; sent only for wavetables that changed), `voice/set|remove`,
   `sequence/set|remove`, `transport`, `midi` (routed note / bend events), `voice/patch`
   (a few params of one voice, from MIDI CCs).
-- Worklet → main: `ready`, `status` (sequencer step, per voice: modulated positions
+- Worklet → main: `ready`, `status` (sequencer clock tick, per voice: modulated positions
   pos / posY, resolved coordinates index (x) / y, env, note; table count), `error`.
 - Everything the bridge queues within one task is sent as a single `batch` message,
   applied atomically between render quanta: a re-indexed wavetable (eviction) and the
   remapped voice windows always land together, and fresh tables' mip sets (built
   synchronously, up to 128) precede the wavetables that reference them (the model emits
   'timeline', 'wavetables', 'voices' in that order).
-- The bridge reconciles: it tracks which table/voice/sequence ids the worklet has and
-  sends adds/removes on each model topic. Undo that restores evicted tables simply
+- The bridge reconciles: it tracks which table/voice/sequence ids the worklet has (tables
+  with the data array sent, so a restored / imported session that reuses an id with other
+  data is re-sent) and sends adds/removes on each model topic. Undo that restores evicted tables simply
   re-sends them. Bulk backlogs (e.g. 4096 at audio start) arrive in 48-table chunks.
 - The engine tracks playing tables by table id, not wavetable index: each control
   block resolves the voice's mix (≤ 4 tables + weights, `resolveMix`, the same code
@@ -228,9 +405,11 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   tables. Its library thumbnails (each mutation on the source at the current amount /
   seed) restart at most every 150 ms and are computed only for entries scrolled into
   view, within the same budget; old drawings stay until replaced. The Breed
-  preview follows the same rules as the old single-table Mutate preview (only while
-  showing and on screen, when its key changed, at most every 50 ms while dragging) (key: parent ids, operator, bias, walk, weights,
-  rate, seed); parent spectra are cached per table data array. The Seed preview is a
+  preview is a whole batch computed the same way (key: parent ids, operator, bias, walk,
+  weights, rate, seed, mode, N; restarted at most every 50 ms; ≤ 8 ms per frame, shown
+  child first) through `breedBatchTable()`, which Add reuses; its library thumbnails (each
+  operator on the parents at the current bias / walk / mutation / seed) follow Mutate's
+  rules (150 ms, in view, budgeted). Parent spectra are cached per table data array. The Seed preview is a
   whole batch: on a key change (entry, formula / params, seed, N; restarted at most every
   50 ms) it is recomputed incrementally, ≤ 8 ms of main-thread work per frame, shown
   table first, through the same `seedTable()` as Add (which reuses the preview tables
@@ -291,6 +470,19 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
 
 ## Playback semantics
 
+- Sequencer clock (`SynthEngine.process`): a fractional sample accumulator per eighth
+  note (`stepSamples(bpm, sr, '1/8')`, exactly the arithmetic of the original
+  eighth-note sequencer), split into 6 ticks by thresholds inside the eighth, so 12
+  ticks per quarter note. A sequence steps on ticks that are multiples of its
+  `STEP_TICKS`, step index `(tick / STEP_TICKS) % length`, all counted from the
+  transport start: every step length divides a bar, so bar lines (and every shared
+  boundary) fire on the same sample for every sequence, and nothing drifts. 1/8
+  sequences fire on exactly the samples they did before step lengths (tests compare the
+  render with a frozen copy of the old engine, `tests/fixtures/legacyEngine.ts`). A step
+  length change takes effect on the next boundary of the new grid (the sounding note
+  keeps its gate: no cut, no click); a tempo change on the next eighth. Gate =
+  `stepSamples(bpm, sr, stepLength) × gate`.
+
 - Position (per axis) = `position + depth/2 · sin(lfoPhase)`, reflected into [0,1],
   mapped onto the window. **Blend** (set on the wavetable): 1D crossfades the two
   neighbouring slots; 2D is bilinear over the 4 surrounding cells; Rows blends within
@@ -329,5 +521,6 @@ the C++ tests compare against, so a change here that alters those numbers fails
   ternaries; some presets use JS array idioms like `[...Array(n)].reduce`, which would
   need a `sum(k, n, expr)` builtin or similar). Formula recipes store the expression
   text, so tables still carry provenance.
-- Cross-version determinism of re-rendering is not guaranteed yet (no recipe/version
-  tag); M5 save/load should store sample data alongside recipes.
+- Cross-version determinism of re-rendering is not guaranteed (no recipe/version tag), so
+  sessions store samples except for `basic` / `pulse` waveforms verified bit-exact at save
+  time (with a hash checked at load); exported files always carry samples.

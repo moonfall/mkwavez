@@ -74,6 +74,8 @@ export interface Panel {
   isOpen(): boolean;
   /** Called when the body may have been shown / hidden (collapse, shell width change). */
   onToggle(fn: () => void): void;
+  /** Expand the body if collapsed (narrow shell). */
+  open(): void;
 }
 
 /**
@@ -111,6 +113,12 @@ export function panel(id: string, title: string, opts: { collapsed?: boolean } =
     body,
     isOpen: () => !collapsed || !isNarrowShell(),
     onToggle: (fn) => fns.push(fn),
+    open: () => {
+      if (!collapsed) return;
+      collapsed = false;
+      apply();
+      for (const fn of fns) fn();
+    },
   };
 }
 

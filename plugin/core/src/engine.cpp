@@ -221,8 +221,9 @@ void SynthEngine::removeSequence(int32_t id) {
 void SynthEngine::setTransport(bool play, double newBpm) {
     bpm = std::max(20.0, std::min(400.0, newBpm));
     if (play && !playing) {
-        step = -1;
+        tick = -1;
         toNext = 0;
+        sub = 0;
     }
     if (!play && playing)
         for (int i = 0; i < nVoices; ++i)
@@ -296,7 +297,7 @@ void SynthEngine::applyMidi(const MidiVoiceEvent& ev) {
 }
 
 void SynthEngine::status(EngineStatus& out) const {
-    out.step = step;
+    out.tick = tick;
     out.playing = playing;
     out.voiceCount = std::min(nVoices, EngineStatus::MAX);
     for (int i = 0; i < out.voiceCount; ++i) {
@@ -315,7 +316,10 @@ void SynthEngine::status(EngineStatus& out) const {
 // ---- audio ----
 
 void SynthEngine::process(float* out, int frames) {
-    const double stepLen = stepSamples(bpm, sr);
+    // The sequencer clock (as the TS engine): one fractional accumulator per eighth note,
+    // split into TICKS_PER_EIGHTH ticks by thresholds within the eighth; each sequence steps
+    // on the ticks that are multiples of its STEP_TICKS, counted from the transport start.
+    const double eighth = stepSamples(bpm, sr, StepLength::eighth);
     for (int i = 0; i < frames; ++i) {
         if (ctrlCountdown <= 0) {
             control(CONTROL_BLOCK);
@@ -326,9 +330,15 @@ void SynthEngine::process(float* out, int frames) {
 
         if (playing) {
             if (toNext <= 0) {
-                ++step;
-                toNext += stepLen;
-                triggerStep(stepLen);
+                toNext += eighth;
+                eighthLen = eighth;
+                sub = 0;
+                ++tick;
+                triggerTick();
+            } else if (sub < TICKS_PER_EIGHTH - 1 && toNext <= (eighthLen * (TICKS_PER_EIGHTH - 1 - sub)) / TICKS_PER_EIGHTH) {
+                ++sub;
+                ++tick;
+                triggerTick();
             }
             toNext -= 1;
         }
@@ -339,15 +349,17 @@ void SynthEngine::process(float* out, int frames) {
     }
 }
 
-void SynthEngine::triggerStep(double stepLen) {
+void SynthEngine::triggerTick() {
     for (int i = 0; i < nSequences; ++i) {
         const SequenceData& s = sequences[(size_t) i];
         if (s.voiceId < 0 || s.length <= 0) continue;
-        const int row = s.steps[(size_t) (step % s.length)];
+        const int ticks = STEP_TICKS[(size_t) s.stepLength];
+        if (tick % ticks != 0) continue;
+        const int row = s.steps[(size_t) ((tick / ticks) % s.length)];
         if (row < 0) continue;
         VoiceRuntime* v = findVoice(s.voiceId);
         if (!v || v->notes.size) continue;
-        noteOn(s.voiceId, noteFreq(row, v->params.octave), stepLen * s.gate);
+        noteOn(s.voiceId, noteFreq(row, v->params.octave), stepSamples(bpm, sr, s.stepLength) * s.gate);
     }
 }
 

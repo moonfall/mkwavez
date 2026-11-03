@@ -39,7 +39,8 @@ export class AudioBridge {
   private open = false;
   private opening: Promise<void> | null = null;
   private transportMuted = false;
-  private sentTables = new Set<TableId>();
+  /** Table ids the engine holds → the data sent (a restored / imported session may reuse an id). */
+  private sentTables = new Map<TableId, Float32Array>();
   private pending: WaveTable[] = [];
   private pumpScheduled = false;
   private sentVoices = new Set<number>();
@@ -90,22 +91,20 @@ export class AudioBridge {
   }
 
   /**
-   * Tables the engine already holds (the plugin restored them with its state): they are
-   * not sent again. Call before start().
-   */
-  assumeSent(ids: Iterable<TableId>): void {
-    for (const id of ids) this.sentTables.add(id);
-  }
-
-  /**
    * What an already-running engine holds (the plugin's native state) before the first
    * sync: anything the model doesn't have is removed by it; voices, sequences and
-   * wavetables the model has are sent again. Tables the model also has are only kept if
-   * `trustTables` (same project, so same samples); otherwise they are replaced. Call before start().
+   * wavetables the model has are sent again. Tables the model also has are kept if
+   * `trustTables` (the same session restored: same ids, same samples), else replaced.
+   * Call before start().
    */
   adoptEngine(engine: { tables: Iterable<TableId>; voices: Iterable<number>; sequences: Iterable<number>; wavetables: Iterable<number> }, trustTables: boolean): void {
-    const inModel = new Set(this.model.timeline.map((t) => t.id));
-    for (const id of engine.tables) if (trustTables || !inModel.has(id)) this.sentTables.add(id);
+    const inModel = new Map(this.model.timeline.map((t) => [t.id, t.data]));
+    const stale = new Float32Array(0); // never equal to a model table's data: removed
+    for (const id of engine.tables) {
+      const data = inModel.get(id);
+      if (data && trustTables) this.sentTables.set(id, data);
+      else if (!data) this.sentTables.set(id, stale);
+    }
     for (const id of engine.voices) this.sentVoices.add(id);
     for (const id of engine.sequences) this.sentSequences.add(id);
     // A placeholder never equals a model wavetable: present ones are resent, absent ones removed.
@@ -169,14 +168,14 @@ export class AudioBridge {
 
   private syncTables(): void {
     if (!this.open) return;
-    const live = new Set<TableId>(this.model.timeline.map((t) => t.id));
-    const removed = [...this.sentTables].filter((id) => !live.has(id));
+    const live = new Map<TableId, Float32Array>(this.model.timeline.map((t) => [t.id, t.data]));
+    const removed = [...this.sentTables].filter(([id, data]) => live.get(id) !== data).map(([id]) => id);
     if (removed.length) {
       for (const id of removed) this.sentTables.delete(id);
       this.post({ type: 'tables/remove', ids: removed });
     }
+    this.pending = this.pending.filter((t) => live.get(t.id) === t.data);
     const queued = new Set(this.pending.map((t) => t.id));
-    this.pending = this.pending.filter((t) => live.has(t.id));
     // Newest first (and ahead of any backlog) so fresh tables become audible immediately.
     const fresh: WaveTable[] = [];
     for (let i = this.model.timeline.length - 1; i >= 0; i--) {
@@ -214,12 +213,12 @@ export class AudioBridge {
     const chunk = this.pending.splice(0, n);
     if (!chunk.length) return;
     if (this.port.rawTables) {
-      for (const t of chunk) this.sentTables.add(t.id);
+      for (const t of chunk) this.sentTables.set(t.id, t.data);
       this.post({ type: 'tables/addData', items: chunk.map((t) => ({ id: t.id, data: t.data })) });
       return;
     }
     const items = chunk.map((t) => ({ id: t.id, mips: buildMipSet(t.data) }));
-    for (const t of chunk) this.sentTables.add(t.id);
+    for (const t of chunk) this.sentTables.set(t.id, t.data);
     this.post(
       { type: 'tables/add', items },
       items.map((i) => i.mips.buffer as ArrayBuffer),

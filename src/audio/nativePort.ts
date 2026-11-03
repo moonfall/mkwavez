@@ -3,7 +3,7 @@
  * talks to the native engine through JUCE's WebView bridge (`window.__JUCE__.backend`)
  * on one event id. Typed arrays travel as base64 (tables) or plain arrays (wavetables).
  */
-import { base64ToF32, f32ToBase64 } from '../app/base64';
+import { f32ToBase64 } from '../app/base64';
 import type { EnginePort } from './port';
 import type { FromNative, FromWorklet, ToWorklet } from './protocol';
 
@@ -25,28 +25,23 @@ export function juceBackend(): JuceBackend | null {
 /** Messages to the native side besides engine batches (see plugin/host.ts). */
 export type ToNative =
   | { type: 'batch'; ops: unknown[] }
-  /** Page loaded: send the saved project (init + tables). */
+  /** Page loaded: send the saved session (init + record chunks). */
   | { type: 'hello' }
-  /** The current project (JSON, without table samples: the native state holds those). */
-  | { type: 'project'; json: string }
+  /** Session backend writes (app/autosave.ts SessionBackend), records as JSON with base64 samples. */
+  | { type: 'session/put'; records: { id: number; json: string }[] }
+  | { type: 'session/commit'; meta: string; remove: number[]; records: { id: number; json: string }[] }
+  | { type: 'session/remove'; ids: number[] }
+  | { type: 'session/clear' }
+  /** Plugin-only settings (MIDI routing), JSON object of strings. */
+  | { type: 'settings'; json: string }
   /** Page errors / warnings, for the native log (MKWAVEZ_WEB_DEBUG=1). */
   | { type: 'log'; level: 'error' | 'warn'; message: string };
-
-/** A table as it travels (base64 samples). */
-export interface WireTable {
-  id: number;
-  data: string;
-}
-
-export function decodeWireTable(t: WireTable): { id: number; data: Float32Array } {
-  return { id: t.id, data: base64ToF32(t.data) };
-}
 
 /** JSON-safe form of an engine op. */
 export function encodeOp(op: ToWorklet): unknown {
   switch (op.type) {
     case 'tables/addData':
-      return { type: op.type, items: op.items.map((i): WireTable => ({ id: i.id, data: f32ToBase64(i.data) })) };
+      return { type: op.type, items: op.items.map((i) => ({ id: i.id, data: f32ToBase64(i.data) })) };
     case 'tables/add':
       throw new Error('the native engine builds its own mip sets (use tables/addData)');
     case 'wavetable/set':
@@ -65,7 +60,7 @@ export function encodeOp(op: ToWorklet): unknown {
 export class NativePort implements EnginePort {
   readonly rawTables = true;
   sampleRate = 48000;
-  /** Non-status messages (host transport, automation, controller moves, init / tables). */
+  /** Non-status messages (host transport, automation, controller moves, init / records). */
   onHost?: (m: FromNative | { type: string; [k: string]: unknown }) => void;
   private onMessage?: (m: FromWorklet) => void;
 
