@@ -935,8 +935,8 @@ async function mutateChecks(page, tlCount, label) {
 
   // Library.
   // Offered mutations (core/mutations.ts MUTATION_CHOICES) and the seeded ones among them.
-  const MUTATION_COUNT = 44;
-  const SEEDED = 'toNoise,ring,nwarp,cheby,formant,multiples,phaseRandom,jitter,scramble';
+  const MUTATION_COUNT = 48;
+  const SEEDED = 'toNoise,ring,nwarp,grains,stutter,cheby,formant,multiples,phaseRandom,jitter,scramble';
   const all = await visibleIds();
   assert(all.length === MUTATION_COUNT && !all.includes('breed'), `library lists ${MUTATION_COUNT} mutations (legacy Breed hidden)`);
   assert((await page.$$('#mutate-list .gen-tag')).length === SEEDED.split(',').length, 'seeded mutations tagged rnd');
@@ -945,7 +945,7 @@ async function mutateChecks(page, tlCount, label) {
   await waitInk(page, '#mutate-list .gen-entry[data-id="foldSmooth"] canvas');
   assert(true, 'library thumbnails render');
   await page.fill('#mutate-search', 'SPECTRAL');
-  assert((await visibleIds()).length === 14, 'search matches the group');
+  assert((await visibleIds()).length === 16, 'search matches the group');
   await page.fill('#mutate-search', 'seeded');
   const seededIds = await visibleIds();
   assert(seededIds.join() === SEEDED, `search matches mapping hints (${seededIds.join()})`);
