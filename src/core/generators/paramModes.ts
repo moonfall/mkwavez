@@ -9,6 +9,7 @@ import type { ParamValue } from '../table';
 import { additiveTable, DEFAULT_ADDITIVE as AD, type AdditiveParams } from './additive';
 import { DEFAULT_DYN, DYN_MAP_LABELS, dynamicalTable } from './dynamical';
 import { DEFAULT_KS, karplusTable } from './karplus';
+import { DEFAULT_LIFE as LF, LIFE_READS, LIFE_RULES, lifeTable, type LifeParams } from './life';
 import { DEFAULT_RD as RD, RD_CUSTOM, RD_PRESETS, rdTable, type RdParams } from './reactionDiffusion';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 
@@ -189,6 +190,25 @@ export const PARAM_MODES = [
     ],
     seeded: () => true,
     render: (p, seed, index) => rdTable(nums<RdParams>(p, RD), seed, index),
+  },
+  {
+    mode: 'life',
+    id: 'life-like-ca',
+    cat: 'Simulations',
+    name: 'Life-like automaton',
+    about:
+      'A 2D cellular automaton (B/S rule) on a small torus from a seeded random fill. Each waveform reads one line ' +
+      'of the board, or live cells per column / row, as steps; a batch is consecutive generations.',
+    params: [
+      { key: 'rule', label: 'Rule', min: 0, max: LIFE_RULES.length - 1, step: 1, value: LF.rule, options: LIFE_RULES.map((r, i) => [i, `${r.label} · ${r.rule}`] as const) },
+      { key: 'read', label: 'Read', min: 0, max: LIFE_READS.length - 1, step: 1, value: LF.read, options: opts(LIFE_READS) },
+      { key: 'size', label: 'Board size', min: 8, max: 64, step: 1, value: LF.size },
+      { key: 'density', label: 'Initial density', min: 0.05, max: 0.95, step: 0.01, value: LF.density },
+      { key: 'start', label: 'Start generation', min: 0, max: 256, step: 1, value: LF.start },
+      { key: 'step', label: 'Generations per waveform', min: 1, max: 16, step: 1, value: LF.step },
+    ],
+    seeded: () => true,
+    render: (p, seed, index) => lifeTable(nums<LifeParams>(p, LF), seed, index),
   },
 ] as const satisfies readonly ParamModeDef[];
 

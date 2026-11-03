@@ -16,6 +16,7 @@ export * from './karplus';
 export * from './paramModes';
 export * from './formula';
 export * from './formulaPresets';
+export * from './life';
 export * from './perlin';
 export * from './reactionDiffusion';
 export * from './resample';

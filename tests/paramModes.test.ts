@@ -3,7 +3,11 @@ import { TABLE_SIZE } from '../src/core/constants';
 import {
   additiveAmps,
   DEFAULT_ADDITIVE,
+  DEFAULT_LIFE,
   DEFAULT_RD,
+  lifeBoard,
+  lifeLine,
+  parseRule,
   DEFAULT_SEQUENCE,
   rdState,
   DYN_MAPS,
@@ -132,5 +136,19 @@ describe('parameter modes', () => {
     expect(peak(late)).toBeCloseTo(1, 5);
     const sine = seedTable(req('dynamical-systems', { map: 1, control: 0, controlEnd: 0, iterations: 64 }, 1), 0).data;
     expect(peak(sine)).toBeCloseTo(1, 5);
+  });
+
+  it('Life-like: B/S rules step a glider; generations are reproducible from any checkpoint', () => {
+    const life = parseRule('B3/S23');
+    expect(life.birth[3] && life.survive[2] && life.survive[3] && !life.birth[2]).toBe(true);
+    const p = { ...DEFAULT_LIFE, size: 16 };
+    const g10 = lifeBoard(p, 5, 10).slice();
+    lifeBoard({ ...p, size: 12 }, 5, 0); // another board: the cache starts afresh
+    lifeBoard(p, 5, 4);
+    expect(Array.from(lifeBoard(p, 5, 10))).toEqual(Array.from(g10));
+    // Uniform lines fall back to a non-uniform one.
+    const board = new Uint8Array(64);
+    board[8 * 2 + 3] = 1;
+    expect(lifeLine(board, 8, 0).some((v) => v)).toBe(true);
   });
 });
