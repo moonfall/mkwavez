@@ -16,10 +16,11 @@ const model = new AppModel();
 const bridge = new AudioBridge(model);
 const ctx: UiContext = { model, bridge };
 
-// ---- initial state (as the prototype): five basic tables, three voices, one sequence each ----
+// ---- initial state (as the prototype): five basic tables, three voices, one sequence each;
+// only voice 1 starts unmuted ----
 for (const w of ['sine', 'tri', 'saw', 'square', 'p25'] as const) model.addTables([generateBasic(w, 0)], 'single', false);
 const v1 = model.addVoice({ windowStart: 0, windowEnd: 4, position: 0.3, lfoDepth: 0.6, lfoRate: 0.25, octave: 0 })!;
-const v2 = model.addVoice({ windowStart: 1, windowEnd: 4, position: 0.75, lfoDepth: 0.3, lfoRate: 0.11, lfoPhase: 1.5, octave: 1 })!;
+const v2 = model.addVoice({ windowStart: 1, windowEnd: 4, position: 0.75, lfoDepth: 0.3, lfoRate: 0.11, lfoPhase: 1.5, octave: 1, mute: true })!;
 const v3 = model.addVoice({
   windowStart: 0,
   windowEnd: 2,

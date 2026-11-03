@@ -16,14 +16,14 @@
   --heat-lo: #2f55d4;
   --heat-mid: #f7f7f5;
   --heat-hi: #d9480f;
-  --v0: #2f55d4;
-  --v1: #a63bc4;
-  --v2: #d9480f;
-  --v3: #0c8599;
-  --v4: #5c940d;
-  --v5: #c2255c;
-  --v6: #8a6d00;
-  --v7: #6741d9;
+  --v0: #e36a00;
+  --v1: #e0157a;
+  --v2: #b88a00;
+  --v3: #2f55d4;
+  --v4: #0c8599;
+  --v5: #5c940d;
+  --v6: #9c36b5;
+  --v7: #8d5524;
   --radius: 8px;
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
@@ -49,14 +49,14 @@
     --heat-lo: #4c6ef5;
     --heat-mid: #1f1f1d;
     --heat-hi: #ff922b;
-    --v0: #7c9bff;
-    --v1: #da77f2;
-    --v2: #ff922b;
-    --v3: #3bc9db;
-    --v4: #a9e34b;
-    --v5: #f783ac;
-    --v6: #ffd43b;
-    --v7: #9775fa;
+    --v0: #ff8a00;
+    --v1: #ff2d95;
+    --v2: #ffd400;
+    --v3: #7c9bff;
+    --v4: #3bc9db;
+    --v5: #a9e34b;
+    --v6: #da77f2;
+    --v7: #c8946a;
     color-scheme: dark;
   }
 }
@@ -79,14 +79,14 @@
   --heat-lo: #4c6ef5;
   --heat-mid: #1f1f1d;
   --heat-hi: #ff922b;
-  --v0: #7c9bff;
-  --v1: #da77f2;
-  --v2: #ff922b;
-  --v3: #3bc9db;
-  --v4: #a9e34b;
-  --v5: #f783ac;
-  --v6: #ffd43b;
-  --v7: #9775fa;
+  --v0: #ff8a00;
+  --v1: #ff2d95;
+  --v2: #ffd400;
+  --v3: #7c9bff;
+  --v4: #3bc9db;
+  --v5: #a9e34b;
+  --v6: #da77f2;
+  --v7: #c8946a;
   color-scheme: dark;
 }
 
@@ -452,6 +452,18 @@ details.sec > summary .meta {
 }
 .card-head button {
   flex: 0 0 auto;
+}
+button.card-collapse {
+  padding: 0 3px;
+}
+.card-collapse svg {
+  transition: transform 0.15s;
+}
+.card.collapsed .card-collapse svg {
+  transform: rotate(-90deg);
+}
+.card.collapsed > .card-head {
+  margin: 0 0 4px;
 }
 .dot {
   width: 10px;

@@ -3,7 +3,7 @@ import { randomSeed } from '../core/prng';
 import { emptySteps, randomSteps, REST, toggleStep, type SequenceData } from '../core/sequence';
 import { cssColor, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { h, icon, ICONS, section, slider, voiceColorVar } from './dom';
+import { cardCollapse, h, icon, ICONS, section, slider, voiceColorVar } from './dom';
 
 const ROW_H = 12;
 const MIN_CELL_W = 16;
@@ -13,6 +13,7 @@ interface Card {
   grid: HTMLCanvasElement;
   dirty: boolean;
   lastStep: number;
+  collapsed(): boolean;
   sync(s: SequenceData): void;
   draw(): void;
 }
@@ -59,7 +60,13 @@ export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameVi
       { class: 'small', 'aria-label': `Remove sequence ${id}`, onclick: () => model.removeSequence(id) },
       icon(ICONS.close),
     );
-    const head = h('div', { class: 'card-head' }, title, target, h('span', { class: 'meta' }), removeBtn);
+    const body = h('div', { class: 'card-body' });
+    const el = h('div', { class: 'card', id: `sequence-${id}` });
+    const collapse = cardCollapse(`sequence ${id}`, el, body, (c) => {
+      if (!c) card.dirty = true;
+    });
+    const meta = h('span', { class: 'meta' });
+    const head = h('div', { class: 'card-head' }, collapse.button, title, target, meta, removeBtn);
 
     const len = slider({ label: 'Length', min: 1, max: MAX_STEPS, step: 1, value: s.length, onInput: (x) => model.updateSequence(id, { length: x }) });
     const gate = slider({
@@ -109,26 +116,23 @@ export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameVi
       model.updateSequence(id, { steps: toggleStep(s.steps, col, row) }, true);
     });
 
-    const el = h(
-      'div',
-      { class: 'card', id: `sequence-${id}` },
-      head,
-      h('div', { class: 'grid2' }, len.el, gate.el),
-      buttons,
-      wrap,
-    );
+    body.append(h('div', { class: 'grid2' }, len.el, gate.el), buttons, wrap);
+    el.append(head, body);
 
     const card: Card = {
       el,
       grid,
       dirty: true,
       lastStep: -2,
+      collapsed: collapse.collapsed,
       sync(ns) {
         s = ns;
         len.set(s.length);
         gate.set(s.gate);
         fillTargets();
         title.style.color = s.voiceId === null ? 'var(--muted)' : `var(${voiceColorVar(s.voiceId - 1)})`;
+        const vi = voiceIdx();
+        meta.textContent = vi >= 0 && model.voices[vi].mute ? 'muted' : '';
         card.dirty = true;
       },
       draw() {
@@ -208,7 +212,7 @@ export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameVi
       frame() {
         if (!sec.el.open) return;
         for (const [id, c] of cards) {
-          if (!isOnScreen(c.grid)) continue;
+          if (c.collapsed() || !isOnScreen(c.grid)) continue;
           const s = model.sequences.find((x) => x.id === id);
           const step = s && model.playing && bridge.status.step >= 0 ? bridge.status.step % s.length : -1;
           if (c.dirty || step !== c.lastStep) {

@@ -14,7 +14,8 @@ const HEAT_H = 64;
  */
 export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model, bridge } = ctx;
-  const sec = section('sec-wavetables', 'Wavetables');
+  // Starts collapsed: a placeholder until wavetable editing lands.
+  const sec = section('sec-wavetables', 'Wavetables', false);
   let current: WavetableId = model.wavetables[0].id;
 
   const pick = selectField(

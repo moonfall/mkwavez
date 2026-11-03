@@ -44,8 +44,10 @@ The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to overr
   generation of N children.
 - **Timeline**: every table, in order (cap 4096). Click to select and inspect;
   Shift-click / long-press toggles Breed parents (badged A, B, …).
-- **Wavetables**: the auto "All" wavetable as an amplitude heat map with voice windows.
-- **Voices**: window, position, LFO, Blend/Step, octave, level, ADSR per voice.
+- **Wavetables** (collapsed by default): the auto "All" wavetable as an amplitude heat map
+  with voice windows.
+- **Voices**: window, position, LFO, Blend/Step, octave, level, ADSR per voice. Only voice 1
+  starts unmuted. Voice and sequence cards collapse individually (chevron) to their header.
 - **Sequences**: 8-row pentatonic step grids, one per voice by default; shared tempo.
 - **Undo** (transport bar) covers table adds (including Apply / Apply N), window
   edits and note edits.

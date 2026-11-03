@@ -1,5 +1,6 @@
 // Headless-Chrome smoke test: page loads without console errors, sections collapse and
-// expand, Seed adds tables to the timeline, the worklet loads and the transport runs,
+// expand (Wavetables starts collapsed; voice / sequence cards collapse individually and stop
+// redrawing), only voice 1 starts unmuted, Seed adds tables to the timeline, the worklet loads and the transport runs,
 // Mutate previews / applies / sweeps / chains / rerolls / evolves while playing,
 // Breed picks parents (timeline Shift-click / long-press, Add selected, voice window),
 // previews and applies every operator, sweeps and generations; evicted parents drop out.
@@ -32,6 +33,10 @@ async function run(label, url, browser) {
   const tlCount = () => page.evaluate(() => window.mkwavez.model.timeline.length);
   assert((await tlCount()) === 5, 'starts with 5 tables');
   assert((await page.textContent('#sec-timeline > summary .meta')).trim() === '5 / 4096', 'timeline meta shows count / cap');
+
+  assert((await page.$eval('#sec-wavetables', (d) => d.open)) === false, 'Wavetables starts collapsed');
+  const mutes = await page.evaluate(() => window.mkwavez.model.voices.map((v) => v.mute));
+  assert(JSON.stringify(mutes) === '[false,true,true]', 'only voice 1 starts unmuted');
 
   // Collapse / expand every section.
   for (const id of ['sec-generate', 'sec-timeline', 'sec-wavetables', 'sec-voices', 'sec-sequences']) {
@@ -95,6 +100,7 @@ async function run(label, url, browser) {
   assert(true, 'audio worklet running');
   await page.waitForFunction(() => Number(document.body.dataset.step) >= 4, null, { timeout: 10000 });
   assert(true, 'sequencer steps advance');
+  await cardCollapseChecks(page);
   await page.click('button[data-wave="saw"]');
   await page.waitForFunction(
     () => window.mkwavez.bridge.workletTableCount === window.mkwavez.model.timeline.length,
@@ -150,6 +156,40 @@ async function run(label, url, browser) {
   assert(!overflow, 'no horizontal page overflow');
   assert(errors.length === 0, `no console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
   await page.close();
+}
+
+/** Voice / sequence cards collapse to their header and stop redrawing (transport running). */
+async function cardCollapseChecks(page) {
+  for (const [card, canvas] of [
+    ['#voice-1', '#voice-1 canvas'],
+    ['#sequence-1', '#sequence-1 canvas.seq-grid'],
+  ]) {
+    const btn = `${card} .card-head .card-collapse`;
+    assert((await page.getAttribute(btn, 'aria-expanded')) === 'true', `${card} starts expanded`);
+    await page.click(btn);
+    assert((await page.getAttribute(btn, 'aria-expanded')) === 'false', `${card} collapses`);
+    assert(!(await page.isVisible(canvas)) && (await page.isVisible(`${card} .card-head .name`)), `${card} collapsed: body hidden, header visible`);
+    const a = (await canvasInk(page, canvas)).sum;
+    await page.waitForTimeout(700);
+    assert((await canvasInk(page, canvas)).sum === a, `${card} collapsed: canvas not redrawn while playing`);
+    await page.click(btn);
+    assert(await page.isVisible(canvas), `${card} expands`);
+    await page.waitForFunction(
+      ([sel, b]) => {
+        const c = document.querySelector(sel);
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 4) sum = (sum * 31 + d[i] + d[i + 1] * 7 + d[i + 3] * 13) % 1000000007;
+        return sum !== b;
+      },
+      [canvas, a],
+      { timeout: 5000 },
+    );
+    assert(true, `${card} redraws after expanding`);
+  }
+  await page.click('#voice-2 .card-head .card-collapse');
+  assert((await page.$eval('#voice-1 .card-body', (b) => b.hidden)) === false, 'cards collapse independently');
+  await page.click('#voice-2 .card-head .card-collapse');
 }
 
 /** Count of drawn (non-transparent) pixels and a cheap checksum of a canvas. */

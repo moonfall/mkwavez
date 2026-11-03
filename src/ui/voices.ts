@@ -3,15 +3,19 @@ import type { VoiceParams } from '../core/voice';
 import { wavetableLength } from '../core/wavetable';
 import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { h, icon, ICONS, section, slider, voiceColorVar, type Slider } from './dom';
+import { cardCollapse, h, icon, ICONS, section, slider, voiceColorVar, type Slider } from './dom';
 
 const VIEW_H = 60;
 
 interface Card {
   el: HTMLElement;
   sync(v: VoiceParams): void;
+  /** Header readout (cheap; also runs while collapsed). */
+  drawMeta(): void;
+  /** Waveform + spectrum canvases. */
   draw(): void;
   dirty: boolean;
+  collapsed(): boolean;
   wave: HTMLCanvasElement;
 }
 
@@ -70,9 +74,15 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
       { class: 'small', 'aria-label': `Remove ${v.name}`, onclick: () => model.removeVoice(id) },
       icon(ICONS.close),
     );
+    const body = h('div', { class: 'card-body' });
+    const el = h('div', { class: 'card', id: `voice-${id}` });
+    const collapse = cardCollapse(v.name, el, body, (c) => {
+      if (!c) card.dirty = true;
+    });
     const head = h(
       'div',
       { class: 'card-head' },
+      collapse.button,
       h('span', { class: 'dot', style: `background:var(${voiceColorVar(id - 1)})` }),
       h('span', { class: 'name', style: `color:var(${voiceColorVar(id - 1)})` }, v.name),
       meta,
@@ -121,10 +131,7 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
     const sus = slider({ label: 'Sustain', min: 0, max: 1, step: 0.01, value: v.sustain, format: pct, onInput: (x) => set({ sustain: x }) });
     const rel = timeSlider('Release', 4, v.release, (x) => set({ release: x }));
 
-    const el = h(
-      'div',
-      { class: 'card', id: `voice-${id}` },
-      head,
+    body.append(
       h('div', { class: 'grid2' }, wave, spec),
       h(
         'div',
@@ -145,11 +152,13 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
       ),
       h('div', { class: 'grid2 grid4' }, att.el, dec.el, sus.el, rel.el),
     );
+    el.append(head, body);
 
     const card: Card = {
       el,
       wave,
       dirty: true,
+      collapsed: collapse.collapsed,
       sync(nv) {
         v = nv;
         const wt = model.wavetable(v.wavetableId);
@@ -177,9 +186,12 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
         el.style.opacity = v.mute ? '0.75' : '1';
         card.dirty = true;
       },
-      draw() {
+      drawMeta() {
         const p = playing(v);
         meta.textContent = p.A ? `#${v.interp === 'step' ? p.f + 1 : (p.f + 1).toFixed(1)}` : '—';
+      },
+      draw() {
+        const p = playing(v);
         const [g, w, hh] = fit(wave, VIEW_H);
         const [g2, w2, h2] = fit(spec, VIEW_H);
         if (!p.A) return;
@@ -231,8 +243,15 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
       frame() {
         if (!sec.el.open) return;
         for (const c of cards.values()) {
-          if ((c.dirty || model.playing) && isOnScreen(c.wave)) {
+          if (!c.dirty && !model.playing) continue;
+          if (c.collapsed()) {
+            // Header only: keep the position readout live, never touch the canvases
+            // (expanding marks the card dirty again).
             c.dirty = false;
+            c.drawMeta();
+          } else if (isOnScreen(c.wave)) {
+            c.dirty = false;
+            c.drawMeta();
             c.draw();
           }
         }

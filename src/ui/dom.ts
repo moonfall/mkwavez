@@ -135,6 +135,34 @@ export function selectField(
   return { el, select };
 }
 
+/**
+ * Collapse toggle for a card: hides `body` (everything below the card head) and marks
+ * the card `.collapsed`. Starts expanded; `onToggle` fires with the new state.
+ */
+export function cardCollapse(
+  label: string,
+  card: HTMLElement,
+  body: HTMLElement,
+  onToggle?: (collapsed: boolean) => void,
+): { button: HTMLButtonElement; collapsed(): boolean } {
+  const button = h('button', { class: 'small card-collapse' }, icon(ICONS.chevron));
+  let collapsed = false;
+  const apply = () => {
+    body.hidden = collapsed;
+    card.classList.toggle('collapsed', collapsed);
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} ${label}`);
+  };
+  apply();
+  button.addEventListener('click', () => {
+    collapsed = !collapsed;
+    apply();
+    onToggle?.(collapsed);
+  });
+  return { button, collapsed: () => collapsed };
+}
+
+/** Voice colour CSS variable (`--v0`…`--v7`); index = voice id − 1. Palette in styles.css. */
 export function voiceColorVar(colorIndex: number): string {
   return `--v${((colorIndex % 8) + 8) % 8}`;
 }
