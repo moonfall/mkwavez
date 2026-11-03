@@ -13,6 +13,8 @@ import {
   DYN_MAPS,
   euclid,
   sequenceValues,
+  splinePoints,
+  DEFAULT_SPLINE,
   type SequenceParams,
   PARAM_MODES,
   RESERVED_OPS,
@@ -150,5 +152,17 @@ describe('parameter modes', () => {
     const board = new Uint8Array(64);
     board[8 * 2 + 3] = 1;
     expect(lifeLine(board, 8, 0).some((v) => v)).toBe(true);
+  });
+
+  it('spline: jitter sweep moves the points; adding points keeps the earlier ones', () => {
+    const sweep = (i: number) => splinePoints({ ...DEFAULT_SPLINE, jitter: 0, jitterEnd: 1 }, 4, i, 3);
+    expect(sweep(0)).not.toEqual(sweep(2));
+    const add = (i: number) => splinePoints({ ...DEFAULT_SPLINE, batch: 1 }, 4, i, 4);
+    expect(add(3).length).toBe(add(0).length + 3);
+    expect(add(3).slice(0, add(0).length)).toEqual(add(0));
+    for (const kind of [0, 1]) {
+      const t = seedTable(req('spline', { kind, tension: 0.5 }, 3), 1).data;
+      expect(t.every(Number.isFinite)).toBe(true);
+    }
   });
 });

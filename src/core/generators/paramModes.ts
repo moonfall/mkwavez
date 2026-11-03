@@ -11,6 +11,7 @@ import { DEFAULT_DYN, DYN_MAP_LABELS, dynamicalTable } from './dynamical';
 import { DEFAULT_KS, karplusTable } from './karplus';
 import { DEFAULT_LIFE as LF, LIFE_READS, LIFE_RULES, lifeTable, type LifeParams } from './life';
 import { DEFAULT_RD as RD, RD_CUSTOM, RD_PRESETS, rdTable, type RdParams } from './reactionDiffusion';
+import { DEFAULT_SPLINE as SP, splineTable, type SplineParams } from './spline';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 
 export interface SeedParam {
@@ -209,6 +210,25 @@ export const PARAM_MODES = [
     ],
     seeded: () => true,
     render: (p, seed, index) => lifeTable(nums<LifeParams>(p, LF), seed, index),
+  },
+  {
+    mode: 'spline',
+    id: 'spline',
+    cat: 'Builders',
+    name: 'Spline',
+    about:
+      'Seeded control points evenly spaced around the cycle, joined by a smooth periodic spline. A batch sweeps ' +
+      'the jitter (each point moves along its own seeded direction) or adds a point per waveform.',
+    params: [
+      { key: 'points', label: 'Points', min: 3, max: 32, step: 1, value: SP.points },
+      { key: 'kind', label: 'Curve', min: 0, max: 1, step: 1, value: SP.kind, options: opts(['Catmull-Rom (cardinal)', 'B-spline']) },
+      { key: 'tension', label: 'Tension', min: 0, max: 1, step: 0.01, value: SP.tension },
+      { key: 'jitter', label: 'Jitter', min: 0, max: 1, step: 0.01, value: SP.jitter },
+      { key: 'jitterEnd', label: 'Batch → jitter', min: 0, max: 1, step: 0.01, value: SP.jitterEnd },
+      { key: 'batch', label: 'Batch', min: 0, max: 1, step: 1, value: SP.batch, options: opts(['Sweep jitter', 'Add a point per waveform']) },
+    ],
+    seeded: () => true,
+    render: (p, seed, index, count) => splineTable(nums<SplineParams>(p, SP), seed, index, count),
   },
 ] as const satisfies readonly ParamModeDef[];
 

@@ -22,6 +22,7 @@ export * from './reactionDiffusion';
 export * from './resample';
 export * from './seed';
 export * from './sequences';
+export * from './spline';
 
 export interface RenderEnv {
   /** Needed only for 'formula' recipes (browser: src/browser/formulaEval.ts). */
