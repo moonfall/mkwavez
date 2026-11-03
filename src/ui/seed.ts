@@ -1,4 +1,3 @@
-import type { AppModel } from '../app/model';
 import { compileFormula } from '../browser/formulaEval';
 import {
   batchU,
@@ -15,10 +14,10 @@ import { randomSeed } from '../core/prng';
 import type { GeneratedTable } from '../core/table';
 import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { h, icon, selectField, slider, voiceColorVar } from './dom';
+import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS, voiceTargets } from './batch';
+import { h, selectField, slider } from './dom';
+import { buildLibrary } from './library';
 
-/** Largest batch (N) any Generate tab makes. */
-export const MAX_BATCH = 64;
 /** Minimum interval between preview restarts while typing / dragging. */
 const PREVIEW_MS = 50;
 /** Main-thread time per frame spent computing preview tables and thumbnails. */
@@ -29,18 +28,10 @@ const TYPING_MS = 300;
 const TABLE_CAP_MS = 150;
 const THUMB_W = 44;
 const THUMB_H = 18;
-const CARD_W = 84;
-const CARD_WAVE_H = 30;
-const CARD_SPEC_H = 14;
-const SPEC_BINS = 64;
 /** Library thumbnails: default params, middle of a 3-table batch (u = 0.5), fixed seed. */
 const THUMB_SEED = 1;
-const NARROW = '(max-width: 719px)';
 const DEFAULT_ENTRY = 'chebyshev';
 const CUSTOM_ENTRY = 'blank-formula';
-
-const UP = 'M6 15l6-6 6 6';
-const DOWN = 'M6 9l6 6 6-6';
 
 export interface SeedPanelOpts {
   /** Shared batch size N (also used by Mutate / Breed). */
@@ -54,25 +45,6 @@ export interface SeedPanelOpts {
 const hex = (s: number) => (s >>> 0).toString(16).padStart(8, '0');
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const tagOf = (e: SeedEntry) => (e.mode === 'formula' ? 'f(x)' : e.mode === 'basic' ? 'basic' : 'params');
-
-/** "Sets window of" checkboxes, one per voice, in voice colours. */
-export function voiceTargetChecks(model: AppModel): HTMLElement {
-  const checks = h('div', { class: 'checks' });
-  const render = () => {
-    checks.replaceChildren(
-      ...model.voices.map((v) => {
-        const cb = h('input', { type: 'checkbox', checked: model.batchTargets.has(v.id) });
-        cb.addEventListener('change', () => model.setBatchTarget(v.id, cb.checked));
-        return h('label', { class: 'check', style: `color:var(${voiceColorVar(v.id - 1)})` }, cb, v.name);
-      }),
-    );
-    if (!model.voices.length) checks.append(h('span', { class: 'hint' }, 'No voices'));
-  };
-  model.on('voices', render);
-  model.on('batchTargets', render);
-  render();
-  return checks;
-}
 
 /** A preview batch being computed incrementally in the frame loop. */
 interface Job {
@@ -95,8 +67,6 @@ interface Job {
  */
 export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLElement; view: FrameView } {
   const { model } = ctx;
-  const narrowMq = matchMedia(NARROW);
-
   // ---- state ----
   let sel = Math.max(
     0,
@@ -105,9 +75,6 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const edits = new Map<string, string>();
   const paramEdits = new Map<string, Record<string, number>>();
   let seed = randomSeed();
-  let shown = 0;
-  let filtered: number[] = SEED_LIBRARY.map((_, i) => i);
-  let libOpen = false;
 
   const entry = () => SEED_LIBRARY[sel];
   const exprOf = (e: SeedEntry) => edits.get(e.id) ?? e.expr ?? '';
@@ -143,204 +110,28 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   let statusDirty = true;
 
   // ---- library ----
-  const hay = SEED_LIBRARY.map((e) => `${e.name}\n${e.cat}\n${e.expr ?? ''}`.toLowerCase());
-  const list = h('div', { id: 'seed-list', class: 'seed-list', role: 'group', 'aria-label': 'Presets and modes' });
-  const entryButtons: HTMLButtonElement[] = [];
-  const thumbs: HTMLCanvasElement[] = [];
   const thumbData: (Float32Array | undefined)[] = [];
-  const thumbDrawn: string[] = [];
-  const groupTitles = new Map<string, HTMLElement>();
-  SEED_LIBRARY.forEach((e, i) => {
-    if (!groupTitles.has(e.cat)) {
-      const t = h('div', { class: 'seed-group' }, e.cat);
-      groupTitles.set(e.cat, t);
-      list.append(t);
-    }
-    const thumb = h('canvas', { class: 'seed-thumb', 'aria-hidden': 'true' });
-    const b = h(
-      'button',
-      { class: 'seed-entry', 'data-id': e.id, tabindex: -1, onclick: () => pick(i) },
-      h('span', { class: 'seed-entry-name' }, e.name),
-      h('span', { class: 'seed-tag' }, tagOf(e)),
-      thumb,
-    );
-    entryButtons.push(b);
-    thumbs.push(thumb);
-    thumbDrawn.push('');
-    list.append(b);
-  });
-  const empty = h('p', { class: 'seed-empty', id: 'seed-empty', hidden: true });
-  list.append(empty);
-
-  const search = h('input', {
-    type: 'search',
-    id: 'seed-search',
-    class: 'seed-search',
+  const thumbDrawn: string[] = SEED_LIBRARY.map(() => '');
+  const lib = buildLibrary({
+    idPrefix: 'seed',
+    title: 'Library',
     placeholder: 'Search name, category, formula',
-    'aria-label': 'Search the library',
-    'aria-controls': 'seed-list',
-    autocomplete: 'off',
-    autocapitalize: 'off',
-    spellcheck: false,
-  });
-  const pos = h('span', { class: 'seed-pos', id: 'seed-pos' });
-  const curCat = h('span', { class: 'seed-cur-cat' });
-  const curName = h('span', { class: 'seed-cur-name' });
-  const curPos = h('span', { class: 'seed-cur-pos' });
-  const currentBtn = h(
-    'button',
-    {
-      id: 'seed-current',
-      class: 'seed-current',
-      'aria-expanded': 'false',
-      'aria-controls': 'seed-lib-body',
-      onclick: () => setOpen(!libOpen),
-    },
-    curCat,
-    curName,
-    curPos,
-  );
-  const upBtn = h('button', { id: 'seed-up', class: 'seed-step', 'aria-label': 'Previous entry', onclick: () => stepSel(-1, false) }, icon(UP));
-  const downBtn = h('button', { id: 'seed-down', class: 'seed-step', 'aria-label': 'Next entry', onclick: () => stepSel(1, false) }, icon(DOWN));
-  const libBody = h('div', { class: 'seed-lib-body', id: 'seed-lib-body' }, h('div', { class: 'seed-search-wrap' }, search), list);
-  const lib = h(
-    'nav',
-    { class: 'seed-lib', 'aria-label': 'Library' },
-    h('div', { class: 'seed-lib-head' }, h('span', { class: 'seed-lib-title' }, 'Library'), pos, upBtn, currentBtn, downBtn),
-    libBody,
-  );
-
-  const setOpen = (o: boolean) => {
-    libOpen = o;
-    lib.classList.toggle('open', o);
-    currentBtn.setAttribute('aria-expanded', String(o));
-    if (o) {
-      thumbsDirty = true;
-      requestAnimationFrame(() => scrollEntryIntoView(sel));
-    }
-  };
-
-  const applyFilter = () => {
-    const tokens = search.value.toLowerCase().split(/\s+/).filter(Boolean);
-    filtered = [];
-    const catsShown = new Set<string>();
-    SEED_LIBRARY.forEach((e, i) => {
-      const m = tokens.every((t) => hay[i].includes(t));
-      entryButtons[i].hidden = !m;
-      if (m) {
-        filtered.push(i);
-        catsShown.add(e.cat);
-      }
-    });
-    for (const [cat, t] of groupTitles) t.hidden = !catsShown.has(cat);
-    empty.hidden = filtered.length > 0;
-    empty.textContent = `No matches for “${search.value.trim()}”`;
-    syncLibrary();
-    scrollEntryIntoView(sel);
-    thumbsDirty = true;
-  };
-
-  search.addEventListener('input', applyFilter);
-  search.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') {
-      ev.preventDefault();
-      if (!filtered.length) return;
-      if (!filtered.includes(sel)) selectEntry(filtered[0], false);
-      if (libOpen && narrowMq.matches) {
-        setOpen(false);
-        currentBtn.focus();
-      }
-    } else if (ev.key === 'ArrowDown') {
-      ev.preventDefault();
-      if (filtered.length) selectEntry(filtered.includes(sel) ? sel : filtered[0], true);
-    } else if (ev.key === 'Escape') {
-      ev.preventDefault();
-      if (search.value) {
-        search.value = '';
-        applyFilter();
-      } else if (libOpen) {
-        setOpen(false);
-        currentBtn.focus();
-      }
-    }
-  });
-  list.addEventListener('keydown', (ev) => {
-    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
-      ev.preventDefault();
-      stepSel(ev.key === 'ArrowDown' ? 1 : -1, true);
-    } else if ((ev.key === 'Home' || ev.key === 'End') && filtered.length) {
-      ev.preventDefault();
-      selectEntry(ev.key === 'Home' ? filtered[0] : filtered[filtered.length - 1], true);
-    } else if (ev.key === 'Escape' && libOpen) {
-      setOpen(false);
-      currentBtn.focus();
-    }
-  });
-
-  /** Step to the next / previous entry within the search results. */
-  const stepSel = (d: number, focus: boolean) => {
-    if (!filtered.length) return;
-    const next =
-      d > 0
-        ? (filtered.find((i) => i > sel) ?? filtered[filtered.length - 1])
-        : ([...filtered].reverse().find((i) => i < sel) ?? filtered[0]);
-    selectEntry(next, focus);
-  };
-
-  const pick = (i: number) => {
-    selectEntry(i, false);
-    if (libOpen) {
-      setOpen(false);
-      if (narrowMq.matches) currentBtn.focus();
-    }
-  };
-
-  const selectEntry = (i: number, focus: boolean) => {
-    if (i !== sel) {
-      thumbDrawn[sel] = thumbDrawn[i] = '';
+    items: SEED_LIBRARY.map((e) => ({ id: e.id, group: e.cat, name: e.name, tag: tagOf(e), search: `${e.name}\n${e.cat}\n${e.expr ?? ''}` })),
+    initial: sel,
+    onChange: (i, from) => {
+      thumbDrawn[from] = thumbDrawn[i] = '';
       sel = i;
-      setShown(0, false);
+      strip.setShown(0);
       flash('');
       renderEditor();
       thumbsDirty = mainDirty = cardsDirty = true;
       updateStatus();
-    }
-    syncLibrary();
-    scrollEntryIntoView(i);
-    if (focus) entryButtons[i].focus({ preventScroll: true });
-  };
-
-  /** aria-current, roving tabindex, position counter and the compact label. */
-  const syncLibrary = () => {
-    const k = filtered.indexOf(sel);
-    const tabStop = k >= 0 ? sel : (filtered[0] ?? -1);
-    entryButtons.forEach((b, i) => {
-      b.setAttribute('aria-current', String(i === sel));
-      b.tabIndex = i === tabStop ? 0 : -1;
-    });
-    const p = `${k >= 0 ? k + 1 : '–'} / ${filtered.length}`;
-    pos.textContent = p;
-    curPos.textContent = p;
-    const e = entry();
-    curCat.textContent = `${e.cat} ›`;
-    curName.textContent = e.name;
-    upBtn.disabled = !filtered.length || filtered[0] >= sel;
-    downBtn.disabled = !filtered.length || filtered[filtered.length - 1] <= sel;
-  };
-
-  /** Scroll the list (only) so entry i is visible. */
-  const scrollEntryIntoView = (i: number) => {
-    const b = entryButtons[i];
-    if (b.hidden || !list.clientHeight) return;
-    const prev = b.previousElementSibling;
-    const top = b.offsetTop - (prev?.classList.contains('seed-group') ? (prev as HTMLElement).offsetHeight + 6 : 4);
-    const bottom = b.offsetTop + b.offsetHeight + 4;
-    if (top < list.scrollTop) list.scrollTop = top;
-    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
-  };
+    },
+    onThumbs: () => (thumbsDirty = true),
+  });
 
   // ---- formula / parameters ----
-  const edKind = h('span', { class: 'seed-h', id: 'seed-kind' });
+  const edKind = h('span', { class: 'gen-h', id: 'seed-kind' });
   const edPath = h('span', { class: 'seed-path', id: 'seed-title' });
   const editedBadge = h('span', { class: 'seed-badge', id: 'seed-edited', hidden: true }, 'edited');
   const revertBtn = h('button', { class: 'seed-link', id: 'seed-revert', hidden: true, onclick: () => revert() }, 'Revert to preset');
@@ -433,7 +224,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
             if (prev !== undefined && prev !== e.asFormula && !confirm(`Replace your Blank formula edits with the ${e.name} formula?`))
               return;
             edits.set(CUSTOM_ENTRY, e.asFormula!);
-            selectEntry(ci, false);
+            lib.select(ci);
             onEdit();
           },
         },
@@ -486,15 +277,15 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const shownLabel = h('span', { class: 'mono-label', id: 'seed-shown' });
   const waveC = h('canvas', { id: 'seed-wave', role: 'img', 'aria-label': 'Waveform of the shown table' });
   const specC = h('canvas', { id: 'seed-spec', role: 'img', 'aria-label': 'Harmonic spectrum of the shown table' });
-  const axis = (...labels: string[]) => h('div', { class: 'seed-axis' }, ...labels.map((l) => h('span', {}, l)));
+  const axis = (...labels: string[]) => h('div', { class: 'gen-axis' }, ...labels.map((l) => h('span', {}, l)));
   // Canvases fill their box (absolutely positioned; sized from the box in drawMain).
   const waveBox = h(
     'div',
-    { class: 'seed-plot-box' },
+    { class: 'gen-plot-box' },
     waveC,
     h(
       'div',
-      { class: 'seed-plot-tags' },
+      { class: 'gen-plot-tags' },
       shownLabel,
       // Planned: an Edit layer (draw the waveform / edit harmonics) between the generated
       // table and Add — see finalTable().
@@ -506,146 +297,70 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       ),
     ),
   );
-  const specBox = h('div', { class: 'seed-plot-box' }, specC);
+  const specBox = h('div', { class: 'gen-plot-box' }, specC);
   const viewer = h(
     'div',
     { class: 'seed-viewer' },
     h(
       'div',
-      { class: 'seed-views' },
-      h('div', { class: 'seed-plot seed-plot-wave' }, waveBox, axis('0', 'π', '2π')),
-      h('div', { class: 'seed-plot seed-plot-spec' }, specBox, axis('h1', 'dB (−60…0)', `h${SPEC_BINS}`)),
+      { class: 'gen-views' },
+      h('div', { class: 'gen-plot gen-plot-wave' }, waveBox, axis('0', 'π', '2π')),
+      h('div', { class: 'gen-plot gen-plot-spec' }, specBox, axis('h1', 'dB (−60…0)', `h${SPEC_BINS}`)),
     ),
   );
 
   // ---- batch ----
-  const nInput = h('input', {
-    type: 'number',
-    id: 'seed-n',
-    min: 1,
-    max: MAX_BATCH,
-    step: 1,
-    value: opts.count(),
-    inputmode: 'numeric',
-    'aria-label': 'Batch size N',
-  });
-  nInput.addEventListener('change', () => {
-    const v = Math.round(Number(nInput.value));
-    if (Number.isFinite(v)) opts.setCount(v);
-    nInput.value = String(opts.count());
-  });
-  const stepper = h(
-    'div',
-    { class: 'seed-stepper', role: 'group', 'aria-label': 'Batch size' },
-    h('button', { id: 'seed-n-dec', 'aria-label': 'Fewer tables', onclick: () => opts.setCount(opts.count() - 1) }, '−'),
-    h('label', { class: 'seed-n-label' }, 'N', nInput),
-    h('button', { id: 'seed-n-inc', 'aria-label': 'More tables', onclick: () => opts.setCount(opts.count() + 1) }, '+'),
-  );
+  const stepper = buildStepper('seed', opts);
   const seedLabel = h('span', { id: 'seed-seed', class: 'mono-label', title: 'Shared by the preview and every Add' });
   const seedBox = h(
     'div',
-    { class: 'seed-seedbox' },
+    { class: 'gen-seedbox' },
     h('span', {}, 'Seed'),
     seedLabel,
     h('button', { id: 'seed-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => newSeed() }, 'Reroll'),
   );
   const addShownBtn = h('button', { id: 'seed-add-shown', onclick: () => addShown() }, 'Add shown');
   const addBatchBtn = h('button', { id: 'seed-add-batch', class: 'primary', onclick: () => addBatch() }, `Add batch (+${opts.count()})`);
-  const status = h('div', { class: 'seed-status', id: 'seed-status', role: 'status' });
-  const strip = h('div', { id: 'seed-strip', class: 'seed-strip', role: 'group', 'aria-label': 'Batch tables (←/→ to move)' });
+  const status = h('div', { class: 'gen-status', id: 'seed-status', role: 'status' });
+  const flash = flasher(status);
+  const strip = buildStrip('seed-strip', {
+    onShow: () => {
+      mainDirty = statusDirty = true;
+      syncShownLabel();
+    },
+  });
   const batchBox = h(
     'div',
     { class: 'seed-box seed-batch' },
     h(
       'div',
-      { class: 'seed-batch-head' },
-      h('span', { class: 'seed-h' }, 'Batch'),
-      stepper,
+      { class: 'gen-batch-head' },
+      h('span', { class: 'gen-h' }, 'Batch'),
+      stepper.el,
       seedBox,
-      h('div', { class: 'seed-targets' }, h('span', {}, 'Sets window of'), voiceTargetChecks(model)),
+      voiceTargets(model),
       status,
-      h('div', { class: 'seed-adds' }, addShownBtn, addBatchBtn),
+      h('div', { class: 'gen-adds' }, addShownBtn, addBatchBtn),
     ),
-    strip,
+    strip.el,
   );
 
-  interface Card {
-    el: HTMLButtonElement;
-    wave: HTMLCanvasElement;
-    spec: HTMLCanvasElement;
-    label: HTMLSpanElement;
-    drawn: GeneratedTable | null | undefined;
-  }
-  const cards: Card[] = [];
   const rebuildCards = (n: number) => {
-    while (cards.length < n) {
-      const i = cards.length;
-      const wave = h('canvas', { 'aria-hidden': 'true' });
-      const spec = h('canvas', { 'aria-hidden': 'true' });
-      const label = h('span', { class: 'seed-card-label' });
-      const el = h('button', { class: 'seed-card', tabindex: -1, onclick: () => setShown(i, false) }, wave, spec, label);
-      cards.push({ el, wave, spec, label, drawn: null });
-      strip.append(el);
-    }
-    while (cards.length > n) cards.pop()!.el.remove();
-    cards.forEach((c, i) => {
-      c.label.textContent = `#${i + 1} · u ${batchU(i, n).toFixed(2)}`;
-      c.el.setAttribute('aria-label', `Show table ${i + 1} of ${n}`);
-    });
-    if (shown > n - 1) shown = n - 1;
-    syncCards();
+    strip.resize(n, (i) => `#${i + 1} · u ${batchU(i, n).toFixed(2)}`);
+    syncShownLabel();
     cardsDirty = mainDirty = true;
   };
-  strip.addEventListener('keydown', (ev) => {
-    const n = opts.count();
-    const to =
-      ev.key === 'ArrowRight' ? shown + 1 : ev.key === 'ArrowLeft' ? shown - 1 : ev.key === 'Home' ? 0 : ev.key === 'End' ? n - 1 : null;
-    if (to === null) return;
-    ev.preventDefault();
-    setShown(Math.max(0, Math.min(n - 1, to)), true);
-  });
 
-  const syncCards = () => {
+  const syncShownLabel = () => {
     const n = opts.count();
-    cards.forEach((c, i) => {
-      c.el.setAttribute('aria-pressed', String(i === shown));
-      c.el.tabIndex = i === shown ? 0 : -1;
-    });
+    const shown = strip.shown();
     shownLabel.textContent = `#${shown + 1} of ${n} · n ${shown} · u ${batchU(shown, n).toFixed(2)}`;
-  };
-
-  /** Scroll the strip (only) so card i is visible. */
-  const scrollCardIntoView = (i: number) => {
-    const c = cards[i]?.el;
-    if (!c || !strip.clientWidth) return;
-    const left = c.offsetLeft - 4;
-    const right = c.offsetLeft + c.offsetWidth + 4;
-    if (left < strip.scrollLeft) strip.scrollLeft = left;
-    else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
-  };
-
-  const setShown = (i: number, focus: boolean) => {
-    if (i !== shown) {
-      shown = i;
-      mainDirty = statusDirty = true;
-    }
-    syncCards();
-    scrollCardIntoView(i);
-    if (focus) cards[i]?.el.focus({ preventScroll: true });
   };
 
   const newSeed = () => {
     seed = randomSeed();
     seedLabel.textContent = hex(seed);
     flash('');
-  };
-
-  let flashTimer: ReturnType<typeof setTimeout> | undefined;
-  const flash = (msg: string, warn = false) => {
-    status.textContent = msg;
-    status.classList.toggle('warn', warn);
-    clearTimeout(flashTimer);
-    if (msg) flashTimer = setTimeout(() => (status.textContent = ''), 4000);
   };
 
   // ---- preview job ----
@@ -689,11 +404,12 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       return false;
     }
     cardsDirty = true;
-    if (i === shown) mainDirty = true;
+    if (i === strip.shown()) mainDirty = true;
     return true;
   };
 
   const work = (j: Job, deadline: number) => {
+    const shown = strip.shown();
     if (shown < j.req.count) computeOne(j, shown);
     while (!j.fatal && j.next < j.req.count && performance.now() < deadline) computeOne(j, j.next++);
   };
@@ -717,6 +433,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const syntax = e.mode === 'formula' ? compile(exprOf(e)).err : undefined;
     const j = job && job.key === keyOf(request()) ? job : null;
     const failed = j ? failedOf(j) : [];
+    const shown = strip.shown();
     // Syntax errors and aborted (too slow) formulas invalidate the whole preview.
     const blocking = syntax ? `Syntax: ${syntax}` : j?.fatal ? `Stopped: ${j.fatal}` : '';
     let err = blocking;
@@ -736,6 +453,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   // ---- actions ----
   const addShown = () => {
     const j = currentJob();
+    const shown = strip.shown();
     if (!j || !computeOne(j, shown)) return updateStatus();
     model.addTables([finalTable(j, shown)!], 'single', true);
     flash(`Added #${shown + 1} to the Timeline`);
@@ -773,7 +491,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const drawMain = () => {
     mainDirty = false;
     const cur = currentEntryJob();
-    const i = cur ? Math.min(shown, cur.req.count - 1) : 0;
+    const i = cur ? Math.min(strip.shown(), cur.req.count - 1) : 0;
     const failed = !cur || !!cur.errors[i] || !!cur.fatal;
     const t = (cur && finalTable(cur, i)) || (failed ? undefined : lastMain);
     lastMain = t;
@@ -802,11 +520,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
 
   const drawCards = () => {
     cardsDirty = false;
-    const cw = cssColor('--wave');
-    const cs = cssColor('--accent');
-    const axisC = cssColor('--border');
     const cur = currentEntryJob();
-    cards.forEach((c, i) => {
+    strip.cards.forEach((c, i) => {
       const err = cur && i < cur.req.count ? cur.errors[i] : undefined;
       c.el.classList.toggle('failed', !!err);
       c.el.title = err ? `Error: ${err}` : '';
@@ -814,11 +529,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       // Keep the previous drawing while a restarted job computes this card.
       if (c.drawn === t || (!t && c.drawn && cur && !err && !cur.fatal)) return;
       c.drawn = t;
-      const g = fitFixed(c.wave, CARD_W - 10, CARD_WAVE_H);
-      const gs = fitFixed(c.spec, CARD_W - 10, CARD_SPEC_H);
-      if (!t) return;
-      drawWave(g, 0, 0, CARD_W - 10, CARD_WAVE_H, t.data, cw, { axis: axisC, lineWidth: 1.25 });
-      drawSpectrum(gs, CARD_W - 10, CARD_SPEC_H, t.data, cs, { bins: SPEC_BINS });
+      drawCard(c, t?.data);
     });
   };
 
@@ -833,14 +544,14 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
 
   /** Draw visible thumbnails whose colour changed; compute missing ones within the budget. */
   const drawThumbs = (deadline: number) => {
-    if (libBody.offsetParent === null) {
+    if (!lib.listShown()) {
       thumbsDirty = false;
       return;
     }
     let pending = false;
     const normal = cssColor('--text-2');
     const current = cssColor('--accent-text');
-    for (const i of filtered) {
+    for (const i of lib.filtered()) {
       const want = i === sel ? current : normal;
       if (thumbDrawn[i] === want) continue;
       if (!thumbData[i]) {
@@ -850,7 +561,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         }
         thumbData[i] = thumbTable(SEED_LIBRARY[i]);
       }
-      const g = fitFixed(thumbs[i], THUMB_W, THUMB_H);
+      const g = fitFixed(lib.thumbs[i], THUMB_W, THUMB_H);
       drawWave(g, 0, 0, THUMB_W, THUMB_H, thumbData[i]!, want, { lineWidth: 1.2, points: THUMB_W * 2 });
       thumbDrawn[i] = want;
     }
@@ -861,30 +572,26 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const el = h(
     'div',
     { role: 'tabpanel', id: 'panel-seed', class: 'seed' },
-    lib,
+    lib.el,
     h('div', { class: 'seed-main' }, editor, viewer, batchBox),
   );
   watchVisibility(el);
 
   opts.onCount((n) => {
-    if (document.activeElement !== nInput) nInput.value = String(n);
+    stepper.sync(n);
     addBatchBtn.textContent = `Add batch (+${n})`;
     rebuildCards(n);
     flash('');
   });
   onThemeChange(() => {
     thumbDrawn.fill('');
-    for (const c of cards) c.drawn = null;
+    for (const c of strip.cards) c.drawn = null;
     thumbsDirty = cardsDirty = mainDirty = true;
-  });
-  narrowMq.addEventListener('change', () => {
-    mainDirty = thumbsDirty = true;
   });
   new ResizeObserver(() => (mainDirty = true)).observe(viewer);
 
   renderEditor();
   rebuildCards(opts.count());
-  applyFilter();
   newSeed();
 
   return {

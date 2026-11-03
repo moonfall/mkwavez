@@ -2,7 +2,8 @@ import type { FrameView, UiContext } from './context';
 import { h, panel, slider } from './dom';
 import { buildBreedPanel } from './breed';
 import { buildMutatePanel } from './mutate';
-import { buildSeedPanel, MAX_BATCH, voiceTargetChecks } from './seed';
+import { MAX_BATCH, voiceTargetChecks } from './batch';
+import { buildSeedPanel } from './seed';
 
 export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model } = ctx;

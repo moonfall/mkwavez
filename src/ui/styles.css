@@ -1342,7 +1342,7 @@ button:disabled {
   min-width: 0;
 }
 .seed-box,
-.seed-lib {
+.gen-lib {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
@@ -1361,7 +1361,7 @@ button:disabled {
   gap: 4px 10px;
   min-height: 24px;
 }
-.seed-h {
+.gen-h {
   font-weight: 600;
   font-size: 13px;
 }
@@ -1390,31 +1390,31 @@ button.seed-link {
 }
 
 /* library */
-.seed-lib {
+.gen-lib {
   display: flex;
   flex-direction: column;
   position: sticky;
   top: 60px;
 }
-.seed-lib-head {
+.gen-lib-head {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 8px 8px 8px 12px;
   border-bottom: 1px solid var(--border);
 }
-.seed-lib-title {
+.gen-lib-title {
   font-weight: 600;
   font-size: 13px;
   flex: 1 1 0;
 }
-.seed-pos,
-.seed-cur-pos {
+.gen-lib-pos,
+.gen-cur-pos {
   font-size: 12px;
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
-button.seed-step {
+button.gen-lib-step {
   flex: 0 0 40px;
   height: 34px;
   display: flex;
@@ -1422,7 +1422,7 @@ button.seed-step {
   justify-content: center;
   padding: 0;
 }
-button.seed-current {
+button.gen-lib-current {
   display: none;
   flex: 1 1 0;
   height: 34px;
@@ -1430,34 +1430,34 @@ button.seed-current {
   gap: 6px;
   text-align: left;
 }
-.seed-cur-cat {
+.gen-cur-cat {
   color: var(--text-2);
   flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.seed-cur-name {
+.gen-cur-name {
   font-weight: 600;
   flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.seed-search-wrap {
+.gen-lib-search-wrap {
   padding: 8px 8px 0;
 }
-.seed-search {
+.gen-lib-search {
   width: 100%;
   font-family: var(--font) !important;
   font-size: 13px !important;
 }
-.seed-list {
+.gen-lib-list {
   position: relative;
   max-height: min(68vh, 620px);
   overflow-y: auto;
   padding: 2px 6px 6px;
   overscroll-behavior: contain;
 }
-.seed-group {
+.gen-lib-group {
   padding: 10px 6px 3px;
   font-size: 11px;
   font-weight: 600;
@@ -1465,7 +1465,7 @@ button.seed-current {
   text-transform: uppercase;
   color: var(--muted);
 }
-button.seed-entry {
+button.gen-entry {
   width: 100%;
   height: auto;
   min-height: 32px;
@@ -1478,21 +1478,21 @@ button.seed-entry {
   font-size: 13px;
   text-align: left;
 }
-button.seed-entry:hover {
+button.gen-entry:hover {
   background: var(--surface-2);
 }
-button.seed-entry[aria-current='true'] {
+button.gen-entry[aria-current='true'] {
   background: var(--accent-bg);
   border-color: var(--accent);
   color: var(--accent-text);
 }
-.seed-entry-name {
+.gen-entry-name {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.seed-tag {
+.gen-tag {
   flex: 0 0 auto;
   font-size: 10px;
   font-family: var(--font-mono);
@@ -1502,7 +1502,7 @@ button.seed-entry[aria-current='true'] {
   padding: 0 4px;
   line-height: 15px;
 }
-canvas.seed-thumb {
+canvas.gen-thumb {
   flex: 0 0 44px;
   width: 44px;
   height: 18px;
@@ -1510,7 +1510,7 @@ canvas.seed-thumb {
   border-radius: 0;
   background: transparent;
 }
-.seed-empty {
+.gen-lib-empty {
   margin: 10px 6px;
   font-size: 12px;
   color: var(--text-2);
@@ -1578,16 +1578,16 @@ input.seed-expr:focus-visible {
 }
 
 /* waveform: canvases fill their box (sized from it when drawn) */
-.seed-plot-box {
+.gen-plot-box {
   position: relative;
   height: 210px;
 }
-.seed-plot-box canvas {
+.gen-plot-box canvas {
   position: absolute;
   inset: 0;
   height: 100%;
 }
-.seed-plot-tags {
+.gen-plot-tags {
   position: absolute;
   top: 5px;
   left: 8px;
@@ -1598,60 +1598,60 @@ input.seed-expr:focus-visible {
   gap: 8px;
   pointer-events: none;
 }
-.seed-plot-tags .seg {
+.gen-plot-tags .seg {
   pointer-events: auto;
 }
-.seed-plot-tags .seg button {
+.gen-plot-tags .seg button {
   height: 22px;
   font-size: 11px;
   padding: 0 8px;
 }
-.seed-views {
+.gen-views {
   display: flex;
   gap: 10px;
 }
-.seed-plot {
+.gen-plot {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
-.seed-plot-wave {
+.gen-plot-wave {
   flex: 2 1 0;
 }
-.seed-plot-spec {
+.gen-plot-spec {
   flex: 1 1 0;
 }
-.seed-plot canvas {
+.gen-plot canvas {
   background: var(--bg);
 }
-.seed-axis {
+.gen-axis {
   display: flex;
   justify-content: space-between;
   font-size: 11px;
   color: var(--text-2);
   font-family: var(--font-mono);
 }
-.seed-stale .seed-views,
-.seed-stale .seed-strip {
+.seed-stale .gen-views,
+.seed-stale .gen-strip {
   opacity: 0.45;
 }
 
 /* batch */
-.seed-batch-head {
+.gen-batch-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 14px;
 }
-.seed-stepper {
+.gen-stepper {
   display: flex;
   align-items: center;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   overflow: hidden;
 }
-.seed-stepper button {
+.gen-stepper button {
   width: 34px;
   height: 32px;
   border: 0;
@@ -1659,7 +1659,7 @@ input.seed-expr:focus-visible {
   font-size: 16px;
   padding: 0;
 }
-.seed-n-label {
+.gen-n-label {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1668,7 +1668,7 @@ input.seed-expr:focus-visible {
   border-left: 1px solid var(--border-strong);
   border-right: 1px solid var(--border-strong);
 }
-.seed-n-label input {
+.gen-n-label input {
   width: 46px;
   height: 30px;
   border: 0;
@@ -1678,34 +1678,34 @@ input.seed-expr:focus-visible {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-.seed-seedbox,
-.seed-targets {
+.gen-seedbox,
+.gen-targets {
   display: flex;
   align-items: center;
   gap: 6px 10px;
   font-size: 12px;
   color: var(--text-2);
 }
-.seed-seedbox .mono-label {
+.gen-seedbox .mono-label {
   color: var(--text);
 }
-.seed-targets {
+.gen-targets {
   flex-wrap: wrap;
 }
-.seed-targets .checks {
+.gen-targets .checks {
   min-height: 28px;
   gap: 4px 10px;
 }
-.seed-adds {
+.gen-adds {
   display: flex;
   gap: 6px;
   margin-left: auto;
 }
-.seed-adds button {
+.gen-adds button {
   height: 32px;
   padding: 0 12px;
 }
-.seed-status {
+.gen-status {
   font-size: 12px;
   color: var(--new);
   flex: 1 1 0;
@@ -1714,20 +1714,20 @@ input.seed-expr:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.seed-status.warn {
+.gen-status.warn {
   color: var(--danger);
 }
-.seed-status:empty {
+.gen-status:empty {
   display: none;
 }
-.seed-strip {
+.gen-strip {
   display: flex;
   gap: 8px;
   overflow-x: auto;
   padding: 2px 2px 6px;
   overscroll-behavior-x: contain;
 }
-button.seed-card {
+button.gen-card {
   flex: 0 0 84px;
   height: auto;
   display: flex;
@@ -1738,16 +1738,16 @@ button.seed-card {
   background: var(--bg);
   text-align: left;
 }
-button.seed-card[aria-pressed='true'] {
+button.gen-card[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--accent-bg);
 }
-.seed-card canvas {
+.gen-card canvas {
   border: 0;
   border-radius: 0;
   background: transparent;
 }
-.seed-card-label {
+.gen-card-label {
   font-size: 10px;
   white-space: nowrap;
   overflow: hidden;
@@ -1755,17 +1755,17 @@ button.seed-card[aria-pressed='true'] {
   font-family: var(--font-mono);
   color: var(--text-2);
 }
-button.seed-card[aria-pressed='true'] .seed-card-label {
+button.gen-card[aria-pressed='true'] .gen-card-label {
   color: var(--accent-text);
 }
-button.seed-card.failed {
+button.gen-card.failed {
   border-color: var(--danger);
 }
-button.seed-card.failed .seed-card-label,
-button.seed-card.failed[aria-pressed='true'] .seed-card-label {
+button.gen-card.failed .gen-card-label,
+button.gen-card.failed[aria-pressed='true'] .gen-card-label {
   color: var(--danger);
 }
-button.seed-card.failed .seed-card-label::after {
+button.gen-card.failed .gen-card-label::after {
   content: ' · error';
 }
 
@@ -1774,30 +1774,30 @@ button.seed-card.failed .seed-card-label::after {
   .seed {
     grid-template-columns: minmax(0, 1fr);
   }
-  .seed-lib {
+  .gen-lib {
     position: static;
   }
-  .seed-lib-head {
+  .gen-lib-head {
     padding: 6px;
     border-bottom: 0;
   }
-  .seed-lib.open .seed-lib-head {
+  .gen-lib.open .gen-lib-head {
     border-bottom: 1px solid var(--border);
   }
-  .seed-lib-title,
-  .seed-pos {
+  .gen-lib-title,
+  .gen-lib-pos {
     display: none;
   }
-  button.seed-current {
+  button.gen-lib-current {
     display: flex;
   }
-  .seed-lib:not(.open) .seed-lib-body {
+  .gen-lib:not(.open) .gen-lib-body {
     display: none;
   }
-  .seed-list {
+  .gen-lib-list {
     max-height: 340px;
   }
-  .seed-views {
+  .gen-views {
     flex-direction: column;
   }
   .seed-params {
@@ -1808,10 +1808,10 @@ button.seed-card.failed .seed-card-label::after {
   }
 }
 @media (max-width: 719px) {
-  .seed-plot-wave .seed-plot-box {
+  .gen-plot-wave .gen-plot-box {
     height: 150px;
   }
-  .seed-plot-spec .seed-plot-box {
+  .gen-plot-spec .gen-plot-box {
     height: 90px;
   }
 }
@@ -1827,42 +1827,42 @@ button.seed-card.failed .seed-card-label::after {
     grid-template-rows: minmax(0, 1fr);
     align-items: stretch;
   }
-  .seed-lib {
+  .gen-lib {
     position: static;
     min-height: 0;
     background: var(--bg);
   }
-  .seed-lib-head {
+  .gen-lib-head {
     padding: 4px 4px 4px 10px;
   }
-  button.seed-step {
+  button.gen-lib-step {
     flex: 0 0 28px;
     height: 26px;
   }
-  .seed-search-wrap {
+  .gen-lib-search-wrap {
     padding: 6px 6px 0;
   }
-  .seed-lib-body {
+  .gen-lib-body {
     flex: 1 1 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
   }
-  .seed-list {
+  .gen-lib-list {
     flex: 1 1 0;
     min-height: 0;
     max-height: none;
   }
-  .seed-group {
+  .gen-lib-group {
     padding: 8px 6px 2px;
     font-size: 10px;
   }
-  button.seed-entry {
+  button.gen-entry {
     min-height: 26px;
     font-size: 12px;
     padding: 1px 6px;
   }
-  canvas.seed-thumb {
+  canvas.gen-thumb {
     flex-basis: 34px;
     width: 34px;
   }
@@ -1921,66 +1921,66 @@ button.seed-card.failed .seed-card-label::after {
     flex: 1 1 0;
     min-height: 70px;
   }
-  .seed-views {
+  .gen-views {
     height: 100%;
     gap: 8px;
   }
-  .seed-plot-box {
+  .gen-plot-box {
     flex: 1 1 0;
     min-height: 0;
     height: auto;
   }
-  .seed-axis {
+  .gen-axis {
     font-size: 10px;
   }
   .seed-batch {
     flex: none;
     gap: 6px;
   }
-  .seed-batch-head {
+  .gen-batch-head {
     flex-wrap: nowrap;
     gap: 10px;
   }
-  .seed-stepper button {
+  .gen-stepper button {
     width: 26px;
     height: 26px;
   }
-  .seed-n-label input {
+  .gen-n-label input {
     height: 26px;
     width: 38px;
   }
-  .seed-adds button {
+  .gen-adds button {
     height: 28px;
   }
-  .seed-batch-head > * {
+  .gen-batch-head > * {
     flex: none;
   }
-  .seed-batch-head > .seed-status {
+  .gen-batch-head > .gen-status {
     flex: 1 1 0;
   }
-  .seed-targets {
+  .gen-targets {
     flex-wrap: nowrap;
   }
-  .seed-batch-head > .seed-targets {
+  .gen-batch-head > .gen-targets {
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
   }
-  .seed-targets > span {
+  .gen-targets > span {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
     flex: 0 1 auto;
   }
-  .seed-pos {
+  .gen-lib-pos {
     white-space: nowrap;
   }
-  .seed-targets .checks {
+  .gen-targets .checks {
     flex-wrap: nowrap;
     min-height: 0;
   }
-  .seed-strip {
+  .gen-strip {
     gap: 4px;
     padding: 0 0 2px;
   }

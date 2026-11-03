@@ -177,7 +177,7 @@ async function run(label, url, browser) {
 async function seedChecks(page, tlCount) {
   const M = (fn, arg) => page.evaluate(fn, arg);
   const title = async () => (await page.textContent('#seed-title')).trim();
-  const visibleIds = () => page.$$eval('.seed-entry', (bs) => bs.filter((b) => !b.hidden).map((b) => b.dataset.id));
+  const visibleIds = () => page.$$eval('#seed-list .gen-entry', (bs) => bs.filter((b) => !b.hidden).map((b) => b.dataset.id));
   const focusedId = () => M(() => document.activeElement?.dataset?.id ?? document.activeElement?.id ?? '');
   const total = (await visibleIds()).length;
 
@@ -203,7 +203,7 @@ async function seedChecks(page, tlCount) {
   await page.click('#seed-current');
   assert(await page.isVisible('#seed-list'), 'tapping the name opens the list');
   await page.waitForTimeout(150);
-  assert((await canvasInk(page, '.seed-entry[data-id="saw"] canvas')).n > 0, 'entry thumbnails render');
+  assert((await canvasInk(page, '#seed-list .gen-entry[data-id="saw"] canvas')).n > 0, 'entry thumbnails render');
   await page.fill('#seed-search', 'PERLIN');
   const ids = await visibleIds();
   assert(ids.length === 7 && ids[0] === 'drift' && ids.at(-1) === 'perlin-noise', `search matches category and name (${ids.length})`);
@@ -244,11 +244,11 @@ async function seedChecks(page, tlCount) {
   await page.click('#seed-current');
   await page.press('#seed-search', 'Escape');
   const scrolled = await page.$eval('#seed-list', (l) => {
-    const b = l.querySelector('.seed-entry[aria-current="true"]');
+    const b = l.querySelector('.gen-entry[aria-current="true"]');
     return b.offsetTop >= l.scrollTop && b.offsetTop + b.offsetHeight <= l.scrollTop + l.clientHeight;
   });
   assert(scrolled, 'selected entry scrolled into view');
-  await page.click('.seed-entry[data-id="sine-saw"]');
+  await page.click('#seed-list .gen-entry[data-id="sine-saw"]');
   assert((await title()) === 'Math › Sine→saw' && !(await page.isVisible('#seed-list')), 'picking an entry selects it and closes the list');
 
   // Formula edit / error / revert.
@@ -265,17 +265,17 @@ async function seedChecks(page, tlCount) {
   await page.fill('#seed-expr', 'sin(p)/u');
   await page.waitForFunction(
     () =>
-      document.querySelectorAll('#seed-strip .seed-card.failed').length === 1 &&
-      document.querySelector('#seed-strip .seed-card:nth-child(1)').classList.contains('failed') &&
+      document.querySelectorAll('#seed-strip .gen-card.failed').length === 1 &&
+      document.querySelector('#seed-strip .gen-card:nth-child(1)').classList.contains('failed') &&
       document.querySelector('#seed-error').textContent.startsWith('Error at #1'),
     null,
     { timeout: 3000 },
   );
   assert((await page.isDisabled('#seed-add-shown')) && (await page.isDisabled('#seed-add-batch')), 'failing card marked; Add shown (on it) and Add batch disabled');
-  await page.click('#seed-strip .seed-card:nth-child(3)');
+  await page.click('#seed-strip .gen-card:nth-child(3)');
   await page.waitForFunction(() => !document.querySelector('#seed-add-shown').disabled, null, { timeout: 3000 });
-  assert((await canvasInk(page, '#seed-strip .seed-card:nth-child(8) canvas')).n > 0, 'the other tables still compute; Add shown allowed on them');
-  await page.click('#seed-strip .seed-card:nth-child(1)');
+  assert((await canvasInk(page, '#seed-strip .gen-card:nth-child(8) canvas')).n > 0, 'the other tables still compute; Add shown allowed on them');
+  await page.click('#seed-strip .gen-card:nth-child(1)');
 
   // A runaway formula is aborted instead of freezing the page.
   const t0 = Date.now();
@@ -293,8 +293,8 @@ async function seedChecks(page, tlCount) {
   await page.waitForTimeout(500);
 
   // Batch strip: arrow keys move the shown table.
-  assert((await page.$$('#seed-strip .seed-card')).length === 8, 'strip shows N = 8 cards');
-  await page.focus('#seed-strip .seed-card[aria-pressed="true"]');
+  assert((await page.$$('#seed-strip .gen-card')).length === 8, 'strip shows N = 8 cards');
+  await page.focus('#seed-strip .gen-card[aria-pressed="true"]');
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   const shownTxt = async () => (await page.textContent('#seed-shown')).trim();
@@ -303,7 +303,7 @@ async function seedChecks(page, tlCount) {
   const before = await canvasInk(page, '#seed-wave');
   await page.keyboard.press('End');
   const inView = await page.$eval('#seed-strip', (s) => {
-    const c = s.querySelector('.seed-card[aria-pressed="true"]');
+    const c = s.querySelector('.gen-card[aria-pressed="true"]');
     const a = s.getBoundingClientRect();
     const b = c.getBoundingClientRect();
     return s.scrollLeft > 0 && b.left >= a.left - 1 && b.right <= a.right + 1 && document.activeElement === c;
@@ -313,7 +313,7 @@ async function seedChecks(page, tlCount) {
   assert((await canvasInk(page, '#seed-wave')).sum !== before.sum, 'large view follows the shown card');
   for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowLeft');
   assert((await shownTxt()).startsWith('#3 of 8'), 'ArrowLeft moves back');
-  await page.click('#seed-strip .seed-card:nth-child(4)');
+  await page.click('#seed-strip .gen-card:nth-child(4)');
   assert((await shownTxt()).startsWith('#4 of 8'), 'clicking a card shows it');
   await page.keyboard.press('ArrowLeft');
 
@@ -378,7 +378,7 @@ async function seedChecks(page, tlCount) {
   assert(
     (await page.inputValue('#seed-n')) === '6' &&
       (await page.textContent('#seed-add-batch')) === 'Add batch (+6)' &&
-      (await page.$$('#seed-strip .seed-card')).length === 6,
+      (await page.$$('#seed-strip .gen-card')).length === 6,
     'N stepper: 6 cards, Add batch (+6)',
   );
   await page.click('#seed-add-batch');
