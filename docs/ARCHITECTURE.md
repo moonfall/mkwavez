@@ -31,11 +31,17 @@ src/
   app/model.ts          AppModel: main-thread state, actions, undo, topic events
   audio/                protocol.ts (messages), worklet.ts (AudioWorkletProcessor adapter),
                         bridge.ts (AudioContext owner, state → messages, mip building)
-  ui/                   Plain DOM + canvas sections (no framework), styles.css tokens;
+  ui/                   Plain DOM + canvas panels (no framework), styles.css tokens
+                        (dark default, [data-theme=light]); dom.ts panel() = one shell
+                        panel (header tools, body; collapsible on the narrow shell);
+                        context.ts UiState (selected voice tab, shared by voices.ts
+                        and sequences.ts); canvas.ts drawing + theme (setTheme,
+                        stored in localStorage); transport.ts the top bar;
                         generate.ts hosts the tabs: seed.ts (Seed tab), mutate.ts
-                        (Mutate tab) and breed.ts (Breed tab); timeline.ts toggles
-                        Breed parents
-  main.ts               initial state, section assembly, frame loop
+                        (Mutate tab) and breed.ts (Breed tab); timeline.ts (strip,
+                        toggles Breed parents); wavetables.ts (overview; the slot for
+                        1D / 2D wavetable editing)
+  main.ts               initial state, shell assembly, frame loop
 tests/                  vitest unit tests (core + AppModel)
 scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 ```
@@ -87,6 +93,24 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   and sequence steps; 40 deep. Covers adds, note edits and window edits (a slider
   drag is one step); other slider moves are not undoable.
 
+## UI layout
+
+- **Wide shell (≥ 900 px)**: `.app` is a 100dvh grid (8 px gutters): a 40 px transport
+  bar, then `.shell` with three columns (45 / 22 / 33 fr) and three rows
+  (55 fr / timeline strip 110 px (100 px under 840 px tall, 124 px on large screens) /
+  45 fr): `gen gen wt` · `tl tl tl` · `voice seq seq`. No page scroll; each panel
+  body scrolls if its content overflows. The Seed tab fills Generate (library column;
+  formula row; wave + spectrum flex; batch row + strip); Mutate / Breed lay out in two
+  columns and scroll inside it.
+- **Narrow shell (< 900 px)**: the same panels in the same order, one scrolling
+  column, each collapsible (Wavetables starts collapsed); the transport bar is sticky.
+- Voice tabs: `UiState.voiceId` (kept valid as voices come and go: a removed voice's
+  neighbour is selected). The Voice panel shows only that voice's controls; the
+  Sequence panel shows its sequence(s).
+- Remembered per browser (localStorage, try/catch): `mkwavez.theme` (only once
+  toggled; default dark, applied before first paint by an inline script in
+  index.html) and `mkwavez.timelineView` (Waveform / Spectral / both).
+
 ## Threads and messages
 
 ```
@@ -116,12 +140,18 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   voices fade out with a 12 ms release before being freed.
 - The audio thread never runs an FFT or allocates per sample. LFO/window/mip
   resolution runs every 64 samples; the Blend crossfade is ramped across the block.
-- UI: one rAF loop, ≤ 25 fps while playing. Sections redraw only when open, on screen
-  (IntersectionObserver) and dirty or animating. The timeline is a virtualized grid on
-  one sticky canvas (only visible rows drawn), with voice play-position markers
-  (live `status` index while playing, static position when stopped) on a separate
-  overlay canvas that redraws only when they move; the wavetable overview is a cached
-  heat-map bitmap with overlays. The Mutate preview is computed in the frame loop,
+- UI: one rAF loop, ≤ 25 fps while playing. Sections redraw only when open (not
+  collapsed on the narrow shell), on screen (IntersectionObserver; this also covers
+  content scrolled out of a panel) and dirty or animating. The timeline is a
+  virtualized horizontal strip on one sticky canvas (only visible cells drawn; cell
+  pitch 63 px, height = strip height), with voice-window tints / edges / bands drawn
+  per cell and play-position carets (live `status` index while playing, static
+  position when stopped) on a separate overlay canvas that redraws only when they
+  move. Thumbnail spectra come from the per-data-array spectrum cache. The wavetable
+  overview is a cached heat-map bitmap with overlays. Canvases that fill a flexible
+  box (Seed plots, voice scope / envelope, sequence grid, heat map) are absolutely
+  positioned (or explicitly sized) inside it and sized from the box when drawn, so a
+  draw never feeds back into layout; ResizeObservers mark them dirty. The Mutate preview is computed in the frame loop,
   not in input handlers: only while the tab is showing and on screen, only when its
   key (source id, mutation, amount, seed) changed, and at most every 50 ms while a
   control is dragged. Apply reuses the preview table when the key matches. The Breed

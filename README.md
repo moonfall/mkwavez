@@ -22,9 +22,16 @@ npm run smoke      # build, then headless-Chrome smoke test against preview and 
 ```
 
 The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to override;
-`SHOTS=dir` saves screenshots).
+`SHOTS=dir` saves screenshots at 1440×900, 1180×820, 1920×1080 and 390×844, dark and light).
 
 ## Using it
+
+On a laptop / tablet (≥ 900 px wide) everything is on one screen: the transport bar
+(play, BPM, undo, table count, sample rate, theme toggle), then Generate | Wavetables,
+the Timeline strip, and Voice | Sequence. Panels scroll internally when their content
+doesn't fit (e.g. the Mutate / Breed tabs). Narrower screens get one scrolling column
+of the same panels, each collapsible. Dark theme by default; the sun / moon button
+switches (the choice is remembered).
 
 - **Generate → Seed**: pick from the library (basic waves, formula presets by
   category, Perlin noise, cellular automaton, a blank formula). Search filters by name,
@@ -49,13 +56,23 @@ The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to overr
   (0 = parent A) and how it walks the parents (path, ring, custom weights), and a
   Mutation rate. Breed adds one child; Breed N sweeps the bias or makes a seeded
   generation of N children.
-- **Timeline**: every table, in order (cap 4096). Click to select and inspect;
-  Shift-click / long-press toggles Breed parents (badged A, B, …). Bars show voice
-  windows (voice 1 on top); carets show each unmuted voice's live play position.
-- **Wavetables** (collapsed by default): the auto "All" wavetable as an amplitude heat map
-  with voice windows.
-- **Voices**: window, position, LFO, Blend/Step, octave, level, ADSR per voice. Only voice 1
-  starts unmuted. Voice and sequence cards collapse individually (chevron) to their header.
-- **Sequences**: 8-row pentatonic step grids, one per voice by default; shared tempo.
+- **Timeline**: every table, in order (cap 4096), as one horizontally scrolling strip
+  (a vertical mouse wheel scrolls it sideways). Click to select (the header names the
+  selection); Shift-click / long-press toggles Breed parents (badged A, B, …). A table
+  inside a voice's window is tinted in the voice's colour (unmuted strong, muted faint)
+  with a solid edge at the window's start / end; overlapping windows split the cell into
+  bands, voice 1 on top. Carets show each unmuted voice's live play position. The header
+  button cycles the thumbnails: Waveform → Spectral → Waveform + Spectral. The strip keeps
+  the selection in view and follows new tables when scrolled to the end.
+- **Wavetables**: the auto "All" wavetable as an amplitude heat map with voice windows
+  and play positions. Creating 1D / 2D wavetables is coming (the slot is reserved);
+  collapsed by default on a phone.
+- **Voice**: one tab per voice (V1, V2 · muted, …, + adds one, × removes the selected
+  one). The selected voice's wavetable, Blend/Step, octave, window, position, LFO,
+  level, mute, plus a "now playing" scope and the ADSR envelope. Only voice 1 starts
+  unmuted.
+- **Sequence**: follows the selected voice tab: its 8-row pentatonic step grid (rows
+  labelled with the voice's notes), steps, gate, copy / paste / clear / random; shared
+  tempo. "+ Seq" adds another sequence to the voice (a picker appears).
 - **Undo** (transport bar) covers table adds (including Apply / Apply N), window
   edits and note edits.

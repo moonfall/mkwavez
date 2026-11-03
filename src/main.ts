@@ -76,4 +76,4 @@ bridge.onStatus = (s) => {
 };
 
 // Debug handle for the console and smoke tests.
-(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui };
+(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, setTheme };
