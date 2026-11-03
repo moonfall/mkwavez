@@ -17,7 +17,9 @@
 // Seed Add shown / Add batch and show their views; no "Sets window of" checkboxes; V1 on the
 // Grid shows the X/Y pad (sliders move the dot, live dot while playing), the worklet plays it,
 // Step on the wavetable plays one cell; the Voice panel fits at 1440×900 / 1180×820 and 390px
-// doesn't overflow; the CC map has Position Y.
+// doesn't overflow; the CC map has Position Y. Keyboard shortcuts: Space (also with a button
+// focused; types in text fields), [ / ], M, Shift+←/→ moves in the Timeline (ends no-op,
+// one undo step, ignored in text fields); no UI text says "table" (only "wavetable").
 //
 // Usage: npm run smoke            (builds, then tests `vite preview` and `vite dev`)
 //        CHROME=/path/to/chrome   (default /usr/bin/google-chrome)
@@ -47,7 +49,7 @@ async function run(label, url, browser) {
   const tlCount = () => page.evaluate(() => window.mkwavez.model.timeline.length);
   assert((await tlCount()) === 5, 'starts with 5 tables');
   assert((await page.textContent('#sec-timeline .panel-head .meta')).trim() === '5 / 4096', 'timeline meta shows count / cap');
-  assert((await page.textContent('#tables-status')).trim() === '5 / 4096 tables', 'transport status shows the table count');
+  assert((await page.textContent('#tables-status')).trim() === '5 / 4096 waveforms', 'transport status shows the waveform count');
 
   await themeChecks(page);
   await shellChecks(page);
@@ -104,8 +106,12 @@ async function run(label, url, browser) {
   await timelineMarkerChecks(page);
   await wavetableChecks(page);
   await timelineCopyChecks(page, tlCount);
+  await shortcutChecks(page);
+  await wordingCheck(page, 'after Seed / Timeline');
   await mutateChecks(page, tlCount, label);
+  await wordingCheck(page, 'after Mutate');
   await breedChecks(page, tlCount);
+  await wordingCheck(page, 'after Breed');
   await page.click('#add-voice');
   let vs = await page.evaluate(() => ({ n: window.mkwavez.model.voices.length, sel: window.mkwavez.ui.voiceId }));
   assert(vs.n === 4 && vs.sel === 4, 'voice added and its tab selected');
@@ -1151,6 +1157,227 @@ async function timelineCopyChecks(page, tlCount) {
   assert((await tlCount()) === n0 + 1, 'Ctrl+D auto-repeat is ignored');
   await page.click('#undo');
   assert((await tlCount()) === n0, 'undo removes the Ctrl+D copy');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(150);
+}
+
+/**
+ * UI copy calls a single cycle a "waveform": no text node, aria-label, title, placeholder or
+ * aria-description anywhere in the page (hidden tabs included) contains the word "table(s)"
+ * on its own ("wavetable" is fine).
+ */
+async function wordingCheck(page, where) {
+  const hits = await page.evaluate(() => {
+    const re = /\btables?\b/i;
+    const out = [];
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const tag = n.parentElement?.tagName;
+      if (tag !== 'SCRIPT' && tag !== 'STYLE' && re.test(n.textContent)) out.push(`${tag}: ${n.textContent.trim()}`);
+    }
+    for (const el of document.querySelectorAll('*')) {
+      for (const a of ['aria-label', 'title', 'placeholder', 'aria-description', 'alt']) {
+        const v = el.getAttribute(a);
+        if (v && re.test(v)) out.push(`${el.tagName}#${el.id}[${a}]: ${v}`);
+      }
+    }
+    return out;
+  });
+  assert(hits.length === 0, `no UI text says "table" (${where})${hits.length ? `: ${hits.join(' | ')}` : ''}`);
+}
+
+/**
+ * Keyboard shortcuts (wide shell, transport running): Space plays / stops even with a button
+ * focused (without clicking it) but types in a text field; [ / ] step through the voice tabs
+ * (wrapping); M mutes the selected voice; Shift+← / → move the selected waveform in the
+ * Timeline (Timeline wavetable in step, Timeline windows unchanged, strip reveals it, one
+ * undo step, no-op at the ends, ignored in text fields, not taken by the batch strip);
+ * extra modifiers are ignored; the controls advertise their shortcuts.
+ */
+async function shortcutChecks(page) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const playing = () => M(() => window.mkwavez.model.playing);
+  const blur = () => M(() => document.activeElement?.blur());
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.click('#tab-seed');
+  await page.waitForTimeout(150);
+
+  // Advertised shortcuts.
+  const ks = await M(() =>
+    Object.fromEntries(
+      ['play', 'voice-mute', 'voice-tabs', 'timeline-scroll', 'timeline-copy'].map((id) => [id, document.getElementById(id).getAttribute('aria-keyshortcuts')]),
+    ),
+  );
+  assert(
+    ks.play === 'Space' &&
+      ks['voice-mute'] === 'M' &&
+      ks['voice-tabs'] === '[ ]' &&
+      ks['timeline-scroll'].includes('Shift+ArrowLeft') &&
+      ks['timeline-copy'].includes('Control+D'),
+    `controls carry aria-keyshortcuts (${JSON.stringify(ks)})`,
+  );
+  assert(
+    (await page.getAttribute('#play', 'title')).includes('(Space)') && (await page.getAttribute('#voice-mute', 'title')).includes('(M)'),
+    'tooltips name the shortcuts',
+  );
+
+  // Space with a button focused: toggles the transport, doesn't click the button.
+  assert(await playing(), 'transport running before the Space checks');
+  const theme = () => M(() => document.documentElement.dataset.theme ?? '');
+  const theme0 = await theme();
+  await page.focus('#theme-toggle');
+  await page.keyboard.press('Space');
+  assert(!(await playing()), 'Space stops the transport with a button focused');
+  assert((await theme()) === theme0 && (await M(() => document.activeElement.id)) === 'theme-toggle', 'Space did not click the focused button');
+  await page.keyboard.press('Space');
+  await page.waitForFunction(() => window.mkwavez.model.playing, null, { timeout: 5000 });
+  assert((await theme()) === theme0, 'Space starts the transport again (button still not clicked)');
+  // Space in a text field types (the search is restored at the end).
+  const search0 = await page.inputValue('#seed-search');
+  await page.fill('#seed-search', '');
+  await page.focus('#seed-search');
+  await page.keyboard.press('Space');
+  const typed = await page.inputValue('#seed-search');
+  assert((await playing()) && typed === ' ', `Space in a text input types a space, transport untouched (${JSON.stringify(typed)}, ${await playing()})`);
+  await page.press('#seed-search', 'Escape');
+  // Extra modifiers are ignored.
+  await blur();
+  await page.keyboard.press('Control+Space');
+  assert(await playing(), 'Ctrl+Space is not play / stop');
+
+  // [ / ]: voice tabs, wrapping.
+  await page.click('#voice-tab-1');
+  await blur();
+  const sel = () => M(() => window.mkwavez.ui.voiceId);
+  const seq = [];
+  for (const k of [']', ']', ']', '[']) {
+    await page.keyboard.press(k);
+    seq.push(await sel());
+  }
+  assert(seq.join() === '2,3,1,3', `] / [ step through the voice tabs, wrapping (${seq.join()})`);
+  assert(
+    (await page.getAttribute('#voice-tab-3', 'aria-selected')) === 'true' && (await page.textContent('#seq-target')).includes('V3'),
+    '[ / ] switch the Voice and Sequence panels',
+  );
+  await page.focus('#voice-tab-3');
+  await page.keyboard.press(']');
+  assert((await sel()) === 1 && (await M(() => document.activeElement.id)) === 'voice-tab-1', '] from a focused tab moves focus to the new tab');
+  await page.focus('#seed-search');
+  await page.keyboard.press(']');
+  assert((await sel()) === 1 && (await page.inputValue('#seed-search')) === ']', '] in a text input types');
+  await page.press('#seed-search', 'Escape');
+
+  // M: mute / unmute the selected voice.
+  await blur();
+  const mute = (id) => M((id) => window.mkwavez.model.voice(id).mute, id);
+  await page.keyboard.press('m');
+  assert((await mute(1)) && (await page.getAttribute('#voice-mute', 'aria-label')) === 'Unmute V1', 'M mutes the selected voice');
+  await page.keyboard.press('Alt+m');
+  await page.keyboard.press('Control+m');
+  assert(await mute(1), 'Alt+M / Ctrl+M are ignored');
+  await page.keyboard.press('m');
+  assert(!(await mute(1)), 'M unmutes it');
+  const m2 = await mute(2);
+  await page.keyboard.press(']');
+  await page.keyboard.press('m');
+  assert((await mute(2)) === !m2 && (await mute(1)) === false, 'M acts on the newly selected voice (V2)');
+  await page.keyboard.press('m');
+  assert((await mute(2)) === m2, 'M toggles V2 back');
+  await page.keyboard.press('[');
+  assert((await sel()) === 1, 'back on V1');
+
+  // Shift+← / →: move the selected waveform.
+  const state = () =>
+    M(() => {
+      const m = window.mkwavez.model;
+      const s = document.querySelector('#timeline-scroll');
+      const idx = m.indexOf(m.selectedId);
+      const left = idx * 63;
+      return {
+        ids: m.timeline.map((t) => t.id).join(),
+        row: m.wavetable(0).rows[0].join(),
+        sel: m.selectedId,
+        idx,
+        undo: m.undoDepth,
+        windows: m.voices.map((v) => `${v.wavetableId}:${v.windowStart}-${v.windowEnd}`).join(' '),
+        inView: left >= s.scrollLeft && left + 62 <= s.scrollLeft + s.clientWidth,
+        label: document.querySelector('#timeline-selected').textContent,
+      };
+    });
+  const select = (i) => M((i) => window.mkwavez.model.select(window.mkwavez.model.timeline.at(i).id), i);
+  await select(3);
+  await frames();
+  const s0 = await state();
+  await page.keyboard.press('Shift+ArrowRight');
+  await frames();
+  const s1 = await state();
+  const swapped = s0.ids.split(',');
+  [swapped[3], swapped[4]] = [swapped[4], swapped[3]];
+  assert(
+    s1.sel === s0.sel &&
+      s1.idx === 4 &&
+      s1.ids === swapped.join() &&
+      s1.row === s1.ids &&
+      s1.windows === s0.windows &&
+      s1.undo === s0.undo + 1 &&
+      s1.label.startsWith('#5 '),
+    'Shift+→ moves the selected waveform one later (Timeline wavetable follows, windows unchanged, one undo step)',
+  );
+  for (let i = 0; i < 3; i++) await page.keyboard.press('Shift+ArrowLeft');
+  await frames();
+  const s2 = await state();
+  assert(s2.idx === 1 && s2.row === s2.ids && s2.undo === s0.undo + 1, `consecutive moves coalesce into one undo step (index ${s2.idx}, steps ${s2.undo - s0.undo})`);
+  await page.click('#undo');
+  await frames();
+  const s3 = await state();
+  assert(s3.ids === s0.ids && s3.row === s0.ids && s3.sel === s0.sel && s3.undo === s0.undo, 'one undo restores the order');
+  // Ends: no-op.
+  await select(0);
+  await blur();
+  await page.keyboard.press('Shift+ArrowLeft');
+  let e = await state();
+  assert(e.ids === s0.ids && e.undo === s0.undo, 'Shift+← on the first waveform does nothing');
+  await select(-1);
+  await page.keyboard.press('Shift+ArrowRight');
+  e = await state();
+  assert(e.ids === s0.ids && e.undo === s0.undo, 'Shift+→ on the last waveform does nothing');
+  // The strip reveals the moved waveform (phone width, so the strip scrolls).
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(150);
+  await page.$eval('#timeline-scroll', (s) => s.scrollIntoView({ block: 'center' }));
+  await frames();
+  await page.$eval('#timeline-scroll', (s) => (s.scrollLeft = 0));
+  await frames();
+  assert(!(await state()).inView, 'last waveform scrolled out of view');
+  await page.keyboard.press('Shift+ArrowLeft');
+  await frames();
+  await frames();
+  e = await state();
+  assert(e.idx === e.ids.split(',').length - 2 && e.inView, 'Shift+← scrolls the strip to the moved waveform');
+  await page.click('#undo');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
+  // Ignored in a text field.
+  await page.focus('#seed-search');
+  await page.keyboard.press('Shift+ArrowLeft');
+  e = await state();
+  assert(e.ids === s0.ids && e.undo === s0.undo, 'Shift+arrows in a text input do not move waveforms');
+  await page.press('#seed-search', 'Escape');
+  // The batch strip keeps plain arrows; Shift+arrows there move the waveform, not the strip.
+  await select(2);
+  await page.focus('#seed-strip .gen-card[aria-pressed="true"]');
+  await page.keyboard.press('Home');
+  const shown = async () => (await page.textContent('#seed-shown')).trim();
+  const shown0 = await shown();
+  await page.keyboard.press('Shift+ArrowRight');
+  e = await state();
+  assert(e.idx === 3 && (await shown()) === shown0, 'Shift+→ in the batch strip moves the waveform, not the strip');
+  await page.keyboard.press('ArrowRight');
+  assert((await shown()) !== shown0 && (await state()).idx === 3, 'plain → still steps the batch strip');
+  await page.click('#undo');
+  assert((await state()).ids === s0.ids, 'undo restores the order');
+  await page.fill('#seed-search', search0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(150);
 }

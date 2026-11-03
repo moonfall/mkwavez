@@ -29,9 +29,9 @@ export function buildStepper(
   const el = h(
     'div',
     { class: 'gen-stepper', role: 'group', 'aria-label': 'Batch size' },
-    h('button', { id: `${p}-n-dec`, 'aria-label': 'Fewer tables', onclick: () => opts.setCount(opts.count() - 1) }, '−'),
+    h('button', { id: `${p}-n-dec`, 'aria-label': 'Fewer waveforms', onclick: () => opts.setCount(opts.count() - 1) }, '−'),
     h('label', { class: 'gen-n-label' }, 'N', input),
-    h('button', { id: `${p}-n-inc`, 'aria-label': 'More tables', onclick: () => opts.setCount(opts.count() + 1) }, '+'),
+    h('button', { id: `${p}-n-inc`, 'aria-label': 'More waveforms', onclick: () => opts.setCount(opts.count() + 1) }, '+'),
   );
   return {
     el,
@@ -70,7 +70,7 @@ export const CARD_SPEC_H = 14;
  * (aria-pressed, the roving tab stop); click or ←/→/Home/End when focused moves it.
  */
 export function buildStrip(id: string, opts: { onShow(i: number): void }): Strip {
-  const el = h('div', { id, class: 'gen-strip', role: 'group', 'aria-label': 'Batch tables (←/→ to move)' });
+  const el = h('div', { id, class: 'gen-strip', role: 'group', 'aria-label': 'Batch waveforms (←/→ to move)' });
   const cards: StripCard[] = [];
   let shown = 0;
 
@@ -122,7 +122,7 @@ export function buildStrip(id: string, opts: { onShow(i: number): void }): Strip
     while (cards.length > n) cards.pop()!.el.remove();
     cards.forEach((c, i) => {
       c.label.textContent = label(i);
-      c.el.setAttribute('aria-label', `Show table ${i + 1} of ${n}`);
+      c.el.setAttribute('aria-label', `Show waveform ${i + 1} of ${n}`);
     });
     if (shown > n - 1) {
       shown = n - 1;

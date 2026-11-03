@@ -56,7 +56,9 @@ src/
                         view, summary; editor in phase 2); voicePad.ts (X/Y pad of
                         a 2D / Rows voice); playing.ts (what a voice plays, as the
                         engine resolves it); midi.ts (transport MIDI picker,
-                        LED, popover with routing and CC map)
+                        LED, popover with routing and CC map); shortcuts.ts
+                        (page-wide keys: Space, [ / ], M, Shift+←/→; one
+                        capture-phase listener, skipped in text fields)
   main.ts               initial state, shell assembly, frame loop
 tests/                  vitest unit tests (core + AppModel)
 scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
@@ -104,7 +106,11 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   of undo snapshots.
 - **Timeline** — ordered `WaveTable[]`, cap 4096. Eviction is oldest-first and skips
   tables referenced by a pinning wavetable (`pinnedIds`). If everything is pinned the
-  timeline may exceed the cap.
+  timeline may exceed the cap. `AppModel.moveTable(id, ±1)` (Shift+←/→) swaps a table
+  with its neighbour and the Timeline built-in's slots with it; voice windows are index
+  ranges and stay put (the engine crossfades by table id as the window's contents change);
+  wavetables referencing ids are untouched. Consecutive moves of one table with no other
+  model event in between are one undo step.
 - **Wavetable** — `{ id, name, shape: 1d|2d|rows, rows: (id|null)[][], fixed, interp:
   blend|step, live, write (head settings), head {x, y}, builtin?, pins }`. Slots
   reference timeline table ids (a table may sit in many wavetables / slots); `null` = empty.

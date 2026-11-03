@@ -11,8 +11,9 @@ import { h } from './ui/dom';
 import { buildGenerate } from './ui/generate';
 import { buildMidi } from './ui/midi';
 import { buildSequences } from './ui/sequences';
+import { installShortcuts } from './ui/shortcuts';
 import { buildTimeline } from './ui/timeline';
-import { buildTransport } from './ui/transport';
+import { buildTransport, togglePlay } from './ui/transport';
 import { buildVoices } from './ui/voices';
 import { buildWavetables } from './ui/wavetables';
 
@@ -83,6 +84,8 @@ root.replaceChildren(
     sequences.el,
   ),
 );
+
+installShortcuts(ctx, { togglePlay: () => void togglePlay(ctx) });
 
 // ---- frame loop: views draw only when dirty (or animating while playing), ~25 fps cap while playing ----
 const views: FrameView[] = [generate.view, timeline.view, wavetables.view, voices.view, sequences.view];

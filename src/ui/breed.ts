@@ -173,7 +173,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
       h(
         'p',
         { class: 'hint' },
-        'Shift-click or long-press tables in the Timeline to add or remove parents. Bias 0 is parent A. ' +
+        'Shift-click or long-press waveforms in the Timeline to add or remove parents. Bias 0 is parent A. ' +
           'Breed adds one child and selects it; Breed N sweeps the bias from A (or makes N seeded children at the same bias) ' +
           'and sets the ticked voices’ windows. Mutation adds seeded jitter, strongest between parents.',
       ),
@@ -240,7 +240,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     thumbs = [];
     if (!ids.length) {
       cards.replaceChildren(
-        h('p', { class: 'hint parents-empty' }, 'No parents yet: add the selected table, use a voice’s window, or Shift-click / long-press tables in the Timeline.'),
+        h('p', { class: 'hint parents-empty' }, 'No parents yet: add the selected waveform, use a voice’s window, or Shift-click / long-press waveforms in the Timeline.'),
       );
     } else {
       cards.replaceChildren(

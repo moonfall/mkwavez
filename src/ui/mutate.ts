@@ -21,13 +21,13 @@ const SRC_H = 20;
 const DEFAULT_MUTATION: MutationId = 'fold';
 
 const MODES: { mode: SweepMode; label: string; title: string }[] = [
-  { mode: 'lin', label: 'Linear', title: 'Linear sweep: table i of N uses amount A·i/N (the last is A)' },
+  { mode: 'lin', label: 'Linear', title: 'Linear sweep: waveform i of N uses amount A·i/N (the last is A)' },
   {
     mode: 'log',
     label: 'Log',
-    title: `Log sweep: table i uses A·${LOG_SWEEP_RANGE}^((i−N)/(N−1)), ${LOG_SWEEP_RANGE}:1 down to A — fine steps at small amounts`,
+    title: `Log sweep: waveform i uses A·${LOG_SWEEP_RANGE}^((i−N)/(N−1)), ${LOG_SWEEP_RANGE}:1 down to A — fine steps at small amounts`,
   },
-  { mode: 'chain', label: 'Chain', title: 'Chain: each table mutates the previous one at A (table i = i compounding steps)' },
+  { mode: 'chain', label: 'Chain', title: 'Chain: each waveform mutates the previous one at A (waveform i = i compounding steps)' },
 ];
 
 export interface MutatePanelOpts {
@@ -157,8 +157,8 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
 
   // ---- result over source ----
   const shownLabel = h('span', { class: 'mono-label', id: 'mutate-shown' });
-  const waveC = h('canvas', { id: 'mutate-wave', role: 'img', 'aria-label': 'Shown table (solid) over the source (dashed)' });
-  const specC = h('canvas', { id: 'mutate-spec', role: 'img', 'aria-label': 'Harmonic spectrum of the shown table over the source (grey)' });
+  const waveC = h('canvas', { id: 'mutate-wave', role: 'img', 'aria-label': 'Shown waveform (solid) over the source (dashed)' });
+  const specC = h('canvas', { id: 'mutate-spec', role: 'img', 'aria-label': 'Harmonic spectrum of the shown waveform over the source (grey)' });
   const axis = (...labels: string[]) => h('div', { class: 'gen-axis' }, ...labels.map((l) => h('span', {}, l)));
   const waveBox = h(
     'div',
@@ -307,7 +307,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     const tables = Array.from({ length: j.req.count }, (_, i) => finalTable(j, i));
     // Select the last added table (the end of the batch): it becomes the next source.
     model.addTables(tables, true);
-    afterAdd(`Added ${tables.length} table${tables.length > 1 ? 's' : ''} to the Timeline (the last is now the source)`);
+    afterAdd(`Added ${tables.length} waveform${tables.length > 1 ? 's' : ''} to the Timeline (the last is now the source)`);
   };
 
   // ---- drawing ----
@@ -377,7 +377,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     drawnSrc = src ?? null;
     const idx = model.indexOf(model.selectedId);
     srcNo.textContent = src ? `#${idx + 1}` : '—';
-    srcChip.title = src ? `The Timeline selection: #${idx + 1} · id ${src.id} · ${describeRecipe(src.recipe)}` : 'Select a table in the Timeline';
+    srcChip.title = src ? `The Timeline selection: #${idx + 1} · id ${src.id} · ${describeRecipe(src.recipe)}` : 'Select a waveform in the Timeline';
     addShownBtn.disabled = addBatchBtn.disabled = !src;
     const g = fitFixed(srcThumb, SRC_W, SRC_H);
     if (src) drawWave(g, 0, 0, SRC_W, SRC_H, src.data, cssColor('--wave'), { lineWidth: 1.2, points: SRC_W * 2 });

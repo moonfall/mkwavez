@@ -41,7 +41,7 @@ to `main` (or by hand: Actions → Deploy to GitHub Pages → Run workflow) and 
 ## Using it
 
 On a laptop / tablet (≥ 900 px wide) everything is on one screen: the transport bar
-(play, BPM, undo, MIDI, table count, sample rate, theme toggle), then Generate | Wavetables,
+(play, BPM, undo, MIDI, waveform count, sample rate, theme toggle), then Generate | Wavetables,
 the Timeline strip, and Voice | Sequence. Panels scroll internally when their content
 doesn't fit (e.g. the Breed tab). Narrower screens get one scrolling column
 of the same panels, each collapsible. Dark theme by default; the sun / moon button
@@ -53,44 +53,48 @@ switches (the choice is remembered).
   clears); ▲/▼ or the arrow keys step through the (filtered) list. On a phone the library
   is one row (▲ · Category › Name · ▼); tap the name for the list. Edit the formula (JS in
   `p`, `t`, `n`, `u`, `pnoise()`; "Revert to preset") or the mode's parameters. The
-  large view shows one table of the batch with its spectrum; the strip below shows all N
+  large view shows one waveform of the batch with its spectrum; the strip below shows all N
   (click, or ←/→ when focused). The previews are exactly what gets added: "Add shown"
-  adds that one table, "Add batch (+N)" all N (a voice on the built-in **Last batch**
+  adds that one waveform, "Add batch (+N)" all N (a voice on the built-in **Last batch**
   wavetable — V1 at start — then plays exactly those waveforms). Modes that use randomness
   show the seed (Reroll); a new seed is drawn after each Add batch.
-- **Generate → Mutate**: mutate the table selected in the Timeline (the Source chip).
+- **Generate → Mutate**: mutate the waveform selected in the Timeline (the Source chip).
   The library works like Seed's (search by name, group or amount mapping; ▲/▼ or the
   arrow keys); each entry's thumbnail is that mutation applied to the source at the
   current amount (faint = source), and `rnd` marks mutations that use the seed. The
   header names the mutation and how Amount maps onto it ("0% = unchanged"); Seed /
-  Reroll appear only for seeded mutations. The large view shows one table of the batch
+  Reroll appear only for seeded mutations. The large view shows one waveform of the batch
   (solid) over the source (dashed) with both spectra (grey = source). Batch: Linear
-  (`A·i/N`), Log (`A·64^((i−N)/(N−1))`) or Chain (each table mutates the previous one
+  (`A·i/N`), Log (`A·64^((i−N)/(N−1))`) or Chain (each waveform mutates the previous one
   at A); the strip shows all N (click, or ←/→ when focused), the last one by default
-  (= a single mutation at A). "Add shown" adds that table and selects it (so it becomes
+  (= a single mutation at A). "Add shown" adds that waveform and selects it (so it becomes
   the next source); "Add +N" adds the batch (it becomes the Last batch) and selects the
-  last table added (likewise the next source; Undo restores the selection).
+  last waveform added (likewise the next source; Undo restores the selection).
   The previews are exactly what gets added; a seeded mutation draws a new seed after
   each Add.
 - **Generate → Breed**: combine 2–8 parents. Shift-click (or ⌘-click) or
-  long-press tables in the Timeline, "Add selected", or "Use window" of a voice; reorder
+  long-press waveforms in the Timeline, "Add selected", or "Use window" of a voice; reorder
   or remove them on their cards. Pick an operator (crossfade, spectral mix, magnitude /
   phase swaps, envelope transfer, harmonic split, genetic masks, time splice), a Bias
   (0 = parent A) and how it walks the parents (path, ring, custom weights), and a
   Mutation rate. Breed adds one child; Breed N sweeps the bias or makes a seeded
   generation of N children.
-- **Timeline**: every table, in order (cap 4096), as one horizontally scrolling strip
+- **Timeline**: every waveform, in order (cap 4096), as one horizontally scrolling strip
   (a vertical mouse wheel scrolls it sideways). Click to select (the header names the
-  selection); Shift-click / long-press toggles Breed parents (badged A, B, …). A table
+  selection); Shift-click / long-press toggles Breed parents (badged A, B, …). A waveform
   inside a voice's window is tinted in the voice's colour (unmuted strong, muted faint)
-  with a solid edge where a run of window tables starts / ends; overlapping windows split
+  with a solid edge where a run of window waveforms starts / ends; overlapping windows split
   the cell into bands, voice 1 on top. Voices on other wavetables (Last batch, Grid, …)
   tint the Timeline waveforms their window references. Carets show each unmuted voice's live
   play position (for voices on other wavetables: on the waveform they play most of). The header
   button cycles the thumbnails: Waveform → Spectral → Waveform + Spectral. **Copy to end**
-  (or Ctrl/⌘+D while the strip has focus, e.g. after clicking a table) appends a copy of
-  the selected table and selects it (like a single add: following windows extend; undoable).
-  The strip keeps the selection in view and follows new tables when scrolled to the end.
+  (or Ctrl/⌘+D while the strip has focus, e.g. after clicking a waveform) appends a copy of
+  the selected waveform and selects it (like a single add: following windows extend; undoable).
+  **Shift+← / →** moves the selected waveform one place earlier / later (it swaps with its
+  neighbour; the Timeline wavetable follows, voice windows on it keep their positions and
+  play what is now inside them; other wavetables are unaffected; repeated moves of the same
+  waveform are one undo step). The strip keeps the selection in view and follows new
+  waveforms when scrolled to the end.
 - **Wavetables**: named sets of slots referencing Timeline waveforms (no copies). Four
   read-only built-ins, all live: **Timeline** (1D, everything), **Last batch** (1D,
   replaced by each batch or single add), **Batches** (Rows: one row per batch / single
@@ -130,5 +134,22 @@ switches (the choice is remembered).
   when you pick an input, or on your first click if the input was remembered (browsers
   only start audio on a gesture). Unsupported browsers / denied permission show a short
   status; the rest of the app is unaffected.
-- **Undo** (transport bar) covers table adds (including Mutate / Breed adds, Copy to end), window
-  edits and note edits.
+- **Undo** (transport bar) covers waveform adds (including Mutate / Breed adds, Copy to end),
+  Timeline moves, window edits and note edits.
+
+## Keyboard shortcuts
+
+Shortcuts are ignored while typing in a text field, text area, select or editable text, and
+when other modifier keys are held. Controls show theirs in tooltips (and `aria-keyshortcuts`).
+
+| Key | Action |
+| --- | --- |
+| Space | Play / stop (also while a button has focus; a focused checkbox still toggles) |
+| `[` / `]` | Previous / next voice tab (wraps) |
+| M | Mute / unmute the selected voice |
+| Shift+← / Shift+→ | Move the selected waveform one place earlier / later in the Timeline |
+| Ctrl/⌘+D | Copy the selected waveform to the end (while the Timeline strip has focus) |
+| ← / → | Batch strips (Seed, Mutate): show the previous / next waveform; Home / End: first / last |
+| ↑ / ↓ | Seed / Mutate libraries: previous / next entry (↓ from the search moves into the list; Enter picks the first match, Esc clears) |
+| ← / → | Voice tabs (when a tab has focus): previous / next voice |
+| Esc | MIDI popover: cancel Learn |

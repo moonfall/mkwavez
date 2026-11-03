@@ -8,6 +8,7 @@ import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, icon, ICONS, panel, slider, voiceColorVar, type Slider } from './dom';
 import { playingMix } from './playing';
+import { SHORTCUTS } from './shortcuts';
 import { createVoicePad } from './voicePad';
 
 const OCT_MIN = -2;
@@ -42,9 +43,15 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
   };
 
   // ---- tabs ----
-  const tabs = h('div', { class: 'voice-tabs', role: 'tablist', 'aria-label': 'Voices', id: 'voice-tabs' });
+  const tabs = h('div', {
+    class: 'voice-tabs',
+    role: 'tablist',
+    'aria-label': 'Voices',
+    id: 'voice-tabs',
+    'aria-keyshortcuts': `${SHORTCUTS.prevVoice} ${SHORTCUTS.nextVoice}`,
+  });
   const addBtn = h('button', { id: 'add-voice', class: 'small icon-btn', 'aria-label': 'Add voice', title: 'Add voice', onclick: () => addVoice() }, icon(ICONS.plus));
-  const muteBtn = h('button', { id: 'voice-mute', class: 'small', onclick: () => set({ mute: !cur()?.mute }) });
+  const muteBtn = h('button', { id: 'voice-mute', class: 'small', 'aria-keyshortcuts': SHORTCUTS.mute, onclick: () => set({ mute: !cur()?.mute }) });
   const removeBtn = h('button', {
     id: 'voice-remove',
     class: 'small icon-btn',
@@ -79,6 +86,7 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
             'aria-selected': String(on),
             'aria-controls': 'voice-panel',
             tabindex: on ? 0 : -1,
+            title: `${v.name} · [ / ] previous / next voice`,
             onclick: () => ui.setVoice(v.id),
           },
           h('span', { class: 'dot' }),
@@ -267,6 +275,7 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
     muteBtn.textContent = v.mute ? 'Unmute' : 'Mute';
     muteBtn.setAttribute('aria-pressed', String(v.mute));
     muteBtn.setAttribute('aria-label', `${v.mute ? 'Unmute' : 'Mute'} ${v.name}`);
+    muteBtn.title = `${v.mute ? 'Unmute' : 'Mute'} ${v.name} (M)`;
     removeBtn.replaceChildren(icon(ICONS.close));
     removeBtn.setAttribute('aria-label', `Remove ${v.name}`);
     removeBtn.title = `Remove ${v.name}`;

@@ -6,6 +6,7 @@ import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, icon, ICONS, isNarrowShell, panel, voiceColorVar } from './dom';
 import { dominantId, playingMix } from './playing';
+import { SHORTCUTS } from './shortcuts';
 
 /** Cell width and the gap between cells (px); one cell per table, in one row. */
 const CELL_W = 62;
@@ -73,21 +74,34 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     {
       id: 'timeline-copy',
       class: 'small tl-copy-btn',
-      title: 'Copy the selected table to the end of the Timeline (Ctrl/⌘+D in the strip)',
+      title: 'Copy the selected waveform to the end of the Timeline (Ctrl/⌘+D in the strip)',
+      'aria-keyshortcuts': 'Control+D Meta+D',
       onclick: () => model.copyToEnd(model.selectedId),
     },
     'Copy to end',
   );
   sec.tools.append(viewBtn, viewDots, copyBtn, selLabel, hint, legend);
 
-  const grid = h('canvas', { 'aria-label': 'Timeline of all tables; click to select', id: 'timeline-grid' });
+  const grid = h('canvas', { 'aria-label': 'Timeline of all waveforms; click to select', id: 'timeline-grid' });
   const overlay = h('canvas', { class: 'tl-overlay', id: 'timeline-markers', 'aria-hidden': 'true' });
   const stage = h('div', { class: 'tl-stage' }, grid, overlay);
   const track = h('div', { class: 'tl-track' }, stage);
   // Focusable (a click on the strip focuses it) so Ctrl/⌘+D can copy the selection.
-  const scroller = h('div', { class: 'tl-scroll', id: 'timeline-scroll', tabindex: 0 }, track);
+  const scroller = h(
+    'div',
+    {
+      class: 'tl-scroll',
+      id: 'timeline-scroll',
+      tabindex: 0,
+      'aria-label': 'Timeline waveforms',
+      'aria-keyshortcuts': `${SHORTCUTS.moveLeft} ${SHORTCUTS.moveRight} Control+D Meta+D`,
+    },
+    track,
+  );
   sec.body.append(scroller);
-  sec.body.title = 'Shift-click (or ⌘-click) or long-press a table to add or remove it as a Breed parent.';
+  sec.body.title =
+    'Shift-click (or ⌘-click) or long-press a waveform to add or remove it as a Breed parent. ' +
+    'Shift+← / → moves the selected waveform; Ctrl/⌘+D copies it to the end.';
   watchVisibility(grid);
 
   let dirtyGrid = true;
@@ -399,9 +413,11 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   sec.onToggle(invalidate);
   onThemeChange(invalidate);
 
-  // Scrolling: a changed selection is brought into view; otherwise, if the strip was
-  // at its end when tables were added, it follows the newest table.
+  // Scrolling: a changed (or moved) selection is brought into view; otherwise, if the
+  // strip was at its end when waveforms were added, it follows the newest one.
   let lastSel = model.selectedId;
+  let lastSelIdx = model.indexOf(model.selectedId);
+  let lastLen = model.timeline.length;
   let follow = false;
   let scrollPending = false;
   const scheduleScroll = () => {
@@ -410,9 +426,14 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     // Defer so layout reflects every change from the same action.
     requestAnimationFrame(() => {
       scrollPending = false;
-      const selChanged = model.selectedId !== lastSel;
+      const idx = model.indexOf(model.selectedId);
+      // A move (same length, new index) counts; an eviction shifting the index doesn't.
+      const moved = idx !== lastSelIdx && model.timeline.length === lastLen;
+      const selChanged = model.selectedId !== lastSel || moved;
       lastSel = model.selectedId;
-      if (selChanged) scrollToIndex(model.indexOf(model.selectedId));
+      lastSelIdx = idx;
+      lastLen = model.timeline.length;
+      if (selChanged) scrollToIndex(idx);
       else if (follow) scrollToEnd();
       follow = false;
       dirtyGrid = dirtyMarkers = true;

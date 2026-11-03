@@ -235,7 +235,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         h(
           'p',
           { class: 'hint' },
-          'Band-limited additive generator (harmonics ≤ 72); every table of a batch is the same. ',
+          'Band-limited additive generator (harmonics ≤ 72); every waveform of a batch is the same. ',
           asF,
         ),
       );
@@ -267,7 +267,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       const hints: Record<string, string> = {
         pulse: 'Band-limited pulse; the width sweeps from Width to “Batch → width” across the batch.',
         perlin: 'Loop-seamless noise. A batch shares one noise region (the seed) and drifts through z.',
-        ca: 'Each generation’s cells become ±1 steps of one table; a batch is N consecutive generations from the start.',
+        ca: 'Each generation’s cells become ±1 steps of one waveform; a batch is N consecutive generations from the start.',
       };
       edBody.replaceChildren(h('div', { class: 'seed-params' }, ...controls), h('p', { class: 'hint' }, hints[e.mode] ?? ''));
     }
@@ -275,8 +275,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
 
   // ---- waveform ----
   const shownLabel = h('span', { class: 'mono-label', id: 'seed-shown' });
-  const waveC = h('canvas', { id: 'seed-wave', role: 'img', 'aria-label': 'Waveform of the shown table' });
-  const specC = h('canvas', { id: 'seed-spec', role: 'img', 'aria-label': 'Harmonic spectrum of the shown table' });
+  const waveC = h('canvas', { id: 'seed-wave', role: 'img', 'aria-label': 'Shown waveform' });
+  const specC = h('canvas', { id: 'seed-spec', role: 'img', 'aria-label': 'Harmonic spectrum of the shown waveform' });
   const axis = (...labels: string[]) => h('div', { class: 'gen-axis' }, ...labels.map((l) => h('span', {}, l)));
   // Canvases fill their box (absolutely positioned; sized from the box in drawMain).
   const waveBox = h(
@@ -397,7 +397,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     try {
       j.tables[i] = seedTable(j.req, i, j.fn, () => performance.now() > stopAt);
     } catch (e) {
-      if (e instanceof FormulaAborted) j.fatal = `too slow (one table took over ${TABLE_CAP_MS} ms); simplify the formula`;
+      if (e instanceof FormulaAborted) j.fatal = `too slow (one waveform took over ${TABLE_CAP_MS} ms); simplify the formula`;
       else j.errors[i] = errText(e);
       statusDirty = cardsDirty = mainDirty = true;
       return false;
@@ -438,13 +438,13 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     let err = blocking;
     if (!err && j && failed.length) {
       const first = failed.includes(shown) ? shown : failed[0];
-      err = `Error at #${first + 1}: ${j.errors[first]}${failed.length > 1 ? ` (${failed.length} tables failed)` : ''}`;
+      err = `Error at #${first + 1}: ${j.errors[first]}${failed.length > 1 ? ` (${failed.length} waveforms failed)` : ''}`;
     }
     errEl.textContent = err;
     exprInput?.classList.toggle('invalid', !!blocking);
     addShownBtn.disabled = !!blocking || !!j?.errors[shown];
     addBatchBtn.disabled = !!blocking || failed.length > 0;
-    addBatchBtn.title = failed.length ? 'Every table of the batch must evaluate; Add shown still works for the others' : '';
+    addBatchBtn.title = failed.length ? 'Every waveform of the batch must evaluate; Add shown still works for the others' : '';
     el.classList.toggle('seed-stale', !!blocking);
     seedBox.hidden = !seedUsesRandomness(e, exprOf(e));
   };
@@ -466,15 +466,15 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     if (j.fatal || failed.length) {
       updateStatus();
       if (failed.length)
-        flash(`Batch not added: ${failed.length} of ${j.req.count} tables failed (first #${failed[0] + 1}). Fix the formula, or Add shown for single tables.`, true);
+        flash(`Batch not added: ${failed.length} of ${j.req.count} waveforms failed (first #${failed[0] + 1}). Fix the formula, or Add shown for single waveforms.`, true);
       return;
     }
     model.addTables(j.tables.map((_, i) => finalTable(j, i)!), true);
     const n = j.req.count;
     if (seedUsesRandomness(j.req.entry, j.req.expr)) {
       newSeed();
-      flash(`Added ${n} table${n > 1 ? 's' : ''} to the Timeline · new seed`);
-    } else flash(`Added ${n} table${n > 1 ? 's' : ''} to the Timeline`);
+      flash(`Added ${n} waveform${n > 1 ? 's' : ''} to the Timeline · new seed`);
+    } else flash(`Added ${n} waveform${n > 1 ? 's' : ''} to the Timeline`);
   };
 
   // ---- drawing ----

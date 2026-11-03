@@ -1,14 +1,31 @@
 import { currentTheme, setTheme } from './canvas';
 import type { UiContext } from './context';
 import { h, icon, ICONS } from './dom';
+import { SHORTCUTS } from './shortcuts';
+
+/** Start (audio first, on the first press) or stop the transport. */
+export async function togglePlay(ctx: UiContext): Promise<void> {
+  const { model, bridge } = ctx;
+  if (model.playing) {
+    model.setTransport({ playing: false });
+    return;
+  }
+  try {
+    await bridge.start();
+  } catch (err) {
+    console.error('Audio failed to start', err);
+    return;
+  }
+  model.setTransport({ playing: true });
+}
 
 /**
- * Transport bar: name, play/stop, tempo, undo, `extra` (the MIDI controls), status (tables,
+ * Transport bar: name, play/stop, tempo, undo, `extra` (the MIDI controls), status (waveforms,
  * sample rate, audio), theme.
  */
 export function buildTransport(ctx: UiContext, extra: Node | null = null): HTMLElement {
   const { model, bridge } = ctx;
-  const play = h('button', { class: 'play primary', id: 'play', 'aria-label': 'Play' }, icon(ICONS.play));
+  const play = h('button', { class: 'play primary', id: 'play', 'aria-label': 'Play', 'aria-keyshortcuts': SHORTCUTS.play }, icon(ICONS.play));
   const undoCount = h('span', { class: 'undo-count' }, '0');
   const undo = h(
     'button',
@@ -27,7 +44,7 @@ export function buildTransport(ctx: UiContext, extra: Node | null = null): HTMLE
   });
   const tempo = h('label', { class: 'tempo' }, h('span', { class: 'bpm-label' }, 'BPM'), bpm, bpmVal);
 
-  const tables = h('span', { id: 'tables-status' });
+  const tables = h('span', { id: 'tables-status', title: 'Waveforms in the Timeline / cap' });
   const rate = h('span', { id: 'rate-status' });
   const audio = h('span', { id: 'audio-status' }, 'audio off');
   const status = h('span', { class: 'status' }, tables, h('span', { class: 'sep' }, ' · '), rate, h('span', { class: 'sep' }, ' · '), audio);
@@ -45,23 +62,12 @@ export function buildTransport(ctx: UiContext, extra: Node | null = null): HTMLE
   });
   syncTheme();
 
-  play.addEventListener('click', async () => {
-    if (!model.playing) {
-      try {
-        await bridge.start();
-      } catch (err) {
-        console.error('Audio failed to start', err);
-        return;
-      }
-      model.setTransport({ playing: true });
-    } else {
-      model.setTransport({ playing: false });
-    }
-  });
+  play.addEventListener('click', () => void togglePlay(ctx));
 
   const syncPlay = () => {
     play.replaceChildren(icon(model.playing ? ICONS.stop : ICONS.play));
     play.setAttribute('aria-label', model.playing ? 'Stop' : 'Play');
+    play.title = `${model.playing ? 'Stop' : 'Play'} (Space)`;
     if (document.activeElement !== bpm) bpm.value = String(model.bpm);
     bpmVal.textContent = String(model.bpm);
   };
@@ -71,7 +77,7 @@ export function buildTransport(ctx: UiContext, extra: Node | null = null): HTMLE
     undo.setAttribute('aria-label', `Undo, ${model.undoDepth} steps available`);
   };
   const syncTables = () => {
-    tables.textContent = `${model.timeline.length} / ${model.cap} tables`;
+    tables.textContent = `${model.timeline.length} / ${model.cap} waveforms`;
   };
   const syncRate = () => {
     rate.textContent = `${+(bridge.sampleRate / 1000).toFixed(1)} kHz`;
