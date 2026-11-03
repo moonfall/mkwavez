@@ -57,7 +57,9 @@ export function describeRecipe(r: Recipe): string {
     case 'basic':
       return `${String(p.wave)}${p.wave === 'noise' ? ` seed ${r.seed}` : ''}`;
     case 'formula':
-      return `${p.name ? String(p.name) : 'formula'}${b}`;
+      return `${p.name ? String(p.name) : 'formula'}${p.edited ? ' (edited)' : ''}${b}`;
+    case 'pulse':
+      return `pulse ${Math.round(Number(p.width) * 100)}→${Math.round(Number(p.widthEnd) * 100)}%${b}`;
     case 'perlin':
       return `perlin${b} seed ${r.seed}`;
     case 'ca':

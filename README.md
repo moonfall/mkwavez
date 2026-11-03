@@ -26,10 +26,17 @@ The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to overr
 
 ## Using it
 
-- **Generate → Seed**: add basic waves, formula tables (presets or your own JS
-  expression in `p`, `t`, `n`, `u`, `pnoise()`), Perlin noise or cellular-automaton
-  tables, one at a time (`+1`) or as a batch of N (`+N`). A batch sets the window of
-  every voice ticked under "Batch sets window of".
+- **Generate → Seed**: pick from the library (basic waves, formula presets by
+  category, Perlin noise, cellular automaton, a blank formula). Search filters by name,
+  category or formula text (Enter picks the first match, ↓ moves into the list, Esc
+  clears); ▲/▼ or the arrow keys step through the (filtered) list. On a phone the library
+  is one row (▲ · Category › Name · ▼); tap the name for the list. Edit the formula (JS in
+  `p`, `t`, `n`, `u`, `pnoise()`; "Revert to preset") or the mode's parameters. The
+  large view shows one table of the batch with its spectrum; the strip below shows all N
+  (click, or ←/→ when focused). The previews are exactly what gets added: "Add shown"
+  adds that one table, "Add batch (+N)" all N and sets the window of every voice ticked
+  under "Sets window of". Modes that use randomness show the seed (Reroll); a new seed is
+  drawn after each Add batch.
 - **Generate → Mutate**: mutate the table selected in the Timeline (source and live
   preview side by side). Pick a mutation and Amount; the shown seed is used by the
   preview, Apply and every table of Apply N (Linear / Log sweep or Chain). Reroll

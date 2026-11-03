@@ -1,16 +1,18 @@
 import { renderBreedRecipe } from '../breed';
 import { renderMutateRecipe } from '../mutateBatch';
 import type { Recipe, TableId } from '../table';
-import { basicWave, type BasicWave } from './basic';
+import { basicWave, pulse, type BasicWave } from './basic';
 import { caGenerations } from './ca';
 import { formulaTable, type FormulaCompiler } from './formula';
 import { perlinTable, type PerlinParams } from './perlin';
+import { pulseWidth } from './seed';
 
 export * from './basic';
 export * from './ca';
 export * from './formula';
 export * from './formulaPresets';
 export * from './perlin';
+export * from './seed';
 
 export interface RenderEnv {
   /** Needed only for 'formula' recipes (browser: src/browser/formulaEval.ts). */
@@ -27,6 +29,8 @@ export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
   switch (r.op) {
     case 'basic':
       return basicWave(p.wave as BasicWave, r.seed);
+    case 'pulse':
+      return pulse(pulseWidth(Number(p.width), Number(p.widthEnd), index, count));
     case 'perlin':
       return perlinTable(p as unknown as PerlinParams, r.seed, index, count);
     case 'ca':

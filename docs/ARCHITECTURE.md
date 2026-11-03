@@ -12,6 +12,7 @@ src/
                         exact (fractional) fundamental phase alignment, peak normalise
     perlin.ts           improved Perlin noise, fBm, seeded NoiseField, loop-seamless pnoise
     generators/         basic, formula (FormulaFn interface only), Perlin, CA, presets,
+                        seed.ts (Seed library entries + seedTable/seedBatch),
                         renderRecipe() to re-render a table from its recipe
                         (mutations need env.resolveTable for parent data)
     mutations.ts        prototype mutations (identity at amount 0) + sweep amounts
@@ -31,8 +32,9 @@ src/
   audio/                protocol.ts (messages), worklet.ts (AudioWorkletProcessor adapter),
                         bridge.ts (AudioContext owner, state → messages, mip building)
   ui/                   Plain DOM + canvas sections (no framework), styles.css tokens;
-                        generate.ts hosts the Seed tab, mutate.ts (Mutate tab) and
-                        breed.ts (Breed tab); timeline.ts toggles Breed parents
+                        generate.ts hosts the tabs: seed.ts (Seed tab), mutate.ts
+                        (Mutate tab) and breed.ts (Breed tab); timeline.ts toggles
+                        Breed parents
   main.ts               initial state, section assembly, frame loop
 tests/                  vitest unit tests (core + AppModel)
 scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
@@ -45,6 +47,13 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 - **Recipe** `{ op, params, seed, parents[], batch?{index,count} }` — plain data,
   enough to re-render deterministically (`renderRecipe`; tested for every generator
   and every mutation × batch mode).
+- **Seed recipes** — `op` is the generator (`basic`, `pulse`, `formula`, `perlin`, `ca`),
+  `params.preset` the library entry id, plus the generator's params: `wave`;
+  `width, widthEnd` (duty sweeps linearly across the batch); `expr, name, edited`
+  (the expression actually used); `freq, z, zDrift, octaves, persistence`;
+  `rule, cells, start, generation (= start + index)`. `seed` and `batch {index, count}`
+  are always set (also for single "Add shown" tables, which keep their batch position),
+  so every Seed table re-renders exactly (tested for every library entry).
 - **Mutation recipe** — `op: 'mutate'`, `params { mutation, amount (this table's),
   batchAmount (A), mode: single|lin|log|chain }`, `seed` (the Apply's seed),
   `parents [sourceId]` (`[sourceId, mateId]` for Breed), `batch {index, count}`.
@@ -117,7 +126,15 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   key (source id, mutation, amount, seed) changed, and at most every 50 ms while a
   control is dragged. Apply reuses the preview table when the key matches. The Breed
   preview follows the same rules (key: parent ids, operator, bias, walk, weights,
-  rate, seed); parent spectra are cached per table data array.
+  rate, seed); parent spectra are cached per table data array. The Seed preview is a
+  whole batch: on a key change (entry, formula / params, seed, N; restarted at most every
+  50 ms) it is recomputed incrementally, ≤ 8 ms of main-thread work per frame, shown
+  table first, through the same `seedTable()` as Add (which reuses the preview tables
+  and finishes any missing ones synchronously). Library thumbnails are rendered once
+  (lazily, within the same budget) and redrawn only on selection / theme change; the
+  previous tables stay drawn while a restarted batch computes. A planned Edit layer
+  (draw / edit harmonics) slots in at `finalTable()` between the generated table and
+  the preview / Add.
 
 ## Playback semantics
 

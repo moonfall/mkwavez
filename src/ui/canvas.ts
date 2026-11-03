@@ -59,6 +59,28 @@ export function fit(c: HTMLCanvasElement, cssHeight: number): [CanvasRenderingCo
   return [g, w, cssHeight];
 }
 
+/**
+ * Like fit() for a canvas of fixed CSS size (thumbnails): never reads layout, so it
+ * works while the canvas is hidden. Backing store resized only when size / DPR change.
+ */
+export function fitFixed(c: HTMLCanvasElement, cssWidth: number, cssHeight: number): CanvasRenderingContext2D {
+  const s = c as HTMLCanvasElement & Sized;
+  const d = window.devicePixelRatio || 1;
+  if (s._w !== cssWidth || s._h !== cssHeight || s._d !== d) {
+    c.style.width = `${cssWidth}px`;
+    c.style.height = `${cssHeight}px`;
+    c.width = Math.round(cssWidth * d);
+    c.height = Math.round(cssHeight * d);
+    s._w = cssWidth;
+    s._h = cssHeight;
+    s._d = d;
+  }
+  const g = c.getContext('2d')!;
+  g.setTransform(d, 0, 0, d, 0, 0);
+  g.clearRect(0, 0, cssWidth, cssHeight);
+  return g;
+}
+
 // ---- drawing ----
 
 /** Waveform of A (optionally crossfaded toward B by frac) in the given box. */

@@ -1,6 +1,8 @@
 // Headless-Chrome smoke test: page loads without console errors, sections collapse and
 // expand (Wavetables starts collapsed; voice / sequence cards collapse individually and stop
-// redrawing), only voice 1 starts unmuted, Seed adds tables to the timeline, the worklet loads and the transport runs,
+// redrawing), only voice 1 starts unmuted, Seed (library search / ▲▼ / arrow keys, formula edit /
+// revert, parameter modes, batch strip arrow keys, Add shown / Add batch) adds exactly the
+// previewed tables, the worklet loads and the transport runs,
 // Mutate previews / applies / sweeps / chains / rerolls / evolves while playing,
 // Breed picks parents (timeline Shift-click / long-press, Add selected, voice window),
 // previews and applies every operator, sweeps and generations; evicted parents drop out.
@@ -55,34 +57,8 @@ async function run(label, url, browser) {
   await page.click('#tab-seed');
   assert(await page.isVisible('#panel-seed'), 'Seed tab visible again');
 
-  // Seed: single adds.
-  await page.click('button[data-wave="sine"]');
-  assert((await tlCount()) === 6, 'Sine adds one table');
-  await page.click('button[data-wave="noise"]');
-  await page.click('#formula-add1');
-  await page.click('#perlin-add1');
-  await page.click('#ca-add1');
-  assert((await tlCount()) === 10, 'noise, formula, perlin, CA +1 each add a table');
-  const v1End = await page.evaluate(() => window.mkwavez.model.voices[0].windowEnd);
-  assert(v1End === 9, 'single add extends a following window');
-
-  // Seed: batches (default N = 8).
-  await page.click('[aria-label="Add a batch of formula tables"]');
-  assert((await tlCount()) === 18, 'formula +N adds 8');
-  const w = await page.evaluate(() => {
-    const v = window.mkwavez.model.voices[0];
-    return [v.windowStart, v.windowEnd];
-  });
-  assert(w[0] === 10 && w[1] === 17, 'batch sets the targeted voice window to the batch');
-  await page.click('[aria-label="Add a batch of Perlin tables"]');
-  await page.click('[aria-label="Add N CA generations"]');
-  assert((await tlCount()) === 34, 'perlin and CA batches add 8 each');
-
-  // Formula error path.
-  await page.fill('#panel-seed input[type="text"]', 'sin(p');
-  await page.click('#formula-add1');
-  assert((await page.textContent('#panel-seed .error')).length > 0, 'bad formula shows an error');
-  assert((await tlCount()) === 34, 'bad formula adds nothing');
+  // Seed: library, formula / params, preview, batch strip, adds.
+  await seedChecks(page, tlCount);
 
   // Timeline selection by click.
   await page.$eval('.tl-scroll', (s) => (s.scrollTop = 0));
@@ -92,7 +68,7 @@ async function run(label, url, browser) {
 
   // Undo.
   await page.click('#undo');
-  assert((await tlCount()) === 26, 'undo removes the last batch');
+  assert((await tlCount()) === 14, 'undo removes the last batch');
 
   // Audio: worklet loads, transport runs, tables reach the worklet.
   await page.click('#play');
@@ -101,7 +77,7 @@ async function run(label, url, browser) {
   await page.waitForFunction(() => Number(document.body.dataset.step) >= 4, null, { timeout: 10000 });
   assert(true, 'sequencer steps advance');
   await cardCollapseChecks(page);
-  await page.click('button[data-wave="saw"]');
+  await page.click('#seed-add-shown');
   await page.waitForFunction(
     () => window.mkwavez.bridge.workletTableCount === window.mkwavez.model.timeline.length,
     null,
@@ -157,6 +133,230 @@ async function run(label, url, browser) {
   assert(!overflow, 'no horizontal page overflow');
   assert(errors.length === 0, `no console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
   await page.close();
+}
+
+/**
+ * Generate → Seed at phone width (and a desktop layout check): compact library row,
+ * search, ▲/▼ and arrow-key stepping, formula edit / error / revert, a parameter mode,
+ * the batch strip (arrow keys, scroll into view), Add shown and Add batch recipes.
+ * Leaves 20 tables: 5 + 1 (shown) + 8 (batch) + 6 (CA batch); Saw is selected.
+ */
+async function seedChecks(page, tlCount) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const title = async () => (await page.textContent('#seed-title')).trim();
+  const visibleIds = () => page.$$eval('.seed-entry', (bs) => bs.filter((b) => !b.hidden).map((b) => b.dataset.id));
+  const focusedId = () => M(() => document.activeElement?.dataset?.id ?? document.activeElement?.id ?? '');
+  const total = (await visibleIds()).length;
+
+  assert(await page.isVisible('#seed-current'), 'phone: library collapses to one row');
+  assert(!(await page.isVisible('#seed-list')), 'phone: list hidden until opened');
+  assert((await title()) === 'Shapers › Chebyshev', 'starts on Shapers › Chebyshev');
+  await page.waitForFunction(() => {
+    const c = document.querySelector('#seed-wave');
+    return c && c.width > 1 && c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 === 3 && v);
+  }, null, { timeout: 5000 });
+  assert(true, 'preview waveform renders');
+  assert(!(await page.isVisible('#seed-reroll')), 'no seed / Reroll for a formula without pnoise');
+
+  // ▲ / ▼.
+  await page.click('#seed-down');
+  assert((await title()) === 'Shapers › Superformula', '▼ steps to the next entry');
+  await page.click('#seed-up');
+  await page.click('#seed-up');
+  assert((await title()) === 'Shapers › Soft clip', '▲ steps back');
+  assert((await page.textContent('#seed-current')).includes('Soft clip'), 'compact row names the entry');
+
+  // Search.
+  await page.click('#seed-current');
+  assert(await page.isVisible('#seed-list'), 'tapping the name opens the list');
+  await page.waitForTimeout(150);
+  assert((await canvasInk(page, '.seed-entry[data-id="saw"] canvas')).n > 0, 'entry thumbnails render');
+  await page.fill('#seed-search', 'PERLIN');
+  const ids = await visibleIds();
+  assert(ids.length === 7 && ids[0] === 'drift' && ids.at(-1) === 'perlin-noise', `search matches category and name (${ids.length})`);
+  await page.fill('#seed-search', 'acos');
+  assert((await visibleIds()).join() === 'chebyshev', 'search matches formula text');
+  await page.fill('#seed-search', 'zzzz');
+  assert((await page.isVisible('#seed-empty')) && (await visibleIds()).length === 0, 'no-matches state');
+  await page.press('#seed-search', 'Escape');
+  assert((await visibleIds()).length === total && (await page.inputValue('#seed-search')) === '', 'Escape clears the search');
+
+  // Arrow keys within the results.
+  await page.fill('#seed-search', 'perlin');
+  await page.press('#seed-search', 'ArrowDown');
+  assert((await title()) === 'Perlin › Drift' && (await focusedId()) === 'drift', 'ArrowDown from search moves into the results');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  assert((await title()) === 'Perlin › Add octaves' && (await focusedId()) === 'add-octaves', 'ArrowDown steps; focus follows');
+  await page.keyboard.press('ArrowUp');
+  assert((await title()) === 'Perlin › Zoom', 'ArrowUp steps back');
+  await page.keyboard.press('End');
+  assert((await title()) === 'Noise & automata › Perlin noise', 'End: last result (skips non-matches)');
+  assert(
+    (await page.textContent('#seed-current')).includes('7 / 7') && (await page.isDisabled('#seed-down')),
+    'position within results; ▼ disabled at the end',
+  );
+  await page.click('#seed-up');
+  assert((await title()) === 'Perlin › Noisy FM', '▲ steps within the results');
+  assert(await page.isVisible('#seed-reroll'), 'seed / Reroll shown for pnoise formulas');
+  await page.fill('#seed-search', 'gray');
+  await page.press('#seed-search', 'Enter');
+  assert((await title()) === 'Bits › Gray code', 'Enter selects the first match');
+  await page.press('#seed-search', 'Escape');
+  const scrolled = await page.$eval('#seed-list', (l) => {
+    const b = l.querySelector('.seed-entry[aria-current="true"]');
+    return b.offsetTop >= l.scrollTop && b.offsetTop + b.offsetHeight <= l.scrollTop + l.clientHeight;
+  });
+  assert(scrolled, 'selected entry scrolled into view');
+  await page.click('.seed-entry[data-id="sine-saw"]');
+  assert((await title()) === 'Math › Sine→saw' && !(await page.isVisible('#seed-list')), 'picking an entry selects it and closes the list');
+
+  // Formula edit / error / revert.
+  const preset = await page.inputValue('#seed-expr');
+  assert(!(await page.isVisible('#seed-edited')), 'preset not marked edited');
+  await page.fill('#seed-expr', 'sin(p');
+  await page.waitForFunction(() => document.querySelector('#seed-error').textContent.startsWith('Syntax'), null, { timeout: 3000 });
+  assert(await page.isDisabled('#seed-add-batch'), 'syntax error shown inline; Add disabled');
+  await page.fill('#seed-expr', 'q*sin(p)');
+  await page.waitForFunction(() => document.querySelector('#seed-error').textContent.startsWith('Error'), null, { timeout: 3000 });
+  assert(true, 'runtime error (unknown name) shown inline');
+  await page.click('#seed-revert');
+  assert(
+    (await page.inputValue('#seed-expr')) === preset && !(await page.isVisible('#seed-edited')) && !(await page.isDisabled('#seed-add-batch')),
+    'Revert to preset restores the expression',
+  );
+  const edited = '(1-u)*sin(p) + u*sin(3*p)';
+  await page.fill('#seed-expr', edited);
+  assert((await page.isVisible('#seed-edited')) && (await page.isVisible('#seed-revert')), 'editing marks it edited');
+  await page.waitForTimeout(200);
+
+  // Batch strip: arrow keys move the shown table.
+  assert((await page.$$('#seed-strip .seed-card')).length === 8, 'strip shows N = 8 cards');
+  await page.focus('#seed-strip .seed-card[aria-pressed="true"]');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  const shownTxt = async () => (await page.textContent('#seed-shown')).trim();
+  assert((await shownTxt()).startsWith('#3 of 8 · n 2 · u 0.29'), `ArrowRight moves the shown table (${await shownTxt()})`);
+  await page.waitForTimeout(150);
+  const before = await canvasInk(page, '#seed-wave');
+  await page.keyboard.press('End');
+  const inView = await page.$eval('#seed-strip', (s) => {
+    const c = s.querySelector('.seed-card[aria-pressed="true"]');
+    const a = s.getBoundingClientRect();
+    const b = c.getBoundingClientRect();
+    return s.scrollLeft > 0 && b.left >= a.left - 1 && b.right <= a.right + 1 && document.activeElement === c;
+  });
+  assert((await shownTxt()).startsWith('#8 of 8') && inView, 'End: last card shown, focused and scrolled into view');
+  await page.waitForTimeout(150);
+  assert((await canvasInk(page, '#seed-wave')).sum !== before.sum, 'large view follows the shown card');
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowLeft');
+  assert((await shownTxt()).startsWith('#3 of 8'), 'ArrowLeft moves back');
+  await page.click('#seed-strip .seed-card:nth-child(4)');
+  assert((await shownTxt()).startsWith('#4 of 8'), 'clicking a card shows it');
+  await page.keyboard.press('ArrowLeft');
+
+  // Add shown: exactly the shown preview table (index 2 of 8).
+  await page.click('#seed-add-shown');
+  assert((await tlCount()) === 6, 'Add shown adds one table');
+  let r = await M(() => {
+    const m = window.mkwavez.model;
+    const t = m.timeline.at(-1);
+    return { ...t.recipe, sel: m.selectedId === t.id, end: m.voices[0].windowEnd };
+  });
+  assert(
+    r.op === 'formula' &&
+      r.params.preset === 'sine-saw' &&
+      r.params.expr === edited &&
+      r.params.edited === true &&
+      r.batch.index === 2 &&
+      r.batch.count === 8 &&
+      r.sel,
+    'Add shown recipe: preset, edited formula, batch index / N; selected',
+  );
+  assert(r.end === 5, 'single add extends a following window');
+
+  // Add batch.
+  await page.click('#seed-add-batch');
+  assert((await tlCount()) === 14, 'Add batch adds N = 8');
+  r = await M(() => {
+    const m = window.mkwavez.model;
+    const b = m.timeline.slice(-8);
+    const v = m.voices[0];
+    return {
+      idx: b.map((t) => t.recipe.batch.index).join(),
+      seeds: new Set(b.map((t) => t.recipe.seed)).size,
+      exprs: new Set(b.map((t) => t.recipe.params.expr)).size,
+      win: [v.windowStart, v.windowEnd],
+      same: b[2].data === m.timeline.at(-9).data,
+    };
+  });
+  assert(r.idx === '0,1,2,3,4,5,6,7' && r.seeds === 1 && r.exprs === 1, 'batch recipes: indices 0…7, one seed, one formula');
+  assert(r.same, 'batch table #3 is the very preview table Add shown added');
+  assert(r.win[0] === 6 && r.win[1] === 13, 'batch sets the targeted voice window to the batch');
+
+  // A parameter mode: cellular automaton.
+  await page.click('#seed-current');
+  await page.fill('#seed-search', 'cellular');
+  await page.press('#seed-search', 'Enter');
+  await page.press('#seed-search', 'Escape');
+  await page.click('#seed-current');
+  assert(
+    (await title()) === 'Noise & automata › Cellular automaton' && (await page.textContent('#seed-kind')) === 'Parameters',
+    'CA shows parameters',
+  );
+  assert(await page.isVisible('#seed-reroll'), 'CA shows seed / Reroll');
+  await page.selectOption('#seed-param-rule', '110');
+  await page.fill('#seed-param-start', '5');
+  assert(await page.isVisible('#seed-edited'), 'changed params mark it edited');
+  const seedHex = async () => (await page.textContent('#seed-seed')).trim();
+  const s0 = await seedHex();
+  await page.click('#seed-reroll');
+  const s1 = await seedHex();
+  assert(/^[0-9a-f]{8}$/.test(s1) && s1 !== s0, 'Reroll draws a new seed');
+  await page.click('#seed-n-dec');
+  await page.click('#seed-n-dec');
+  assert(
+    (await page.inputValue('#seed-n')) === '6' &&
+      (await page.textContent('#seed-add-batch')) === 'Add batch (+6)' &&
+      (await page.$$('#seed-strip .seed-card')).length === 6,
+    'N stepper: 6 cards, Add batch (+6)',
+  );
+  await page.click('#seed-add-batch');
+  assert((await tlCount()) === 20, 'CA Add batch adds 6');
+  r = await M(() => window.mkwavez.model.timeline.slice(-6).map((t) => ({ ...t.recipe.params, seed: t.recipe.seed })));
+  assert(
+    r.every((p) => p.preset === 'cellular-automaton' && p.rule === 110 && p.start === 5 && p.seed === parseInt(s1, 16)) &&
+      r.map((p) => p.generation).join() === '5,6,7,8,9,10',
+    'CA recipes: rule, start, generations 5…10, the shown seed',
+  );
+  assert((await seedHex()) !== s1, 'new seed after Add batch (random mode)');
+  await page.click('#seed-revert');
+  assert((await page.inputValue('#seed-param-start')) === '0' && !(await page.isVisible('#seed-edited')), 'Revert to defaults');
+  await page.click('#seed-n-inc');
+  await page.click('#seed-n-inc');
+  assert((await page.inputValue('#seed-n')) === '8', 'N back to 8');
+
+  // Basic wave (additive), selected for later adds.
+  await page.click('#seed-current');
+  await page.fill('#seed-search', 'saw');
+  await page.press('#seed-search', 'Enter');
+  await page.press('#seed-search', 'Escape');
+  await page.click('#seed-current');
+  assert((await title()) === 'Basic › Saw' && (await page.textContent('#seed-kind')) === 'Basic wave', 'Saw is a basic (additive) wave');
+  const ov = await M(() => document.documentElement.scrollWidth > window.innerWidth);
+  assert(!ov, 'Seed: no horizontal overflow at 390px');
+
+  // Desktop layout.
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(200);
+  assert(
+    (await page.isVisible('#seed-list')) && !(await page.isVisible('#seed-current')) && (await page.isVisible('#seed-pos')),
+    'desktop: library list in a column',
+  );
+  const cols = await page.$eval('#panel-seed', (el) => getComputedStyle(el).gridTemplateColumns.split(' ').length);
+  assert(cols === 2, 'desktop: two columns');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(200);
 }
 
 /** Voice / sequence cards collapse to their header and stop redrawing (transport running). */
