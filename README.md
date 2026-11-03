@@ -6,8 +6,9 @@ over a wavetable built from it. This browser build is the development testbed; t
 `src/core/` DSP/data code is written to port to a plugin (JUCE/C++) and hardware.
 
 See `docs/prototype-handoff.md` (original spec + prototype), `docs/ARCHITECTURE.md`
-and `docs/ROADMAP.md`. The native plugin port (VST3 / AU / CLAP / LV2 / Standalone, JUCE)
-lives in `plugin/`; see `docs/PLUGIN.md`.
+and `docs/ROADMAP.md`. The plugin (VST3 / AU / CLAP / LV2 / Standalone, JUCE) lives in
+`plugin/`: a native C++ engine with this web app as its editor, embedded in the system
+web view; see `docs/PLUGIN.md`.
 
 ## Run
 

@@ -94,7 +94,8 @@ export function buildTransport(ctx: UiContext, extra: Node | null = null): HTMLE
   syncPlay();
   syncUndo();
   syncTables();
-  syncRate();
+  // The bridge may already be running (inside the plugin it starts before the UI is built).
+  bridge.onState(bridge.state);
 
   return h(
     'header',

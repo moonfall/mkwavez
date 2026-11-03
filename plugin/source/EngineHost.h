@@ -29,7 +29,7 @@ struct Document {
         std::string name;
         PackedWavetable packed;
     };
-    /** Timeline order. */
+    /** Every table the engine holds (order not significant: wavetables address them by id). */
     std::vector<TableData> tables;
     std::vector<WavetableData> wavetables;
     std::vector<VoiceParams> voices;
@@ -55,6 +55,17 @@ struct EngineCommand {
     SequenceData sequence{};
 };
 
+/** One incremental document edit (what the web UI's AudioBridge sends, decoded). */
+struct DocChange {
+    enum Kind : uint8_t { addTable, removeTable, setWavetable, removeWavetable, setVoice, removeVoice, setSequence, removeSequence } kind = addTable;
+    int32_t id = 0;
+    Table table{};             // addTable
+    std::string name;          // setWavetable
+    PackedWavetable wavetable; // setWavetable
+    VoiceParams voice{};       // setVoice
+    SequenceData sequence{};   // setSequence
+};
+
 class EngineHost {
 public:
     static constexpr size_t QUEUE_CAPACITY = 4096;
@@ -66,6 +77,8 @@ public:
 
     /** Replace the whole document (state load, reset). */
     void load(Document doc);
+    /** Apply edits in order; they reach the audio thread as one atomic batch (when they fit the queue). */
+    void apply(const std::vector<DocChange>& changes);
     /** Read the document under the lock (keep `fn` short: the UI calls this per paint). */
     template <typename Fn>
     void read(Fn&& fn) const {

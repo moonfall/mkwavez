@@ -2,9 +2,10 @@ import './ui/styles.css';
 import { MidiController } from './app/midi';
 import { AppModel } from './app/model';
 import { AudioBridge } from './audio/bridge';
-import { WebMidi } from './browser/webMidi';
-import { generateBasic } from './core/generators';
-import { LAST_BATCH_WAVETABLE_ID } from './core/wavetable';
+import { juceBackend, NativePort } from './audio/nativePort';
+import { applyStartState } from './app/startState';
+import { WebMidi, type MidiInputs } from './browser/webMidi';
+import { NO_MIDI_OUTPUT, PluginHost } from './plugin/host';
 import { setTheme, storedTheme, throttle } from './ui/canvas';
 import { UiState, type FrameView, type UiContext } from './ui/context';
 import { h } from './ui/dom';
@@ -18,51 +19,48 @@ import { buildVoices } from './ui/voices';
 import { buildWavetables } from './ui/wavetables';
 
 const model = new AppModel();
-const bridge = new AudioBridge(model);
+// Inside the plugin (JUCE web view) the native engine plays and the host owns MIDI and state.
+const backend = juceBackend();
+const nativePort = backend ? new NativePort(backend) : null;
+const bridge = new AudioBridge(model, nativePort ?? undefined);
+const plugin = nativePort ? new PluginHost(model, bridge, nativePort) : null;
 const ctx: UiContext = { model, bridge, ui: new UiState(model) };
+if (plugin) {
+  document.documentElement.dataset.host = 'plugin';
+  plugin.forwardLogs();
+}
 // Dark by default; an explicit choice (theme toggle) is remembered.
 setTheme(storedTheme() ?? 'dark', false);
 
-// ---- initial state (as the prototype): five basic tables (one batch), three voices, one
-// sequence each; only voice 1 starts unmuted. V1 plays the built-in Last batch, so each new
-// batch (or single add) becomes what it plays; V2 / V3 play windows of the Timeline. ----
-model.addTables(
-  (['sine', 'tri', 'saw', 'square', 'p25'] as const).map((w) => generateBasic(w, 0)),
-  false,
-);
-const v1 = model.addVoice({ wavetableId: LAST_BATCH_WAVETABLE_ID, windowStart: 0, windowEnd: 4, position: 0.3, lfoDepth: 0.6, lfoRate: 0.25, octave: 0 })!;
-const v2 = model.addVoice({ windowStart: 1, windowEnd: 4, position: 0.75, lfoDepth: 0.3, lfoRate: 0.11, lfoPhase: 1.5, octave: 1, mute: true })!;
-const v3 = model.addVoice({
-  windowStart: 0,
-  windowEnd: 2,
-  position: 0.5,
-  lfoDepth: 0.9,
-  lfoRate: 1.2,
-  lfoPhase: 3,
-  octave: -1,
-  mute: true,
-})!;
-model.addSequence(v1.id, [0, -1, 3, -1, 4, 4, -1, 2, 0, -1, 5, 4, -1, 3, 2, -1]);
-model.addSequence(v2.id, [-1, -1, 7, -1, -1, 5, -1, -1, -1, -1, 6, -1, 4, -1, -1, -1]);
-model.addSequence(v3.id, [0, -1, -1, -1, 0, -1, -1, -1, 3, -1, -1, -1, 2, -1, -1, -1]);
-model.select(model.timeline[0].id);
-model.clearUndo();
+// ---- initial state: the plugin's saved project, else the start state ----
+if (plugin) await plugin.connect();
+else applyStartState(model);
 
 // ---- MIDI: input events go straight to the router and the worklet (not via the frame loop) ----
 // CC moves reach the worklet at once (voice/patch); the model and sliders catch up per frame
-// (a timer, so it also runs in a background tab).
+// (a timer, so it also runs in a background tab). In the plugin the native side routes the
+// host's MIDI; controller moves come back for learn / sliders, settings live in the project.
+const browserStore = { get: (k: string) => localStorage.getItem(k), set: (k: string, v: string) => localStorage.setItem(k, v) };
 const midi = new MidiController(
   model,
-  { notes: (evs) => bridge.sendMidi(evs), params: (id, patch) => bridge.patchVoice(id, patch) },
+  plugin ? NO_MIDI_OUTPUT : { notes: (evs) => bridge.sendMidi(evs), params: (id, patch) => bridge.patchVoice(id, patch) },
   () => ctx.ui.voiceId,
-  { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) },
+  plugin ? plugin.store : browserStore,
   (fn) => setTimeout(fn, 16),
 );
 ctx.ui.onVoice(() => midi.retarget());
 model.on('voices', () => midi.retarget());
-const webMidi = new WebMidi();
-webMidi.onMessage = (data, source) => midi.handle(data, source);
-webMidi.onSourceLost = (source) => midi.sourceLost(source);
+let midiInputs: MidiInputs;
+let webMidi: WebMidi | null = null;
+if (plugin) {
+  midiInputs = plugin.midiInputs;
+  plugin.attachMidi(midi, () => ctx.ui.voiceId, (fn) => ctx.ui.onVoice(fn));
+} else {
+  webMidi = new WebMidi();
+  webMidi.onMessage = (data, source) => midi.handle(data, source);
+  webMidi.onSourceLost = (source) => midi.sourceLost(source);
+  midiInputs = webMidi;
+}
 
 // ---- UI ----
 const generate = buildGenerate(ctx);
@@ -72,7 +70,7 @@ const voices = buildVoices(ctx);
 const sequences = buildSequences(ctx);
 const root = document.getElementById('app')!;
 root.replaceChildren(
-  buildTransport(ctx, buildMidi(ctx, midi, webMidi)),
+  buildTransport(ctx, buildMidi(ctx, midi, midiInputs)),
   h(
     'main',
     { class: 'shell' },
@@ -97,11 +95,11 @@ const loop = (now: number) => {
 requestAnimationFrame(loop);
 
 // A remembered MIDI input (not 'off') reconnects on load; 'off' never prompts for access.
-if (midi.settings.input !== 'off') void webMidi.select(midi.settings.input);
+if (webMidi && midi.settings.input !== 'off') void webMidi.select(midi.settings.input);
 
 bridge.onStatus = (s) => {
   document.body.dataset.step = String(s.step);
 };
 
 // Debug handle for the console and smoke tests.
-(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, setTheme, midi, webMidi };
+(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, setTheme, midi, webMidi, plugin };

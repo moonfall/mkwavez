@@ -4,7 +4,7 @@
  * reference copies.
  */
 import { MAX_PARENTS } from '../core/breed';
-import { MAX_STEPS, TIMELINE_CAP, UNDO_DEPTH } from '../core/constants';
+import { MAX_STEPS, TABLE_SIZE, TIMELINE_CAP, UNDO_DEPTH } from '../core/constants';
 import { emptySteps, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
@@ -22,6 +22,8 @@ import {
   type WavetableId,
 } from '../core/wavetable';
 import { windowIds } from '../core/wavetablePlayback';
+import { base64ToF32, f32ToBase64 } from './base64';
+import { PROJECT_FORMAT, PROJECT_VERSION, type ProjectData } from './project';
 
 /**
  * 'wavetables' = wavetable contents or settings changed (always emitted with 'timeline'
@@ -391,6 +393,56 @@ export class AppModel {
     if (patch.playing !== undefined) this.playing = patch.playing;
     if (patch.bpm !== undefined) this.bpm = Math.max(40, Math.min(300, patch.bpm));
     this.emit('transport');
+  }
+
+  // ---- project ----
+
+  /**
+   * The whole project as plain data. `inlineData`: include each table's samples (a
+   * self-contained file); otherwise the caller keeps them (the plugin's native state).
+   */
+  toProject(inlineData = true, settings?: Record<string, string>): ProjectData {
+    return {
+      format: PROJECT_FORMAT,
+      version: PROJECT_VERSION,
+      tables: this.timeline.map((t) => (inlineData ? { id: t.id, recipe: t.recipe, data: f32ToBase64(t.data) } : { id: t.id, recipe: t.recipe })),
+      wavetables: this.wavetables,
+      voices: this.voices,
+      sequences: this.sequences,
+      selectedId: this.selectedId,
+      breedParents: this.breedParents,
+      bpm: this.bpm,
+      next: { table: this.tableIds.next, voice: this.nextVoiceId, sequence: this.nextSeqId },
+      ...(settings ? { settings } : {}),
+    };
+  }
+
+  /**
+   * Replace everything with a project (see toProject). Table samples come from the
+   * project or from `data` (by id); throws, leaving the model unchanged, if any table's
+   * samples are missing or malformed. Clears undo; the transport stays stopped.
+   */
+  loadProject(p: ProjectData, data?: ReadonlyMap<TableId, Float32Array>): void {
+    const tables = p.tables.map((t) => {
+      const d = t.data !== undefined ? base64ToF32(t.data) : data?.get(t.id);
+      if (!d || d.length !== TABLE_SIZE) throw new Error(`project: no sample data for table ${t.id}`);
+      return makeTable(t.id, { data: d, recipe: t.recipe });
+    });
+    const maxId = tables.reduce((m, t) => Math.max(m, t.id), 0);
+    this.setTimeline(tables);
+    this.wavetables = p.wavetables.map((w) => ({ ...w }));
+    this.voices = p.voices.map((v) => ({ ...v }));
+    this.sequences = p.sequences.map((s) => ({ ...s, steps: normalizeSteps(s.steps) }));
+    this.selectedId = p.selectedId !== null && this.byId.has(p.selectedId) ? p.selectedId : (tables.at(-1)?.id ?? null);
+    this.breedParents = p.breedParents.filter((id) => this.byId.has(id));
+    this.bpm = Math.max(40, Math.min(300, p.bpm || 132));
+    this.playing = false;
+    this.tableIds = new IdAllocator(Math.max(p.next.table, maxId + 1));
+    this.nextVoiceId = Math.max(p.next.voice, ...this.voices.map((v) => v.id + 1), 1);
+    this.nextSeqId = Math.max(p.next.sequence, ...this.sequences.map((s) => s.id + 1), 1);
+    this.undoStack = [];
+    this.gestureKey = null;
+    this.emit('timeline', 'wavetables', 'voices', 'sequences', 'selection', 'transport', 'undo', 'parents');
   }
 
   // ---- undo ----

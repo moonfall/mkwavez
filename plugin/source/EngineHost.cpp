@@ -150,6 +150,102 @@ void EngineHost::load(Document next) {
     send(cmds);
 }
 
+void EngineHost::apply(const std::vector<DocChange>& changes) {
+    std::lock_guard<std::mutex> lock(mutex);
+    std::vector<EngineCommand> cmds;
+    cmds.reserve(changes.size());
+    auto cmd = [&](EngineCommand::Type type, int32_t id) -> EngineCommand& {
+        EngineCommand c;
+        c.type = type;
+        c.id = id;
+        cmds.push_back(c);
+        return cmds.back();
+    };
+    auto retireTable = [&](TableId id) {
+        if (auto it = mips.find(id); it != mips.end()) {
+            retiringTables[it->second.get()] = std::move(it->second);
+            mips.erase(it);
+        }
+    };
+    for (const auto& c : changes) {
+        switch (c.kind) {
+            case DocChange::addTable: {
+                // Ids are never reused for other data, but a re-add (undo past an eviction) may come
+                // while the old allocation is still retiring: always give it a fresh one.
+                retireTable(c.id);
+                auto it = std::find_if(doc.tables.begin(), doc.tables.end(), [&](const auto& t) { return t.id == c.id; });
+                if (it != doc.tables.end())
+                    it->data = c.table;
+                else
+                    doc.tables.push_back({c.id, c.table});
+                auto m = std::make_unique<MipSet>(buildMipSet(c.table));
+                cmd(EngineCommand::addTable, c.id).mips = m.get();
+                mips[c.id] = std::move(m);
+                break;
+            }
+            case DocChange::removeTable: {
+                const auto n = doc.tables.size();
+                doc.tables.erase(std::remove_if(doc.tables.begin(), doc.tables.end(), [&](const auto& t) { return t.id == c.id; }), doc.tables.end());
+                if (doc.tables.size() == n && !mips.count(c.id)) break;
+                cmd(EngineCommand::removeTable, c.id);
+                retireTable(c.id);
+                break;
+            }
+            case DocChange::setWavetable: {
+                auto it = std::find_if(doc.wavetables.begin(), doc.wavetables.end(), [&](const auto& w) { return w.id == c.id; });
+                if (it != doc.wavetables.end()) {
+                    it->name = c.name.empty() ? it->name : c.name;
+                    it->packed = c.wavetable;
+                } else
+                    doc.wavetables.push_back({c.id, c.name, c.wavetable});
+                auto fresh = std::make_unique<PackedWavetable>(c.wavetable);
+                if (auto old = packed.find(c.id); old != packed.end()) retiringWavetables[old->second.get()] = std::move(old->second);
+                cmd(EngineCommand::setWavetable, c.id).wavetable = fresh.get();
+                packed[c.id] = std::move(fresh);
+                break;
+            }
+            case DocChange::removeWavetable: {
+                doc.wavetables.erase(std::remove_if(doc.wavetables.begin(), doc.wavetables.end(), [&](const auto& w) { return w.id == c.id; }),
+                                     doc.wavetables.end());
+                if (auto old = packed.find(c.id); old != packed.end()) {
+                    retiringWavetables[old->second.get()] = std::move(old->second);
+                    packed.erase(old);
+                    cmd(EngineCommand::removeWavetable, c.id);
+                }
+                break;
+            }
+            case DocChange::setVoice: {
+                auto it = std::find_if(doc.voices.begin(), doc.voices.end(), [&](const auto& v) { return v.id == c.id; });
+                if (it != doc.voices.end())
+                    *it = c.voice;
+                else
+                    doc.voices.push_back(c.voice);
+                cmd(EngineCommand::setVoice, c.id).voice = c.voice;
+                break;
+            }
+            case DocChange::removeVoice:
+                doc.voices.erase(std::remove_if(doc.voices.begin(), doc.voices.end(), [&](const auto& v) { return v.id == c.id; }), doc.voices.end());
+                cmd(EngineCommand::removeVoice, c.id);
+                break;
+            case DocChange::setSequence: {
+                auto it = std::find_if(doc.sequences.begin(), doc.sequences.end(), [&](const auto& s) { return s.id == c.id; });
+                if (it != doc.sequences.end())
+                    *it = c.sequence;
+                else
+                    doc.sequences.push_back(c.sequence);
+                cmd(EngineCommand::setSequence, c.id).sequence = c.sequence;
+                break;
+            }
+            case DocChange::removeSequence:
+                doc.sequences.erase(std::remove_if(doc.sequences.begin(), doc.sequences.end(), [&](const auto& s) { return s.id == c.id; }),
+                                    doc.sequences.end());
+                cmd(EngineCommand::removeSequence, c.id);
+                break;
+        }
+    }
+    send(cmds);
+}
+
 void EngineHost::send(std::vector<EngineCommand>& cmds) {
     if (cmds.empty()) return;
     // No engine yet: prepare() applies the whole document.

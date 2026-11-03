@@ -40,6 +40,28 @@ juce::String pct(float v, int) { return juce::String(juce::roundToInt(v * 100)) 
 
 } // namespace
 
+const char* fieldKey(VoiceField f) { return fieldIds[f]; }
+
+double fieldValue(const mkwavez::VoiceParams& v, VoiceField f) {
+    switch (f) {
+        case position: return v.position;
+        case positionY: return v.positionY;
+        case lfoDepth: return v.lfoDepth;
+        case lfoRate: return v.lfoRate;
+        case lfoDepthY: return v.lfoDepthY;
+        case lfoRateY: return v.lfoRateY;
+        case octave: return v.octave;
+        case level: return v.level;
+        case mute: return v.mute ? 1.0 : 0.0;
+        case attack: return v.attack;
+        case decay: return v.decay;
+        case sustain: return v.sustain;
+        case release: return v.release;
+        case VOICE_FIELD_COUNT: break;
+    }
+    return 0;
+}
+
 juce::String voiceId(int slot, VoiceField f) { return "v" + juce::String(slot + 1) + "_" + fieldIds[f]; }
 juce::String voiceLabel(VoiceField f) { return fieldLabels[f]; }
 

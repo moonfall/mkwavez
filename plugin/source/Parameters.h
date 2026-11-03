@@ -45,6 +45,11 @@ struct Pointers {
     explicit Pointers(juce::AudioProcessorValueTreeState& s);
 };
 
+/** The VoiceParams / JSON key of a field ("position", …; same names as the TS VoiceParams). */
+const char* fieldKey(VoiceField f);
+/** A voice's value for a field (mute: 0 / 1). */
+double fieldValue(const mkwavez::VoiceParams& v, VoiceField f);
+
 /** Overwrite the parameter-driven fields of a voice from slot values. */
 void applyVoiceFields(mkwavez::VoiceParams& v, const std::array<float, VOICE_FIELD_COUNT>& values);
 

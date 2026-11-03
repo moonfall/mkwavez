@@ -3,6 +3,8 @@
 #include "EngineHost.h"
 #include "Parameters.h"
 
+#include "mkwavez/spsc_queue.h"
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
@@ -19,7 +21,26 @@ struct LiveStatus {
     std::atomic<bool> playing{false};
     std::atomic<int> voiceCount{0};
     std::array<Voice, mkwavez::EngineStatus::MAX> voices;
+    /** Effective transport (host or Play / BPM), as the engine runs it. */
+    std::atomic<bool> transportPlaying{false};
+    std::atomic<double> transportBpm{132};
+    std::atomic<double> sampleRate{48000};
 };
+
+/** MIDI routing the web UI sets (it owns those settings; see plugin/host.ts). Read on the audio thread. */
+struct WebMidiSettings {
+    std::atomic<bool> enabled{true};
+    /** Voice Omni plays (the selected tab), or -1 = the `midiVoice` parameter. */
+    std::atomic<int> omniVoice{-1};
+    std::array<std::atomic<int>, mkwavez::CC_PARAM_COUNT> cc{};
+    WebMidiSettings() {
+        const mkwavez::CcMap d;
+        for (size_t i = 0; i < cc.size(); ++i) cc[i] = d.cc[i];
+    }
+};
+
+/** A raw 3-byte controller message (forwarded to the web UI for learn and its sliders). */
+using CcMessage = std::array<uint8_t, 3>;
 
 class MkwavezProcessor final : public juce::AudioProcessor, private juce::Timer {
 public:
@@ -57,6 +78,15 @@ public:
     /** Reset the project to the start state (keeps parameter values). */
     void resetDocument();
 
+    // ---- web UI support (message thread) ----
+    WebMidiSettings& webMidi() { return midiSettings; }
+    mkwavez::SpscQueue<CcMessage>& ccMessages() { return ccQueue; }
+    /** The web UI's project (JSON without samples), saved with the plugin state. */
+    juce::String projectJson() const;
+    void setProjectJson(const juce::String& json);
+    /** Bumped whenever the host loads a state (an open web UI must reload). */
+    int stateGeneration() const { return stateGen.load(); }
+
 private:
     void timerCallback() override;
     void applyParameters(mkwavez::SynthEngine& e, bool force);
@@ -71,6 +101,11 @@ private:
     mkwavez::MidiRouting routing;
     mkwavez::CcMap ccMap;
     LiveStatus status;
+    WebMidiSettings midiSettings;
+    mkwavez::SpscQueue<CcMessage> ccQueue{1024};
+    juce::CriticalSection projectLock;
+    juce::String project;
+    std::atomic<int> stateGen{0};
 
     // Audio-thread caches.
     std::array<std::array<float, params::VOICE_FIELD_COUNT>, params::VOICE_SLOTS> lastVoice{};

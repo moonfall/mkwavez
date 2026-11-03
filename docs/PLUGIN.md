@@ -1,14 +1,21 @@
 # Native plugin (VST3 / AU / CLAP / LV2 / Standalone)
 
-`plugin/` is the native port: a C++20 core (`plugin/core`, no JUCE) and a JUCE 9 plugin
-around it. **Goal:** a self-contained plugin and standalone app at parity with the web
-app (generation, timeline, wavetable management, voices, sequences), sharing behaviour
-with the TypeScript core through golden tests.
+`plugin/` is the native port: a C++20 audio engine (`plugin/core`, no JUCE) inside a
+JUCE 9 plugin whose editor is **the web app itself**, bundled into the plugin binary and
+shown in the operating system's web view (WebView2 on Windows, WKWebView on macOS,
+WebKitGTK on Linux): no external browser, no network. Generation (Seed / Mutate /
+Breed, formulas), the Timeline, wavetable management, voices, sequences and MIDI settings
+are the same TypeScript code as the browser build; only the audio runs natively.
 
 ## Build
 
-Requirements: CMake ≥ 3.22, a C++20 compiler (Xcode 15+, VS 2022, GCC 11+ / Clang 14+).
-On Linux, JUCE's dependencies (see `.github/workflows/plugin.yml` for the apt list).
+Requirements: CMake ≥ 3.22, a C++20 compiler (Xcode 15+, VS 2022, GCC 11+ / Clang 14+),
+Node 20+ (the build runs `npm ci` if needed and `npm run build`, then zips `dist/` into
+the binary). On Linux, JUCE's dependencies plus `libwebkit2gtk-4.1-dev` (see
+`.github/workflows/plugin.yml` for the apt list); building the LV2 needs a display (the
+manifest step loads the plugin): use `xvfb-run` on a headless box. On Windows CMake
+downloads the WebView2 SDK (NuGet) and links its loader statically; the WebView2 runtime
+ships with Windows 10/11.
 
 ```sh
 cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release   # fetches JUCE 9.0.4 + clap-juce-extensions
@@ -18,12 +25,19 @@ ctest --test-dir build -C Release --output-on-failure  # core tests + VST3 host 
 
 Artefacts land in `build/mkwavez_artefacts/Release/{VST3,CLAP,AU,LV2,Standalone}`
 (`-DMKWAVEZ_COPY_PLUGIN=ON` also installs them into the user plugin folders). Options:
-`MKWAVEZ_CLAP` (default ON), `MKWAVEZ_HOST_TEST` (ON), `MKWAVEZ_PLUGIN=OFF` builds only
-the core and its tests (no JUCE download; seconds):
+`MKWAVEZ_WEBVIEW` (ON; OFF = the minimal native editor, no web view dependency),
+`MKWAVEZ_BUILD_WEB` (ON; OFF = embed an existing `MKWAVEZ_WEB_DIST`), `MKWAVEZ_CLAP` (ON),
+`MKWAVEZ_HOST_TEST` (ON), `MKWAVEZ_PLUGIN=OFF` builds only the core and its tests (no
+JUCE download; seconds):
 
 ```sh
 cmake -S plugin/core -B build-core && cmake --build build-core && ctest --test-dir build-core
 ```
+
+Runtime switches: `MKWAVEZ_WEB_DEV_URL=http://localhost:5173` loads the Vite dev server
+instead of the embedded build (edit the UI without rebuilding the plugin);
+`MKWAVEZ_NATIVE_EDITOR=1` uses the minimal native editor; `MKWAVEZ_WEB_DEBUG=1` prints the
+page's errors / warnings to stderr (`=2` also traces the protocol).
 
 Offline / local checkouts: `-DFETCHCONTENT_SOURCE_DIR_JUCE=/path/to/JUCE`,
 `-DFETCHCONTENT_SOURCE_DIR_CLAP_JUCE_EXTENSIONS=/path/to/clap-juce-extensions`.
@@ -56,23 +70,67 @@ plugin/
                             sample-accurate MIDI; state save / load
     Parameters              APVTS layout (4 voice slots × 13 params + globals)
     State                   Document ⇄ ValueTree (binary table data)
-    PluginEditor, WavetableView, Theme   minimal native editor (P0)
+    WebEditor               the editor: WebBrowserComponent + the zipped web build
+                            (resource provider), 30 Hz poll
+    WebLink                 the native end of the page protocol (decode edits, init /
+                            tables, status, transport, automation, controller moves)
+    PluginEditor, WavetableView, Theme   minimal native editor (fallback)
   tests/HostTest.cpp        loads the built VST3 like a DAW and checks it
-  tests/Snapshot.cpp        renders the editor to a PNG
+  tests/WebTest.cpp         end to end with the real web view (Linux, xvfb)
+  tests/Snapshot.cpp        renders the native editor to a PNG
+src/audio/port.ts           EnginePort: WorkletPort (browser) | NativePort (plugin)
+src/audio/nativePort.ts     the page end: JUCE's window.__JUCE__.backend, one event id
+src/plugin/host.ts          plugin mode: saved project in / out, host changes → model
+src/app/project.ts          project save / load (AppModel.toProject / loadProject)
 ```
 
-## How it maps onto the web app
+## How the plugin works
 
-| Web app | Plugin |
+```
+ web view (the web app)                              native (C++)
+ AppModel ── AudioBridge ── NativePort ──event "mkwavez"──► WebLink ── EngineHost ──SPSC──► SynthEngine
+   ▲   (same reconcile code as the        (JSON; tables          │   (document, mip sets,      (audio thread)
+   │    browser, raw tables)               as base64)            │    memory retirement)
+   │                                                             ├─► parameters (V1–V4, Play, BPM)
+   └── PluginHost ◄── init / tables / status / transport / ──────┘   project JSON (saved with the state)
+                      voice/params / midi/cc
+```
+
+- **Same model, same reconcile.** The page's `AudioBridge` talks to an `EnginePort`; in
+  the browser that is the AudioWorklet, in the plugin `NativePort`, which sends the same
+  batched protocol (`audio/protocol.ts`) to the native side as JSON, with raw tables
+  (`tables/addData`, base64 float32) because the native side builds the mip sets. A batch
+  becomes one atomic command batch on the audio thread, as in the worklet.
+- **State lives natively.** `EngineHost`'s document (tables with samples, wavetables,
+  voices, sequences) is what plays; it keeps playing with the editor closed and is saved
+  with the plugin state, together with the page's **project JSON** (`toProject` without
+  samples: recipes, ids, wavetables, voices, sequences, selection, Breed parents, MIDI
+  settings). Opening the editor: the page says `hello`, gets `init` (project, current
+  parameter values, transport, the ids the engine holds) and the tables in chunks,
+  restores the project with those samples (no tables are re-sent) or builds the start
+  state, reconciles with what the engine holds, and from then on saves the project
+  (debounced) on every change. A state load by the host while the editor is open reloads
+  the page.
+- **Host integration.** Voice slots V1–V4 (voice ids 1–4) expose 13 automatable
+  parameters each; the page's voice edits set them, and automation flows back to the
+  page's model (polled at 30 Hz, so nothing touches the web view from the audio thread).
+  The init message carries the current values, so automation made while the editor was
+  closed wins over the saved project. Play / BPM work the same way; with Host sync the
+  sequencer follows the host's play state and tempo and the page shows the effective
+  transport. MIDI comes from the host: the native router applies it at the sample offset;
+  the page's MIDI panel shows "Host MIDI", and its settings (on / off, Omni, CC map; saved
+  in the project) drive the native router; controller messages come back to the page for
+  learn, the LED and the sliders.
+
+| Web app (browser) | Plugin |
 | --- | --- |
-| `src/core/*` (DSP, playback, engine, MIDI) | `plugin/core` (1:1 ports, same names) |
-| AudioWorklet + `audio/protocol.ts` messages | `EngineCommand` on a lock-free SPSC queue, drained at the top of `processBlock` (a pushed batch lands atomically, like the worklet's `batch`) |
-| `AudioBridge` (reconcile model → worklet, build mip sets) | `EngineHost::load` (diff the document, build mip sets off the audio thread) |
-| GC keeps a removed table alive while a voice fades it out | the engine retires pointers (`popRetired`) only once no voice plays them; `EngineHost::housekeeping` frees them (20 Hz timer) |
-| Web MIDI + `MidiRouter` (render-quantum jitter) | host MIDI + the same router; events applied at their **sample offset** |
-| BPM / Play in the transport bar | host tempo and play state (`Host sync`), or the `Play` / `BPM` parameters |
-| voice sliders | host-automatable parameters per voice slot (V1–V4 = voice ids 1–4), overlaid on the document's voices every block they change |
-| localStorage / (M5) save | plugin state: parameters + document (tables as raw float32, wavetables, voices, sequences) |
+| `src/core/*` DSP, playback, engine, MIDI | `plugin/core` (1:1 C++ ports, golden-tested) |
+| AudioWorklet + `audio/protocol.ts` | `WebLink` → `EngineHost` → lock-free SPSC → `SynthEngine` |
+| GC keeps a removed table alive while a voice fades it out | the engine retires pointers (`popRetired`) only once no voice plays them; `EngineHost::housekeeping` frees them |
+| Web MIDI (render-quantum jitter) | host MIDI, applied at its sample offset |
+| BPM / Play | host tempo / play state (Host sync) or the Play / BPM parameters |
+| localStorage MIDI settings | saved in the project |
+| (no save yet) | plugin state = parameters + native document + project JSON |
 
 Audio-thread rules carried over: no allocation, no locks, no FFT in `processBlock`; the
 engine uses fixed pools (16 voices, 32 sequences, 64 wavetables, a 16384-slot open-
@@ -95,54 +153,45 @@ addressing table map) instead of Maps.
   until played, note sounds / releases, note-on at its sample offset, block sizes 1–4096,
   sample rates 22.05–96 kHz, a parameter (mute) takes effect, state round-trip renders
   identical samples, garbage state ignored, editor opens (under xvfb in CI).
-- Not yet run here: pluginval and real DAWs (Reaper / Bitwig / Live / Logic). CI can add
-  pluginval once the plugin is past P0.
+- **Web view, end to end** (`tests/WebTest.cpp`, Linux / WebKitGTK under xvfb): a fresh
+  instance's page syncs its start state into the native document and saves its project;
+  Seed → Add batch clicked in the page reaches the engine; host automation of a voice
+  parameter reaches the page's model and saved project; the saved state restores in a new
+  instance (same timeline, voice parameters, no tables re-sent); a MIDI note sounds.
+- **Page side** (`tests/pluginHost.test.ts`, `tests/project.test.ts`, vitest with a fake
+  JUCE backend): fresh / restored / corrupt / silent native side, transport echo
+  suppression, automation, project round-trip.
+- Not yet run: pluginval and real DAWs.
 
-## Plan to parity
+## Plan
 
-Native model in C++ (`plugin/core`), every step golden-tested against the TS core the
-way the engine is, so the two stay in lock-step while the web app keeps evolving.
+1. **P0: engine + plugin shell (done).** Audio core, formats, host transport, MIDI,
+   parameters, state, minimal editor, CI.
+2. **P1: the web app as the editor (done).** Engine port abstraction, project save /
+   load, plugin boot (restore / start state, reconcile, autosave), host transport /
+   automation / MIDI settings sync, WebView editor with the embedded build. Every web
+   feature (Seed / Mutate / Breed, formulas, Timeline, Wavetables, voices, sequences,
+   undo, themes) works in the plugin because it is the same code.
+3. **P2: hardening.** pluginval and DAW testing (Reaper, Bitwig, Live, Logic, FL),
+   WebView quirks per host (focus / keyboard, resizing, HiDPI, Linux embedding), project
+   import / export files (M5 can share `src/app/project.ts`), presets, a voice-count
+   story beyond four automatable slots, more parameters (window / wavetable selection).
+4. **P3: release.** Signing / notarisation, installers, licence choice (see Build).
 
-1. **P0 — engine + plugin shell (done).** Audio core, plugin formats, host transport,
-   MIDI, parameters, state, minimal editor, CI.
-2. **P1 — generation core.** Perlin, CA, basic / pulse / noise, the Seed library and
-   `seedTable` / `seedBatch`; mutations + `mutateBatch` (lin / log / chain, seeding);
-   breed operators, walks and `breedBatch`; `renderRecipe`. Recipes as plain data
-   (variant params) so tables keep provenance and re-render. **Formulas** need a
-   portable expression language: a small parser / evaluator for the JS subset the
-   presets use (Math functions, `pnoise`, ternaries, and a `sum(k, n, expr)` builtin
-   for the `[...Array(n)].reduce` idioms, with the presets rewritten to it), golden-
-   tested preset by preset.
-3. **P2 — project model.** Timeline (cap, pin-aware eviction), wavetables (1D / 2D /
-   Rows, built-ins, write head with every setting, removal, pins), voice window
-   following, sequences, undo (40 snapshots), selection, breed parents — the native
-   `AppModel`, with `Document` becoming its engine-facing projection. Plugin state =
-   the whole project (M5's save format, shared with the web app's file export).
-4. **P3 — full UI.** Seed / Mutate / Breed tabs, Timeline strip, Wavetables panel,
-   Voice and Sequence panels, MIDI settings, light / dark themes. Open decision:
-   native JUCE components vs hosting the existing web UI in JUCE 9's WebView (talking to
-   the native model over the WebView bridge); see below.
-5. **P4 — release.** pluginval in CI, DAW testing, presets, signing / notarisation,
-   installers.
+A C++ port of generation (formula language, mutations, breed, write head) isn't needed
+for the plugin; `plugin/core` stays the audio engine (and a base for hardware later).
 
-### UI decision (P3)
+## Known gaps
 
-- **Native JUCE UI**: one language and toolchain, no browser engine in the plugin, best
-  host compatibility (WebView embedding has quirks in some hosts / Linux), full control
-  of rendering cost. Costs a rewrite of `src/ui` (~4–5k lines of DOM / canvas code).
-- **Web UI in a WebView**: reuses `src/ui` almost unchanged with the model behind an
-  async bridge; faster to parity and one UI to maintain. Costs WebView2 (Windows) /
-  WKWebView / WebKitGTK dependencies, async state sync, and two model implementations
-  (TS for the browser, C++ for the plugin) that must agree — which the golden tests make
-  manageable.
-
-## Known gaps (P0)
-
-- Generation, Timeline editing, wavetable editing and sequence editing aren't in the
-  plugin yet: it starts from the web app's start state (five basic tables, Timeline +
-  Last batch, V1–V4, three demo sequences) and saves / restores that document.
-- Voice count is fixed at four parameter slots (the engine supports 16).
-- Mapped MIDI CCs (mod wheel → position X by default) patch the engine voice directly;
-  the parameter doesn't move, and its next change takes over again. No CC learn yet.
-- The sequencer follows the host's play state and tempo but not its bar position.
-- `noise` basic wave (needs the Perlin port) is not available natively yet.
+- Only voices 1–4 have host parameters (the page allows 8 voices; 5–8 play and save but
+  can't be automated). Window, wavetable and interpolation aren't parameters.
+- Mapped MIDI CCs patch the engine voice at once and the page's model a frame later; the
+  host parameter for that field follows only via the page (editor open).
+- The sequencer follows the host's play state and tempo, not its bar position. With the
+  host playing, Stop in the page can't stop it (the host transport wins).
+- Without the editor open nothing generates (generation is UI-driven, as in the browser).
+- Undo history isn't saved with the project.
+- Not yet tested: real DAWs, pluginval, the macOS / Windows web views (CI builds them;
+  the end-to-end web view test runs on Linux only).
+- The browser smoke test's "the strip follows the newest table" check fails in this
+  environment on `main` as well (unrelated to the plugin).

@@ -1,6 +1,6 @@
 import type { MidiController } from '../app/midi';
 import { CC_MAX_ASSIGNABLE, CC_PARAM_LABELS, CC_PARAMS, type CcParam } from '../core/midi';
-import { webMidiMessage, type WebMidi } from '../browser/webMidi';
+import { webMidiMessage, type MidiInputs } from '../browser/webMidi';
 import type { UiContext } from './context';
 import { h } from './dom';
 
@@ -13,7 +13,7 @@ const hasPopover = typeof HTMLElement !== 'undefined' && 'popover' in HTMLElemen
  * hot-plug), short status, and a "MIDI" button opening a popover with the routing (channel
  * N → voice N, or Omni → the selected voice tab) and the CC map with learn.
  */
-export function buildMidi(ctx: UiContext, midi: MidiController, web: WebMidi): HTMLElement {
+export function buildMidi(ctx: UiContext, midi: MidiController, web: MidiInputs): HTMLElement {
   const { model, bridge, ui } = ctx;
 
   const led = h('span', { class: 'midi-led', id: 'midi-led', 'aria-hidden': 'true' });
@@ -106,7 +106,7 @@ export function buildMidi(ctx: UiContext, midi: MidiController, web: WebMidi): H
     const s = midi.settings;
     const opts: [string, string][] = [
       ['off', 'MIDI off'],
-      ['all', 'All MIDI inputs'],
+      ['all', web.allLabel ?? 'All MIDI inputs'],
     ];
     for (const i of web.inputs) opts.push([i.id, i.name]);
     if (s.input !== 'off' && s.input !== 'all' && !web.inputs.some((i) => i.id === s.input)) {
@@ -154,7 +154,7 @@ export function buildMidi(ctx: UiContext, midi: MidiController, web: WebMidi): H
         shortText = 'No input';
         long = choice === 'all' ? 'No MIDI inputs connected. Plug one in; it is picked up automatically.' : `${midi.settings.inputName || 'The chosen input'} is not connected; it reconnects when plugged in.`;
       } else {
-        long = `Listening to ${n === 1 ? (web.inputs.find((i) => i.id === choice)?.name ?? web.inputs[0]?.name ?? '1 input') : `${n} inputs`}.`;
+        long = web.listeningText ?? `Listening to ${n === 1 ? (web.inputs.find((i) => i.id === choice)?.name ?? web.inputs[0]?.name ?? '1 input') : `${n} inputs`}.`;
         if (bridge.state !== 'running') long += ' Audio starts on your first click (a browser rule).';
       }
     } else if (choice === 'off' && !bad) {

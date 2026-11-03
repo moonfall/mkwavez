@@ -44,7 +44,22 @@ export function webMidiMessage(state: WebMidiState, detail = ''): { short: strin
   }
 }
 
-export class WebMidi {
+/** What the MIDI panel (ui/midi.ts) needs from an input source: Web MIDI, or the plugin host. */
+export interface MidiInputs {
+  readonly state: WebMidiState;
+  readonly detail: string;
+  readonly inputs: readonly WebMidiInput[];
+  /** Inputs currently listened to. */
+  readonly listening: number;
+  /** Label of the 'all' choice (default "All MIDI inputs"). */
+  readonly allLabel?: string;
+  /** Status text while listening (default: the input names / count). */
+  readonly listeningText?: string;
+  select(choice: string): Promise<void>;
+  onChange?: () => void;
+}
+
+export class WebMidi implements MidiInputs {
   state: WebMidiState = 'idle';
   detail = '';
   /** Connected inputs, in the order the browser lists them. */

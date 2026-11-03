@@ -166,8 +166,12 @@ build and verification in `docs/PLUGIN.md`.
   lock-free command queue + pointer retirement; sample-accurate MIDI; host tempo / play;
   4 voice slots of automatable parameters; state save / load; minimal editor; VST3 host
   test; CI on Linux / macOS / Windows.
-- Next: P1 generation core (incl. a portable formula language), P2 project model
-  (timeline, wavetables, write head, undo), P3 full UI, P4 release.
+- P1 (done): the web app is the editor, bundled into the plugin and shown in the system
+  web view (no browser), driving the native engine through the same bridge protocol;
+  project save / load (`src/app/project.ts`) saved with the plugin state; host
+  automation / transport / MIDI settings in sync; end-to-end web view test.
+- Next: P2 hardening (pluginval, DAWs, per-host web view quirks, project files, presets),
+  P3 release (signing, installers, licence).
 
 ## M5 — Save/load
 
