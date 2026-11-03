@@ -13,7 +13,11 @@
 // Add +N recipes, no Evolve, fits the Generate panel) while playing; Breed picks parents
 // (timeline Shift-click / long-press, Add selected,
 // voice window), previews and applies every operator, sweeps and generations; evicted parents
-// drop out.
+// drop out. Wavetables: the built-ins (Timeline, Last batch, Batches, Grid) exist, update on
+// Seed Add shown / Add batch and show their views; no "Sets window of" checkboxes; V1 on the
+// Grid shows the X/Y pad (sliders move the dot, live dot while playing), the worklet plays it,
+// Step on the wavetable plays one cell; the Voice panel fits at 1440×900 / 1180×820 and 390px
+// doesn't overflow; the CC map has Position Y.
 //
 // Usage: npm run smoke            (builds, then tests `vite preview` and `vite dev`)
 //        CHROME=/path/to/chrome   (default /usr/bin/google-chrome)
@@ -98,6 +102,7 @@ async function run(label, url, browser) {
   );
   assert(true, 'worklet holds every timeline table');
   await timelineMarkerChecks(page);
+  await wavetableChecks(page);
   await timelineCopyChecks(page, tlCount);
   await mutateChecks(page, tlCount, label);
   await breedChecks(page, tlCount);
@@ -119,7 +124,7 @@ async function run(label, url, browser) {
   await page.evaluate(() => {
     const m = window.mkwavez.model;
     const g = m.timeline[m.timeline.length - 1];
-    for (let i = 0; i < 5; i++) m.addTables(Array.from({ length: 1000 }, () => ({ data: g.data, recipe: g.recipe })), 'batch');
+    for (let i = 0; i < 5; i++) m.addTables(Array.from({ length: 1000 }, () => ({ data: g.data, recipe: g.recipe })));
   });
   assert((await tlCount()) === 4096, 'timeline capped at 4096 after 5000 adds');
   await page.waitForFunction(() => window.mkwavez.bridge.workletTableCount === 4096, null, { timeout: 20000 });
@@ -327,7 +332,7 @@ async function seedChecks(page, tlCount) {
   let r = await M(() => {
     const m = window.mkwavez.model;
     const t = m.timeline.at(-1);
-    return { ...t.recipe, sel: m.selectedId === t.id, end: m.voices[0].windowEnd };
+    return { ...t.recipe, sel: m.selectedId === t.id, end: m.voices[1].windowEnd, last: m.windowTables(m.voices[0]).map((x) => x.id).join() === String(t.id) };
   });
   assert(
     r.op === 'formula' &&
@@ -339,7 +344,8 @@ async function seedChecks(page, tlCount) {
       r.sel,
     'Add shown recipe: preset, edited formula, batch index / N; selected',
   );
-  assert(r.end === 5, 'single add extends a following window');
+  assert(r.end === 5, 'single add extends a following Timeline window (V2)');
+  assert(r.last, 'single add replaces Last batch: V1 plays just the new table');
 
   // Add batch.
   await page.click('#seed-add-batch');
@@ -353,12 +359,20 @@ async function seedChecks(page, tlCount) {
       seeds: new Set(b.map((t) => t.recipe.seed)).size,
       exprs: new Set(b.map((t) => t.recipe.params.expr)).size,
       win: [v.windowStart, v.windowEnd],
+      plays: m.windowTables(v).map((t) => t.id).join() === b.map((t) => t.id).join(),
       same: b[2].data === m.timeline.at(-9).data,
+      wts: {
+        timeline: m.wavetable(0).rows[0].join() === m.timeline.map((t) => t.id).join(),
+        last: m.wavetable(1).rows[0].join() === b.map((t) => t.id).join(),
+        batches: m.wavetable(2).rows.at(-1).join() === b.map((t) => t.id).join() && m.wavetable(2).rows.at(-2).join() === String(m.timeline.at(-9).id),
+        grid: m.wavetable(3).rows.flat().filter((x) => x !== null).length === Math.min(64, m.timeline.length),
+      },
     };
   });
   assert(r.idx === '0,1,2,3,4,5,6,7' && r.seeds === 1 && r.exprs === 1, 'batch recipes: indices 0…7, one seed, one formula');
   assert(r.same, 'batch table #3 is the very preview table Add shown added');
-  assert(r.win[0] === 6 && r.win[1] === 13, 'batch sets the targeted voice window to the batch');
+  assert(r.win[0] === 0 && r.win[1] === 7 && r.plays, 'V1 on Last batch plays exactly the new batch');
+  assert(Object.values(r.wts).every(Boolean), `built-ins update on Add batch (${JSON.stringify(r.wts)})`);
 
   // A parameter mode: cellular automaton.
   await page.click('#seed-current');
@@ -552,9 +566,10 @@ async function voiceTabChecks(page) {
   await page.click('#voice-tab-2');
   await page.fill('#voice-level', '0.42');
   assert((await M(() => window.mkwavez.model.voice(2).level)) === 0.42 && (await M(() => window.mkwavez.model.voice(1).level)) !== 0.42, 'slider edits the selected voice');
-  await page.click('#voice-step');
-  assert((await M(() => window.mkwavez.model.voice(2).interp)) === 'step', 'Step applies to the selected voice');
-  await page.click('#voice-blend');
+  assert(
+    (await page.textContent('#voice-interp')).trim() === 'Blend · set on wavetable' && !(await page.$('#voice-step')),
+    'voice shows the wavetable’s interpolation read-only',
+  );
   await page.focus('#voice-tab-2');
   await page.keyboard.press('ArrowRight');
   assert((await M(() => window.mkwavez.ui.voiceId)) === 3, 'ArrowRight selects the next voice tab');
@@ -738,7 +753,7 @@ async function mutateChecks(page, tlCount, label) {
         muts: [...new Set(b.map((t) => t.recipe.params.mutation))],
         idx: b.map((t) => t.recipe.batch.index).join(),
         parents: [...new Set(b.map((t) => t.recipe.parents[0]))],
-        win: [v.windowStart, v.windowEnd],
+        plays: m.windowTables(v).map((t) => t.id).join() === b.map((t) => t.id).join(),
         len: m.timeline.length,
         sel: m.selectedId,
         lastId: b[7].id,
@@ -751,7 +766,7 @@ async function mutateChecks(page, tlCount, label) {
     );
     assert(r.parents.length === 1 && r.parents[0] === sel, `${mode}: one source (the selection)`);
     assert(r.sel === r.lastId, `${mode}: Add +8 selects the last table added`);
-    assert(r.win[0] === r.len - 8 && r.win[1] === r.len - 1, `${mode}: batch sets the targeted voice window`);
+    assert(r.plays, `${mode}: the batch is the Last batch V1 plays`);
     await page.waitForFunction((t) => document.querySelector('#mutate-src-no').textContent === t, `#${r.len}`, { timeout: 3000 });
     assert(true, `${mode}: source chip follows to the end of the batch`);
     await page.waitForFunction(
@@ -877,9 +892,9 @@ async function timelineMarkerChecks(page) {
   await M((ids) => {
     const m = window.mkwavez.model;
     const set = [
-      { windowStart: 0, windowEnd: 5, position: 0.5, lfoDepth: 1, lfoRate: 3, mute: false },
-      { windowStart: 2, windowEnd: 4, position: 0.5, lfoDepth: 0, mute: false },
-      { windowStart: 1, windowEnd: 3, position: 0.5, lfoDepth: 0.5, mute: true },
+      { wavetableId: 0, windowStart: 0, windowEnd: 5, position: 0.5, lfoDepth: 1, lfoRate: 3, mute: false },
+      { wavetableId: 0, windowStart: 2, windowEnd: 4, position: 0.5, lfoDepth: 0, mute: false },
+      { wavetableId: 0, windowStart: 1, windowEnd: 3, position: 0.5, lfoDepth: 0.5, mute: true },
     ];
     ids.forEach((id, i) => m.updateVoice(id, set[i] ?? { mute: true }));
     m.endGesture();
@@ -1002,7 +1017,7 @@ async function timelineMarkerChecks(page) {
     M((n) => {
       const m = window.mkwavez.model;
       const t = m.timeline[0];
-      m.addTables(Array.from({ length: n }, () => ({ data: t.data, recipe: t.recipe })), 'batch', false);
+      m.addTables(Array.from({ length: n }, () => ({ data: t.data, recipe: t.recipe })), false);
     }, n);
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await add(40);
@@ -1140,6 +1155,138 @@ async function timelineCopyChecks(page, tlCount) {
   await page.waitForTimeout(150);
 }
 
+/**
+ * Wavetables phase 1 (wide shell, transport running): the built-ins and their compact
+ * views; no "Sets window of" checkboxes; a voice switched to the Grid shows the X/Y pad
+ * and paired sliders, its X / Y sliders move the dot, audio keeps running; interpolation
+ * is switched on the wavetable; the Voice panel still fits; Position Y is in the CC map.
+ */
+async function wavetableChecks(page) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const setPlay = async (on) => {
+    if ((await M(() => window.mkwavez.model.playing)) !== on) await page.click('#play');
+  };
+  const wasPlaying = await M(() => window.mkwavez.model.playing);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
+  const chips = await page.$$eval('#wt-chips [role="option"]', (bs) => bs.map((b) => b.textContent.trim()));
+  assert(chips.join() === 'Timeline,Last batch,Batches,Grid', `built-in wavetables (${chips.join(', ')})`);
+  assert(
+    !(await page.$('.gen-targets')) && !(await M(() => document.body.textContent.includes('Sets window of'))),
+    'no "Sets window of" checkboxes',
+  );
+  assert((await page.isDisabled('#wt-edit')) && (await page.isDisabled('#wt-new')), 'Edit / + present but disabled (phase 2)');
+  const shapes = {};
+  for (const [id, shape, label] of [
+    [0, '1d', '1D'],
+    [1, '1d', '1D'],
+    [2, 'rows', 'Rows'],
+    [3, '2d', '2D · 8×8'],
+  ]) {
+    await page.click(`#wt-chip-${id}`);
+    await page.waitForFunction((id) => document.querySelector('#wavetable-overview').dataset.wavetable === String(id), id, { timeout: 2000 });
+    const ink = await canvasInk(page, '#wavetable-overview');
+    const r = await M(() => ({ shape: document.querySelector('#wavetable-overview').dataset.shape, text: document.querySelector('#wt-summary').textContent }));
+    shapes[id] = r.shape === shape && r.text.includes(label) && r.text.includes('Live') && ink.n > 0;
+  }
+  assert(Object.values(shapes).every(Boolean), `wavetable views and summaries (${JSON.stringify(shapes)})`);
+  assert((await page.textContent('#wt-used')).trim() === 'not used', 'Grid not used yet');
+  // V1 → Grid.
+  await page.click('#voice-tab-1');
+  await page.selectOption('#voice-wavetable', '3');
+  let r = await M(() => {
+    const v = window.mkwavez.model.voice(1);
+    return { v: [v.wavetableId, v.windowStart, v.windowEnd, v.windowStartY, v.windowEndY], used: document.querySelector('#wt-used').dataset.voices };
+  });
+  assert(r.v.join() === '3,0,7,0,7' && r.used === '1', `V1 on the Grid: whole 8×8 window, "used by V1" (${r.v})`);
+  assert(
+    (await page.isVisible('#voice-pad')) && (await page.isVisible('#voice-px')) && !(await page.isVisible('#voice-window-start')),
+    'Grid voice: X/Y pad and paired sliders replace the 1D controls',
+  );
+  await page.waitForFunction(() => !!document.querySelector('#voice-pad').dataset.dot, null, { timeout: 2000 });
+  // Static dot (transport stopped) moves with the X / Y position sliders.
+  await setPlay(false);
+  const dot = () => M(() => document.querySelector('#voice-pad').dataset.dot.split(',').map(Number));
+  await page.fill('#voice-dx', '0');
+  await page.fill('#voice-dy', '0');
+  await page.fill('#voice-px', '0');
+  await page.fill('#voice-py', '0');
+  await page.waitForTimeout(100);
+  const d0 = await dot();
+  await page.fill('#voice-px', '1');
+  await page.waitForTimeout(100);
+  const d1 = await dot();
+  await page.fill('#voice-py', '1');
+  await page.waitForTimeout(100);
+  const d2 = await dot();
+  assert(d1[0] > d0[0] + 50 && Math.abs(d1[1] - d0[1]) < 0.5 && d2[1] > d1[1] + 30 && Math.abs(d2[0] - d1[0]) < 0.5, `X / Y sliders move the dot (${d0} → ${d1} → ${d2})`);
+  // Window edits on Y; the rectangle clamps and pushes the other handle.
+  await page.fill('#voice-wy0', '5');
+  await page.fill('#voice-wy1', '2');
+  r = await M(() => {
+    const v = window.mkwavez.model.voice(1);
+    return [v.windowStartY, v.windowEndY];
+  });
+  assert(r.join() === '2,2', `Y window handles push each other (${r})`);
+  await page.fill('#voice-wy0', '0');
+  await page.fill('#voice-wy1', '7');
+  await page.fill('#voice-px', '0.4');
+  await page.fill('#voice-py', '0.6');
+  await page.fill('#voice-dx', '0.5');
+  await page.fill('#voice-dy', '0.5');
+  // Audio: the voice plays the Grid with a moving 2D position.
+  await setPlay(true);
+  await page.waitForFunction(() => window.mkwavez.model.playing && window.mkwavez.bridge.status.voices.some((s) => s.id === 1 && s.y > 0), null, { timeout: 5000 });
+  const a = await M(() => window.mkwavez.bridge.status.voices.find((s) => s.id === 1));
+  await page.waitForTimeout(400);
+  const b = await M(() => window.mkwavez.bridge.status.voices.find((s) => s.id === 1));
+  assert(
+    a.index >= 0 && a.index <= 7 && a.y >= 0 && a.y <= 7 && (a.pos !== b.pos || a.posY !== b.posY),
+    `worklet plays the Grid voice, LFOs move X / Y (${a.index.toFixed(2)}, ${a.y.toFixed(2)} → ${b.index.toFixed(2)}, ${b.y.toFixed(2)})`,
+  );
+  const live1 = (await dot()).join();
+  await page.waitForTimeout(300);
+  assert((await dot()).join() !== live1, 'pad dot follows the live position while playing');
+  // Interpolation lives on the wavetable.
+  await page.click('#wt-chip-3');
+  await page.click('#wt-step');
+  assert(
+    (await M(() => window.mkwavez.model.wavetable(3).interp)) === 'step' && (await page.textContent('#voice-interp')).startsWith('Step'),
+    'Step set on the wavetable; the voice shows it',
+  );
+  await page.waitForTimeout(300);
+  const st = await M(() => window.mkwavez.bridge.status.voices.find((s) => s.id === 1));
+  assert(Number.isInteger(st.index) && Number.isInteger(st.y), `Step on 2D plays one cell (${st.index}, ${st.y})`);
+  await page.click('#wt-blend');
+  // Rows: Batches.
+  await page.selectOption('#voice-wavetable', '2');
+  assert((await page.isDisabled('#voice-wx0')) && (await page.isVisible('#voice-pad')), 'Rows voice: pad shown, X window disabled (rows align)');
+  // Layout budget with the paired controls.
+  for (const [w, hh] of [
+    [1440, 900],
+    [1180, 820],
+  ]) {
+    await page.setViewportSize({ width: w, height: hh });
+    await page.waitForTimeout(250);
+    const fit = await M(() => {
+      const b = document.querySelector('#sec-voices-body');
+      return b.scrollHeight <= b.clientHeight + 1;
+    });
+    assert((await fitsScreen(page)) && fit, `${w}×${hh}: one screen, Voice panel fits with the X/Y pad`);
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/wavetables-${w}x${hh}.png` });
+  }
+  await page.selectOption('#voice-wavetable', '3');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(250);
+  assert(!(await M(() => document.documentElement.scrollWidth > innerWidth)), '390px: no horizontal overflow with the X/Y pad');
+  // CC map: position Y target, unassigned by default.
+  assert((await page.$('#midi-cc-positionY')) && (await page.inputValue('#midi-cc-positionY')) === '', 'CC map has an unassigned Position Y');
+  // Back to Last batch (as at start) and stop.
+  await page.selectOption('#voice-wavetable', '1');
+  await setPlay(wasPlaying);
+  await M(() => window.mkwavez.model.endGesture());
+}
+
 /** Centre of timeline cell i, relative to the strip canvas (strip scrolled to the start). */
 const cellPos = (page, i) =>
   page.evaluate((i) => {
@@ -1210,10 +1357,9 @@ async function breedChecks(page, tlCount) {
   // Use a voice's window.
   const win = await M(() => {
     const m = window.mkwavez.model;
-    const v = m.voices[0];
-    const len = v.windowEnd - v.windowStart + 1;
-    const n = Math.min(8, len);
-    return Array.from({ length: n }, (_, i) => m.timeline[v.windowStart + (n > 1 ? Math.round((i * (len - 1)) / (n - 1)) : 0)].id);
+    const t = m.windowTables(m.voices[0]);
+    const n = Math.min(8, t.length);
+    return Array.from({ length: n }, (_, i) => t[n > 1 ? Math.round((i * (t.length - 1)) / (n - 1)) : 0].id);
   });
   await page.selectOption('#breed-window-voice', { index: 0 });
   await page.click('#breed-use-window');
@@ -1279,14 +1425,14 @@ async function breedChecks(page, tlCount) {
     const m = window.mkwavez.model;
     const b = m.timeline.slice(-8);
     const v = m.voices[0];
-    return { biases: b.map((t) => t.recipe.params.bias), seeds: [...new Set(b.map((t) => t.recipe.seed))], win: [v.windowStart, v.windowEnd], len: m.timeline.length };
+    return { biases: b.map((t) => t.recipe.params.bias), seeds: [...new Set(b.map((t) => t.recipe.seed))], plays: m.windowTables(v).map((t) => t.id).join() === b.map((t) => t.id).join() };
   });
   assert((await tlCount()) === n + 8, 'Breed N (sweep) adds 8');
   assert(
     r.biases.every((b, i) => Math.abs(b - (0.3 * (i + 1)) / 8) < 1e-12) && r.seeds.length === 1 && r.seeds[0] === seed,
     'sweep biases 0.3·i/8, one seed',
   );
-  assert(r.win[0] === r.len - 8 && r.win[1] === r.len - 1, 'sweep sets the targeted voice window');
+  assert(r.plays, 'sweep is the Last batch V1 plays');
 
   await page.selectOption('#breed-op', 'genetic');
   await page.selectOption('#breed-mode', 'gen');

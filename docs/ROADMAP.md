@@ -4,7 +4,8 @@
 
 TypeScript + Vite + AudioWorklet; portable `src/core`; shape() pipeline, seeded
 generators with recipes, per-octave mip sets, timeline (cap 4096, pin-aware
-eviction), wavetable model (1D/2D types, auto "All"), multi-voice engine with ADSR,
+eviction), wavetable model (1D/2D types, auto "All"; superseded by the wavetables
+milestone), multi-voice engine with ADSR,
 step sequences on a shared transport, undo for adds and note edits, unit + smoke tests.
 
 ## M2 — Mutate tab (done)
@@ -116,13 +117,48 @@ mutations).
 - Batch: N cycles spread across a recording (evenly or by onset), giving a timeline
   trajectory of the sound's evolution.
 
-## M5 — Save/load and 2D wavetables
+## Wavetables — phase 1 (done)
+
+- Model (`core/wavetable.ts`): named slot sets referencing timeline ids; shapes 1D (fixed /
+  variable), 2D (X×Y grid), Rows (differing row lengths); empty slots; per-wavetable
+  interpolation (Blend / Step, moved from the voice); Live / Frozen with a write head
+  (direction, edge, on-wrap, replace / insert, new row per batch), unit-tested for every
+  setting combination; pinning (built-ins that mirror the timeline don't pin).
+- Built-ins: Timeline, Last batch, Batches (Rows), Grid (2D 8×8). Undo of an add reverts
+  their updates too.
+- Voices on any wavetable: 1D window + position as before; 2D / Rows X / Y windows,
+  positions and independent X / Y LFOs. Engine: bilinear / row-aligned Blend over
+  mip-mapped tables, Step on wrap, per-table weight ramps (click-free switches), packed
+  wavetables shipped in the existing atomic batches.
+- UI: compact Wavetables panel (chips, 1D stack / 2D grid / Rows view, window tints,
+  write head, summary with Blend / Step); Voice panel wavetable select, read-only
+  interpolation, X/Y pad + paired sliders on 2D / Rows; Timeline tints for voices on any
+  wavetable. MIDI: Position Y CC target (unassigned by default).
+- "Sets window of" checkboxes removed from Seed / Mutate / Breed: a voice that should
+  follow batches plays the built-in Last batch (V1 does at start).
+
+Deviations / known gaps:
+- Interpolation can be switched on built-ins (in the panel's summary line): there are no
+  user wavetables yet, so it would otherwise be impossible to choose Step.
+- Rows: direction ±x only (±y is coerced); wrap cycles existing rows, new rows come only
+  from "new row" batches. The voice's X window is unused on Rows (X spans each whole row).
+- The pad shows at most 16 rows of a Rows wavetable (around the voice's row window);
+  the panel's 1D stack shows at most 24 slots (evenly spaced).
+- Window following: a batch now also extends Timeline windows that end on the newest
+  table (previously only single adds did).
+
+## Wavetables — phase 2
+
+- Expanded editor over the Generate row (see the mocks): wavetable list (built-in /
+  yours), strip / stack / grid / rows views, write-head settings, next-write markers.
+- User wavetables: + 1D / 2D / Rows, Duplicate (a built-in → an editable copy), rename,
+  Live / Frozen, interpolation, write-head settings; drag from the Timeline onto a slot
+  (replace) or between slots (insert); remove / reorder slots. These pin their tables.
+
+## M5 — Save/load
 
 - Project save/load (IndexedDB + file export): tables (sample data + recipe), timeline
-  order, wavetables, voices, sequences. Version tag on recipes.
-- User wavetables: create from a selection / voice window, reorder, duplicate entries;
-  these pin their tables against eviction (already enforced by the model).
-- 2D wavetables: grid editor, voices get X/Y position + two LFOs, bilinear blend.
+  order, wavetables (already plain data), voices, sequences. Version tag on recipes.
 
 ## Deferred from M1 / known gaps
 

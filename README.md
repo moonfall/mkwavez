@@ -55,9 +55,9 @@ switches (the choice is remembered).
   `p`, `t`, `n`, `u`, `pnoise()`; "Revert to preset") or the mode's parameters. The
   large view shows one table of the batch with its spectrum; the strip below shows all N
   (click, or ←/→ when focused). The previews are exactly what gets added: "Add shown"
-  adds that one table, "Add batch (+N)" all N and sets the window of every voice ticked
-  under "Sets window of". Modes that use randomness show the seed (Reroll); a new seed is
-  drawn after each Add batch.
+  adds that one table, "Add batch (+N)" all N (a voice on the built-in **Last batch**
+  wavetable — V1 at start — then plays exactly that batch). Modes that use randomness
+  show the seed (Reroll); a new seed is drawn after each Add batch.
 - **Generate → Mutate**: mutate the table selected in the Timeline (the Source chip).
   The library works like Seed's (search by name, group or amount mapping; ▲/▼ or the
   arrow keys); each entry's thumbnail is that mutation applied to the source at the
@@ -68,8 +68,8 @@ switches (the choice is remembered).
   (`A·i/N`), Log (`A·64^((i−N)/(N−1))`) or Chain (each table mutates the previous one
   at A); the strip shows all N (click, or ←/→ when focused), the last one by default
   (= a single mutation at A). "Add shown" adds that table and selects it (so it becomes
-  the next source); "Add +N" adds the batch, sets the window of the ticked voices and
-  selects the last table added (likewise the next source; Undo restores the selection).
+  the next source); "Add +N" adds the batch (it becomes the Last batch) and selects the
+  last table added (likewise the next source; Undo restores the selection).
   The previews are exactly what gets added; a seeded mutation draws a new seed after
   each Add.
 - **Generate → Breed**: combine 2–8 parents. Shift-click (or ⌘-click) or
@@ -83,19 +83,32 @@ switches (the choice is remembered).
   (a vertical mouse wheel scrolls it sideways). Click to select (the header names the
   selection); Shift-click / long-press toggles Breed parents (badged A, B, …). A table
   inside a voice's window is tinted in the voice's colour (unmuted strong, muted faint)
-  with a solid edge at the window's start / end; overlapping windows split the cell into
-  bands, voice 1 on top. Carets show each unmuted voice's live play position. The header
+  with a solid edge where a run of window tables starts / ends; overlapping windows split
+  the cell into bands, voice 1 on top. Voices on other wavetables (Last batch, Grid, …)
+  tint the timeline tables their window references. Carets show each unmuted voice's live
+  play position (for voices on other wavetables: on the table they play most of). The header
   button cycles the thumbnails: Waveform → Spectral → Waveform + Spectral. **Copy to end**
   (or Ctrl/⌘+D while the strip has focus, e.g. after clicking a table) appends a copy of
   the selected table and selects it (like a single add: following windows extend; undoable).
   The strip keeps the selection in view and follows new tables when scrolled to the end.
-- **Wavetables**: the auto "All" wavetable as an amplitude heat map with voice windows
-  and play positions. Creating 1D / 2D wavetables is coming (the slot is reserved);
-  collapsed by default on a phone.
+- **Wavetables**: named sets of slots referencing timeline tables (no copies). Four
+  read-only built-ins, all live: **Timeline** (1D, everything), **Last batch** (1D,
+  replaced by each batch or single add), **Batches** (Rows: one row per batch / single
+  add) and **Grid** (2D 8×8, filled in order, wrapping and overwriting). Chips pick one
+  (green dot = live); the view shows it (1D as a stack of waveforms, 2D as a grid, Rows as
+  rows) with voice windows in voice colours, the write head in green and play positions;
+  click a slot to select its table. The summary line gives the shape, the interpolation
+  (**Blend** / **Step**, switchable here; it applies to every voice on that wavetable),
+  Live / Frozen and which voices use it. Tables in the Grid or Last batch are never evicted.
+  Creating / editing wavetables (the Edit button) is phase 2. Collapsed by default on a phone.
 - **Voice**: one tab per voice (V1, V2 · muted, …, + adds one, × removes the selected
-  one). The selected voice's wavetable, Blend/Step, octave, window, position, LFO,
-  level, mute, plus a "now playing" scope and the ADSR envelope. Only voice 1 starts
-  unmuted.
+  one). The selected voice's wavetable (any wavetable; switching selects all of it) and
+  its interpolation (read-only), octave, window, position, LFO, level, mute, plus a "now
+  playing" scope and the ADSR envelope. On a 2D or Rows wavetable the window / position /
+  LFO depth / LFO rate become paired X / Y sliders and an X/Y pad shows the window, the
+  LFO path and the play position (Blend is bilinear over four cells; on Rows, X is the
+  same fraction of every row and Y crossfades between rows). V1 starts on Last batch,
+  V2 / V3 on the Timeline; only voice 1 starts unmuted.
 - **Sequence**: follows the selected voice tab: its 8-row pentatonic step grid (rows
   labelled with the voice's notes), steps, gate, copy / paste / clear / random; shared
   tempo. "+ Seq" adds another sequence to the voice (a picker appears).
@@ -109,7 +122,8 @@ switches (the choice is remembered).
   applies. Held keys take over from the voice's sequence (it keeps counting and resumes
   on its next step once all keys are up); stopping the transport doesn't cut held keys.
   All-notes-off / all-sound-off (CC 123 / 120), unplugging the device or switching input
-  release held notes. CC map: Position (CC 1, mod wheel, by default), LFO depth, LFO rate,
+  release held notes. CC map: Position X (CC 1, mod wheel, by default), Position Y (2D /
+  Rows wavetables; unassigned until learned, e.g. CC 2), LFO depth, LFO rate,
   Level — type a CC number or press Learn and move a control (bank select / RPN / NRPN
   are ignored while learning); remembered. A held pitch bend follows Omni to a newly
   selected voice; CC 121 recentres it. Audio starts

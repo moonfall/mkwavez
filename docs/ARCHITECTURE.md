@@ -25,8 +25,11 @@ src/
     mipmap.ts           per-octave band-limited mip sets, packed in one Float32Array
     table.ts            WaveTable, Recipe, IdAllocator
     timeline.ts         appendWithEviction (oldest-first, pin-aware), index/window remap
-    wavetable.ts        Wavetable1D / Wavetable2D, "All", pinnedIds()
-    voice.ts            VoiceParams, LFO position, window following (followAppend)
+    wavetable.ts        Wavetable (1D / 2D / Rows slots), built-ins, write head
+                        (writeTables), eviction (removeTables), pinnedIds()
+    wavetablePlayback.ts  packed wavetable (engine form), position → tables + weights
+                        (resolveMix: Blend / bilinear / row-aligned, Step, empty slots)
+    voice.ts            VoiceParams (X / Y window, position, LFOs), followEdit()
     sequence.ts         SequenceData, scale → frequency, step helpers
     midi.ts             MIDI bytes → messages, MidiRouter (channel / Omni routing, held-note
                         tracking per source), velocity curve, bend scale, CC map + learn
@@ -49,8 +52,10 @@ src/
                         (Mutate tab) and breed.ts (Breed tab); library.ts (the
                         shared library list) and batch.ts (N stepper, voice
                         targets, card strip) are used by Seed and Mutate; timeline.ts (strip,
-                        toggles Breed parents); wavetables.ts (overview; the slot for
-                        1D / 2D wavetable editing); midi.ts (transport MIDI picker,
+                        toggles Breed parents); wavetables.ts (compact panel: chips,
+                        view, summary; editor in phase 2); voicePad.ts (X/Y pad of
+                        a 2D / Rows voice); playing.ts (what a voice plays, as the
+                        engine resolves it); midi.ts (transport MIDI picker,
                         LED, popover with routing and CC map)
   main.ts               initial state, shell assembly, frame loop
 tests/                  vitest unit tests (core + AppModel)
@@ -98,17 +103,36 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   topic `parents`. Filtered whenever the timeline changes (eviction, undo); not part
   of undo snapshots.
 - **Timeline** — ordered `WaveTable[]`, cap 4096. Eviction is oldest-first and skips
-  tables referenced by any non-auto wavetable (`pinnedIds`). If everything is pinned
-  the timeline may exceed the cap.
-- **Wavetable** — `1d { ids[] }` or `2d { width, height, ids[] (row-major, null=empty) }`.
-  M1 has only the auto 1D "All" (id 0) mirroring the timeline. Voices address
-  positions in a wavetable, not timeline indices.
-- **VoiceParams** — wavetable id, inclusive window, position, LFO depth/rate/phase,
-  interp (`blend` | `step`), octave, level, mute, ADSR. Plain data shared verbatim
-  with the engine.
+  tables referenced by a pinning wavetable (`pinnedIds`). If everything is pinned the
+  timeline may exceed the cap.
+- **Wavetable** — `{ id, name, shape: 1d|2d|rows, rows: (id|null)[][], fixed, interp:
+  blend|step, live, write (head settings), head {x, y}, builtin?, pins }`. Slots
+  reference timeline table ids (a table may sit in many wavetables / slots); `null` = empty.
+  1D = one row (fixed or variable size); 2D = a fixed X×Y grid; Rows = rows of differing
+  lengths. Plain, serializable data (persistence is M5). Built-ins (ids 0–3): Timeline
+  (1D, mirrors the timeline, doesn't pin), Last batch (1D, pins), Batches (Rows, one row
+  per batch, doesn't pin), Grid (2D 8×8, pins); user wavetables (phase 2) start at id 16
+  and pin.
+- **Write head** (`writeTables`, live wavetables; every add is a batch, a single add a
+  batch of one): settings `dir ±x/±y`, `edge wrap|stop|grow`, `onWrap next|same`, `mode
+  replace|insert`, `batch continue|newRow`, coerced per shape by `normalizeWrite` (1D:
+  ±x, fixed → wrap|stop, variable → stop|grow; 2D: replace only, wrap|stop; Rows: ±x).
+  "New row": variable 1D starts its line afresh (Last batch); fixed 1D restarts at the
+  line start; 2D moves to the next line's start; Rows appends a row. Wrap "next" moves
+  to the next row / column (−x / −y: the previous one), cycling existing rows. A
+  stopped head drops writes. Edits return an index map along the follow axis (1D slots,
+  Rows rows) for voice windows. Unit-tested for every combination.
+- **Adds** (`AppModel.addTables`): write into every live wavetable, then pin, then evict
+  from the timeline, then drop evicted ids from the (non-pinning) wavetables, then voice
+  windows follow; one undo snapshot covers all of it (timeline, wavetables, windows).
+- **VoiceParams** — wavetable id, inclusive X window (`windowStart/End`) and Y window
+  (`windowStartY/EndY`), positions X / Y, LFO depth / rate / phase per axis, octave,
+  level, mute, ADSR. Interpolation belongs to the wavetable. Switching wavetable selects
+  all of it. Plain data shared verbatim with the engine.
 - **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate.
-- **Undo** — snapshots of the timeline array (references), selection, voice windows
-  and sequence steps; 40 deep. Covers adds, note edits and window edits (a slider
+- **Undo** — snapshots of the timeline array and wavetables (references), selection,
+  voice windows (X and Y, restored only if the voice is still on that wavetable) and
+  sequence steps; 40 deep. Interpolation changes are kept across undo. Covers adds, note edits and window edits (a slider
   drag is one step); other slider moves are not undoable.
 
 ## UI layout
@@ -131,7 +155,7 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 - Remembered per browser (localStorage, try/catch): `mkwavez.theme` (only once
   toggled; default dark, applied before first paint by an inline script in
   index.html), `mkwavez.timelineView` (Waveform / Spectral / both) and `mkwavez.midi`
-  (`{ input: 'off'|'all'|id, inputName, omni, cc: {position, lfoDepth, lfoRate, level} }`).
+  (`{ input: 'off'|'all'|id, inputName, omni, cc: {position, positionY, lfoDepth, lfoRate, level} }`).
 - MIDI popover: native `popover` (top layer, light dismiss; a `hidden` toggle where
   unsupported), fixed under the transport bar, so it never affects the shell layout.
   Below 640 px the bar keeps only the MIDI button (LED inside); the picker is in the popover.
@@ -148,24 +172,31 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
 ```
 
 - Main → worklet (`audio/protocol.ts`): `tables/add` (packed mip sets, transferred),
-  `tables/remove`, `wavetable/set` (Int32Array of ids), `voice/set|remove`,
+  `tables/remove`, `wavetable/set` (packed: shape, interp, row offsets + slot ids as
+  Int32Arrays, -1 = empty; sent only for wavetables that changed), `voice/set|remove`,
   `sequence/set|remove`, `transport`, `midi` (routed note / bend events), `voice/patch`
   (a few params of one voice, from MIDI CCs).
-- Worklet → main: `ready`, `status` (sequencer step, per-voice position/index/env,
-  table count), `error`.
+- Worklet → main: `ready`, `status` (sequencer step, per voice: modulated positions
+  pos / posY, resolved coordinates index (x) / y, env, note; table count), `error`.
 - Everything the bridge queues within one task is sent as a single `batch` message,
   applied atomically between render quanta: a re-indexed wavetable (eviction) and the
   remapped voice windows always land together, and fresh tables' mip sets (built
-  synchronously, up to 128) precede the wavetable that references them.
+  synchronously, up to 128) precede the wavetables that reference them (the model emits
+  'timeline', 'wavetables', 'voices' in that order).
 - The bridge reconciles: it tracks which table/voice/sequence ids the worklet has and
   sends adds/removes on each model topic. Undo that restores evicted tables simply
   re-sends them. Bulk backlogs (e.g. 4096 at audio start) arrive in 48-table chunks.
-- The engine tracks playing tables by table id, not wavetable index: Step holds its
-  table pointer until the phase wraps; Blend ramps only while the id pair is
-  unchanged; a table that hasn't arrived yet keeps the previous pointer. Removed
-  voices fade out with a 12 ms release before being freed.
+- The engine tracks playing tables by table id, not wavetable index: each control
+  block resolves the voice's mix (≤ 4 tables + weights, `resolveMix`, the same code
+  the UI uses) and every table's weight ramps linearly across the block from its
+  previous weight (0 for a table entering the mix) to its new one (0 for one leaving),
+  so window / table / wavetable switches crossfade over one block instead of clicking,
+  and an eviction re-index changes nothing (weights are computed relative to the
+  window start). Step holds one table until the phase wraps. Tables that haven't
+  arrived yet drop out of the mix (renormalised); with none, the previous mix holds.
+  Removed voices fade out with a 12 ms release before being freed.
 - The audio thread never runs an FFT or allocates per sample. LFO/window/mip
-  resolution runs every 64 samples; the Blend crossfade is ramped across the block.
+  resolution runs every 64 samples (fixed per-voice arrays of 8 live tables).
 - UI: one rAF loop, ≤ 25 fps while playing. Sections redraw only when open (not
   collapsed on the narrow shell), on screen (IntersectionObserver; this also covers
   content scrolled out of a panel) and dirty or animating. The timeline is a
@@ -247,14 +278,22 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
 
 ## Playback semantics
 
-- Position = `position + depth/2 · sin(lfoPhase)`, reflected into [0,1], mapped onto
-  the window. **Blend** crossfades the two neighbouring tables; **Step** holds one
-  table and switches only on the oscillator's phase wrap (click-free).
+- Position (per axis) = `position + depth/2 · sin(lfoPhase)`, reflected into [0,1],
+  mapped onto the window. **Blend** (set on the wavetable): 1D crossfades the two
+  neighbouring slots; 2D is bilinear over the 4 surrounding cells; Rows blends within
+  each row at the same fraction u of the row (rows of different lengths align
+  proportionally) and between the two neighbouring rows. **Step** holds one table (the
+  nearest cell) and switches only on the oscillator's phase wrap (click-free).
+- Empty slots never silence: Blend crossfades the nearest filled slots on either side
+  (rows without filled slots are skipped the same way); Step takes the nearest filled
+  slot; a window with nothing filled plays the nearest filled slot outside it.
 - Mip level per note: the richest level whose top harmonic `f·K < 0.45·sr`.
   Levels keep 72/36/18/9/4/2/1 harmonics at 2048…64 samples (~28 samples/harmonic).
-- Window following: a single add extends windows ending on the newest table; a batch
-  sets windows of the ticked voices to exactly the batch; eviction remaps windows so
-  they keep pointing at the same tables.
+- Window following (`followEdit`): a window ending at the end of a growing axis (1D
+  slots, Rows rows) extends when tables are added (single add or batch); removals /
+  insertions remap windows so they keep pointing at the same tables; Last batch keeps
+  indices (clamped) and its end follows, so a voice on it plays each new batch in full.
+  2D windows are fixed.
 
 ## Porting notes
 
