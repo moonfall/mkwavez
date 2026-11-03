@@ -122,6 +122,17 @@ describe('mutations (core port)', () => {
     expect(mutate('primes', h4h6, 0.9999, 0).every((v) => v === 0)).toBe(true);
   });
 
+  it('self-convolution squares magnitudes; resonant low-pass peaks at the cutoff', () => {
+    const saw = generateBasic('saw', 0).data;
+    const mags = (x: Float32Array) => harmonicMagnitudes(x, 72);
+    const sc = mags(mutate('selfConv', saw, 1, 0));
+    expect(sc[3] / sc[1]).toBeCloseTo(1 / 9, 3);
+    // a = 0.5: cutoff 1.5·√500 ≈ 33.5; the band near it is boosted, far above cut.
+    const lp = mags(mutate('reslp', saw, 0.5, 0));
+    expect((lp[33] * 33) / (lp[1] * 1)).toBeGreaterThan(2);
+    expect((lp[70] * 70) / lp[1]).toBeLessThan(0.5);
+  });
+
   it('sweep amounts', () => {
     expect(sweepAmounts(4, 1, 'lin')).toEqual([0.25, 0.5, 0.75, 1]);
     const log = sweepAmounts(3, 0.64, 'log');

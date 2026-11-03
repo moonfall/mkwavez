@@ -39,6 +39,8 @@ export const MUTATIONS = [
   { group: 'Time', id: 'slew', label: 'Slew limit', hint: 'Step per sample limited to 2·0.0005^√a' },
   { group: 'Time', id: 'decimate', label: 'Decimate', hint: 'Sample-and-hold to 2048 / 2^(7a) steps, then band-limited' },
   { group: 'Time', id: 'window', label: 'Window impose', hint: 'Cycle squeezed into W = 1 − 0.9a (silence after), Hann-shaped by a' },
+  { group: 'Time', id: 'grains', label: 'Granular shuffle', hint: 'Each of 16 segments swapped with a seeded one with probability a', seeded: true },
+  { group: 'Time', id: 'stutter', label: 'Stutter', hint: 'A seeded 1/16 segment repeated over the next a·½ cycle', seeded: true },
   { group: 'Nonlinear', id: 'logisticShape', label: 'Logistic shaper', hint: 'Blend by a toward 3 logistic-map steps on (x+1)/2, r = 3.5 + 0.5a' },
   { group: 'Nonlinear', id: 'sineShape', label: 'Sine-map shaper', hint: 'x → sin(g·x)/g, g = 3π·a^1.5 (folds as a grows)' },
   { group: 'Nonlinear', id: 'asym', label: 'Asymmetric saturation', hint: 'tanh(g·(x + b)), g = 6a, bias b = 0.5a (adds even harmonics)' },
@@ -50,6 +52,8 @@ export const MUTATIONS = [
   { group: 'Spectral', id: 'formant', label: 'Formant', hint: 'Up to (1 + 2a)× around a seeded centre h4–h24', seeded: true },
   { group: 'Spectral', id: 'blur', label: 'Blur', hint: 'Magnitudes mixed by a toward their neighbours' },
   { group: 'Spectral', id: 'odd', label: 'Odd only', hint: 'Even harmonics scaled by (1−a)²' },
+  { group: 'Spectral', id: 'selfConv', label: 'Self-convolution', hint: 'Toward the squared spectrum: |X|²/max, phases doubled, by a' },
+  { group: 'Spectral', id: 'reslp', label: 'Resonant low-pass', hint: '2-pole low-pass, Q 4, cutoff 1.5·500^(1−a) harmonics' },
   { group: 'Spectral', id: 'hshift', label: 'Harmonic shift', hint: 'Harmonics ≥ 2 move up by 16·a^1.5 (fundamental kept)' },
   { group: 'Spectral', id: 'mirror', label: 'Spectrum mirror', hint: 'Magnitudes of h2…top reversed, blended by a' },
   { group: 'Spectral', id: 'contrast', label: 'Spectral contrast', hint: 'Magnitudes |X|^γ, γ = 1 + 2a (peaks stand out)' },
@@ -368,6 +372,54 @@ export function mutate(
       const n = 2 + rand.int(7);
       if (a <= 0) return shape(x);
       return shaper(x, (v) => (1 - a) * v + a * Math.cos(n * Math.acos(Math.max(-1, Math.min(1, v)))));
+    }
+    case 'grains': {
+      const S = 16;
+      const g = N / S;
+      const perm = Array.from({ length: S }, (_, j) => j);
+      for (let j = S - 1; j > 0; j--) {
+        const k = rand.int(j + 1);
+        [perm[j], perm[k]] = [perm[k], perm[j]];
+      }
+      const swap = perm.map(() => rand.next() < a);
+      return shapeFrom((i) => {
+        const j = Math.floor(i / g);
+        return swap[j] ? x[perm[j] * g + (i % g)] : x[i];
+      });
+    }
+    case 'stutter': {
+      const g = N / 16;
+      const s0 = rand.int(N);
+      const w = (a * N) / 2;
+      return shapeFrom((i) => {
+        const d = (i - s0 + N) % N;
+        return d < w ? x[(s0 + (d % g)) % N] : x[i];
+      });
+    }
+    case 'selfConv':
+      return viaSpec(x, (re, im) => {
+        const { M, P, max } = harmonics(re, im);
+        if (max <= 0) return;
+        for (let k = 1; k <= KMAX; k++) setPolar(re, im, k, (1 - a) * M[k] + (a * M[k] * M[k]) / max, P[k] + a * wrapPi(P[k]));
+      });
+    case 'reslp': {
+      if (a <= 0) return shape(x);
+      const kc = 1.5 * Math.pow(500, 1 - a);
+      const Q = 4;
+      return viaSpec(x, (re, im) => {
+        for (let k = 1; k < N / 2; k++) {
+          // H = 1 / (1 − r² + i·r/Q), r = k / kc.
+          const r = k / kc;
+          const dr = 1 - r * r;
+          const di = r / Q;
+          const d = dr * dr + di * di;
+          const hr = dr / d;
+          const hi = -di / d;
+          const nr = re[k] * hr - im[k] * hi;
+          im[k] = re[k] * hi + im[k] * hr;
+          re[k] = nr;
+        }
+      });
     }
     case 'smooth':
       return smoothBy(x, a);
