@@ -761,23 +761,42 @@ button.icon-btn svg {
   flex-direction: column;
   gap: 6px;
 }
-.wt-list {
+.wt-chips {
   display: flex;
-  flex-wrap: wrap;
   gap: 4px;
+  overflow-x: auto;
+  flex: none;
+  scrollbar-width: thin;
 }
-button.wt-pick {
+button.wt-chip {
+  flex: none;
   height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
-button.wt-pick[aria-pressed='true'] {
+button.wt-chip[aria-selected='true'] {
   background: var(--accent-bg);
   border-color: var(--accent);
   color: var(--accent-text);
   font-weight: 600;
 }
+.wt-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  flex: none;
+}
+.wt-dot.live {
+  background: var(--new);
+}
 .wt-box {
   position: relative;
-  height: 110px;
+  height: 150px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
 }
 .wt-box canvas,
 .plot-box canvas {
@@ -789,16 +808,29 @@ button.wt-pick[aria-pressed='true'] {
 .wt-box canvas {
   cursor: pointer;
 }
-.wt-hint,
-.wt-soon {
-  margin: 0;
-  font-size: 11px;
+.wt-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 12px;
+  color: var(--text-2);
 }
-.wt-soon {
-  padding: 6px 8px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 6px;
-  color: var(--muted);
+.wt-summary b {
+  color: var(--text);
+}
+.wt-summary .seg button {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.wt-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.wt-used b {
+  font-weight: 600;
 }
 @media (min-width: 900px) {
   .wt-box {
@@ -1118,11 +1150,50 @@ button.voice-tab[aria-selected='true'] {
   margin-bottom: 2px;
 }
 .voice-top select {
-  max-width: 140px;
+  max-width: 170px;
 }
 .voice-scope,
 .voice-env {
   height: 76px;
+}
+.voice-pad {
+  height: 150px;
+}
+.voice-interp {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+/* 2D / Rows: label · X · Y · "x, y" */
+.vpairs {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+}
+.vpairs > * {
+  min-width: 0;
+}
+.vpairs input[type='range'] {
+  width: 100%;
+  min-height: 24px;
+}
+.vpair-axis {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.vpair-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vpair-val {
+  min-width: 56px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: right;
+  white-space: nowrap;
 }
 .voice-empty {
   margin: 0;
@@ -1149,6 +1220,15 @@ button.voice-tab[aria-selected='true'] {
   .voice-env {
     flex: 1 1 0;
     height: auto;
+  }
+  .voice-pad {
+    flex: 2 1 0;
+    height: auto;
+  }
+  .voice-main .vpairs {
+    flex: 1 1 auto;
+    max-height: 200px;
+    align-content: space-around;
   }
   .voice-side .vrows-adsr {
     flex: none;
@@ -1693,8 +1773,7 @@ input.seed-expr:focus-visible {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-.gen-seedbox,
-.gen-targets {
+.gen-seedbox {
   display: flex;
   align-items: center;
   gap: 6px 10px;
@@ -1703,13 +1782,6 @@ input.seed-expr:focus-visible {
 }
 .gen-seedbox .mono-label {
   color: var(--text);
-}
-.gen-targets {
-  flex-wrap: wrap;
-}
-.gen-targets .checks {
-  min-height: 28px;
-  gap: 4px 10px;
 }
 .gen-adds {
   display: flex;
@@ -1973,27 +2045,8 @@ button.gen-card.failed .gen-card-label::after {
   .gen-batch-head > .gen-status {
     flex: 1 1 0;
   }
-  .gen-targets {
-    flex-wrap: nowrap;
-  }
-  .gen-batch-head > .gen-targets {
-    flex: 0 1 auto;
-    min-width: 0;
-    overflow: hidden;
-  }
-  .gen-targets > span {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-    flex: 0 1 auto;
-  }
   .gen-lib-pos {
     white-space: nowrap;
-  }
-  .gen-targets .checks {
-    flex-wrap: nowrap;
-    min-height: 0;
   }
   .gen-strip {
     gap: 4px;
@@ -2111,18 +2164,9 @@ button.gen-card.failed .gen-card-label::after {
   .mut-src {
     height: 28px;
   }
-  /* Batch row: the voice checkboxes never clip; their label goes first, and when even
-     the checkboxes don't fit (tablet) the row wraps (targets + Add on a second line). */
+  /* Batch row: wraps when it doesn't fit (Add on a second line). */
   .mutate .gen-main {
     container: mut-main / inline-size;
-  }
-  .mutate .gen-targets .checks {
-    flex: none;
-  }
-}
-@container mut-main (max-width: 1000px) {
-  .mutate .gen-targets > span {
-    display: none;
   }
 }
 @container mut-main (max-width: 760px) {
@@ -2134,12 +2178,6 @@ button.gen-card.failed .gen-card-label::after {
   .mutate .gen-batch-head {
     flex-wrap: wrap;
     row-gap: 6px;
-  }
-  .mutate .gen-targets > span {
-    display: inline;
-  }
-  .mutate .gen-batch-head > .gen-targets {
-    overflow: visible;
   }
 }
 @media (max-width: 899px) {

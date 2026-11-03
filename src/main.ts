@@ -4,6 +4,7 @@ import { AppModel } from './app/model';
 import { AudioBridge } from './audio/bridge';
 import { WebMidi } from './browser/webMidi';
 import { generateBasic } from './core/generators';
+import { LAST_BATCH_WAVETABLE_ID } from './core/wavetable';
 import { setTheme, storedTheme, throttle } from './ui/canvas';
 import { UiState, type FrameView, type UiContext } from './ui/context';
 import { h } from './ui/dom';
@@ -21,10 +22,14 @@ const ctx: UiContext = { model, bridge, ui: new UiState(model) };
 // Dark by default; an explicit choice (theme toggle) is remembered.
 setTheme(storedTheme() ?? 'dark', false);
 
-// ---- initial state (as the prototype): five basic tables, three voices, one sequence each;
-// only voice 1 starts unmuted ----
-for (const w of ['sine', 'tri', 'saw', 'square', 'p25'] as const) model.addTables([generateBasic(w, 0)], 'single', false);
-const v1 = model.addVoice({ windowStart: 0, windowEnd: 4, position: 0.3, lfoDepth: 0.6, lfoRate: 0.25, octave: 0 })!;
+// ---- initial state (as the prototype): five basic tables (one batch), three voices, one
+// sequence each; only voice 1 starts unmuted. V1 plays the built-in Last batch, so each new
+// batch (or single add) becomes what it plays; V2 / V3 play windows of the Timeline. ----
+model.addTables(
+  (['sine', 'tri', 'saw', 'square', 'p25'] as const).map((w) => generateBasic(w, 0)),
+  false,
+);
+const v1 = model.addVoice({ wavetableId: LAST_BATCH_WAVETABLE_ID, windowStart: 0, windowEnd: 4, position: 0.3, lfoDepth: 0.6, lfoRate: 0.25, octave: 0 })!;
 const v2 = model.addVoice({ windowStart: 1, windowEnd: 4, position: 0.75, lfoDepth: 0.3, lfoRate: 0.11, lfoPhase: 1.5, octave: 1, mute: true })!;
 const v3 = model.addVoice({
   windowStart: 0,
@@ -34,13 +39,11 @@ const v3 = model.addVoice({
   lfoRate: 1.2,
   lfoPhase: 3,
   octave: -1,
-  interp: 'step',
   mute: true,
 })!;
 model.addSequence(v1.id, [0, -1, 3, -1, 4, 4, -1, 2, 0, -1, 5, 4, -1, 3, 2, -1]);
 model.addSequence(v2.id, [-1, -1, 7, -1, -1, 5, -1, -1, -1, -1, 6, -1, 4, -1, -1, -1]);
 model.addSequence(v3.id, [0, -1, -1, -1, 0, -1, -1, -1, 3, -1, -1, -1, 2, -1, -1, -1]);
-model.setBatchTarget(v1.id, true);
 model.select(model.timeline[0].id);
 model.clearUndo();
 

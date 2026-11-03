@@ -1,9 +1,11 @@
 import { describeRecipe } from '../core/table';
 import type { VoiceParams } from '../core/voice';
-import { ALL_WAVETABLE_ID } from '../core/wavetable';
+import { TIMELINE_WAVETABLE_ID } from '../core/wavetable';
+import { Mix } from '../core/wavetablePlayback';
 import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, icon, ICONS, isNarrowShell, panel, voiceColorVar } from './dom';
+import { dominantId, playingMix } from './playing';
 
 /** Cell width and the gap between cells (px); one cell per table, in one row. */
 const CELL_W = 62;
@@ -41,16 +43,6 @@ function saveView(v: number): void {
 
 /** A voice's colour — read from the shared voice palette so palette changes flow through. */
 const voiceColor = (v: VoiceParams) => cssColor(voiceColorVar(v.id - 1));
-
-/** Static (unmodulated) play index of a voice into a wavetable of `len` tables, as the engine resolves it. */
-function staticIndex(v: VoiceParams, len: number): number {
-  const max = len - 1;
-  let a = Math.max(0, Math.min(max, v.windowStart));
-  let b = Math.max(0, Math.min(max, v.windowEnd));
-  if (a > b) [a, b] = [b, a];
-  const f = a + v.position * (b - a);
-  return v.interp === 'step' ? Math.round(f) : f;
-}
 
 /**
  * Timeline: every table ever generated (up to the cap) as a slim horizontal strip of
@@ -162,8 +154,18 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     const cSpec = cssColor('--accent');
     const cParentText = cssColor('--surface');
     const parentIdx = new Map(model.breedParents.map((id, i) => [id, i]));
-    const voices = model.voices.filter((v) => v.wavetableId === ALL_WAVETABLE_ID);
+    // Every voice tints the tables inside its window: Timeline voices by index range, voices
+    // on other wavetables by the table ids their window references (the tables they play).
+    const voices = model.voices;
     const vColors = voices.map(voiceColor);
+    const members = voices.map((v) => (v.wavetableId === TIMELINE_WAVETABLE_ID ? null : new Set(model.windowTables(v).map((t) => t.id))));
+    const inWin = (k: number, idx: number): boolean => {
+      if (idx < 0 || idx >= n) return false;
+      const set = members[k];
+      if (set) return set.has(model.timeline[idx].id);
+      const v = voices[k];
+      return idx >= v.windowStart && idx <= v.windowEnd;
+    };
     const showWave = view !== 1;
     const showSpec = view !== 0;
     grid.dataset.bandOrder = voices.map((v) => v.id).join(',');
@@ -179,8 +181,8 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
       g.fillRect(x, 0, CELL_W, cellH);
       // Window tints: one band per voice whose window holds this table, voice order top→bottom.
       const inside: number[] = [];
-      voices.forEach((v, k) => {
-        if (idx >= v.windowStart && idx <= v.windowEnd) inside.push(k);
+      voices.forEach((_v, k) => {
+        if (inWin(k, idx)) inside.push(k);
       });
       const bandH = cellH / (inside.length || 1);
       inside.forEach((k, b) => {
@@ -191,8 +193,9 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
         g.globalAlpha = v.mute ? TINT_MUTED : TINT_ON;
         g.fillRect(x, y0, CELL_W, y1 - y0);
         g.globalAlpha = v.mute ? 0.45 : 1;
-        if (idx === v.windowStart) g.fillRect(x, y0, EDGE_W, y1 - y0);
-        if (idx === v.windowEnd) g.fillRect(x + CELL_W - EDGE_W, y0, EDGE_W, y1 - y0);
+        // Solid edges where a run of window tables starts / ends.
+        if (!inWin(k, idx - 1)) g.fillRect(x, y0, EDGE_W, y1 - y0);
+        if (!inWin(k, idx + 1)) g.fillRect(x + CELL_W - EDGE_W, y0, EDGE_W, y1 - y0);
       });
       g.globalAlpha = 1;
       if (showSpec) {
@@ -234,11 +237,13 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   };
 
   /**
-   * Play-position carets on the overlay. Index f (fractional, into the "All" wavetable =
-   * timeline order) maps to the centre of cell round(f) offset by the fraction, so
-   * f = i + 0.5 sits on the boundary between tables i and i + 1. Only visible carets are
-   * drawn; skipped entirely when nothing moved.
+   * Play-position carets on the overlay. For a voice on the Timeline wavetable the index f
+   * (fractional, timeline order) maps to the centre of cell round(f) offset by the fraction,
+   * so f = i + 0.5 sits on the boundary between tables i and i + 1. A voice on another
+   * wavetable gets a caret on the table it currently plays most of. Only visible carets
+   * are drawn; skipped entirely when nothing moved.
    */
+  const mix = new Mix();
   const drawMarkers = () => {
     const n = model.timeline.length;
     const left = scroller.scrollLeft;
@@ -246,8 +251,17 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     const marks: { v: VoiceParams; f: number; x: number }[] = [];
     if (n) {
       for (const v of model.voices) {
-        if (v.mute || v.wavetableId !== ALL_WAVETABLE_ID) continue;
-        const f = Math.max(0, Math.min(n - 1, live?.get(v.id) ?? staticIndex(v, n)));
+        if (v.mute) continue;
+        let f: number;
+        if (v.wavetableId === TIMELINE_WAVETABLE_ID) {
+          const m = playingMix(model, bridge, v, mix);
+          f = live?.get(v.id) ?? (m.n ? m.x : 0);
+        } else {
+          const id = dominantId(playingMix(model, bridge, v, mix));
+          f = model.indexOf(id);
+          if (f < 0) continue;
+        }
+        f = Math.max(0, Math.min(n - 1, f));
         const x = (f + 0.5) * PITCH - GAP / 2 - left;
         if (x < -6 || x > viewW + 6) continue;
         marks.push({ v, f, x });
@@ -290,16 +304,18 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
 
   const updateLegend = () => {
     legend.replaceChildren(
-      ...model.voices
-        .filter((v) => v.wavetableId === ALL_WAVETABLE_ID)
-        .map((v) =>
-          h(
-            'span',
-            { class: `tl-key${v.mute ? ' muted' : ''}`, style: `--c:var(${voiceColorVar(v.id - 1)})` },
-            h('span', { class: 'sw' }),
-            v.mute ? `${v.name} · muted` : v.name,
-          ),
+      ...model.voices.map((v) =>
+        h(
+          'span',
+          {
+            class: `tl-key${v.mute ? ' muted' : ''}`,
+            style: `--c:var(${voiceColorVar(v.id - 1)})`,
+            title: `${v.name} plays ${model.wavetable(v.wavetableId)?.name ?? '—'}`,
+          },
+          h('span', { class: 'sw' }),
+          v.mute ? `${v.name} · muted` : v.name,
         ),
+      ),
     );
   };
 
@@ -417,6 +433,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     dirtyGrid = dirtyMarkers = true;
     updateLegend();
   });
+  model.on('wavetables', () => (dirtyGrid = dirtyMarkers = true));
   model.on('transport', () => (dirtyMarkers = true));
   model.on('parents', () => (dirtyGrid = true));
   updateLabels();
