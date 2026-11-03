@@ -16,7 +16,7 @@ import { describeRecipe, type GeneratedTable, type TableId, type WaveTable } fro
 import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { h } from './dom';
+import { h, icon, ICONS } from './dom';
 import { buildLibrary } from './library';
 
 /** Minimum interval between preview restarts while a control is dragged. */
@@ -32,6 +32,8 @@ const CHIP_H = 16;
 /** Pointer travel (px) before a press on a parent chip becomes a drag. */
 const DRAG_SLOP = 4;
 const DEFAULT_OP = 'mix';
+/** "Use window" icon: a bracketed span. */
+const WINDOW_ICON = 'M8 5H4v14h4M16 5h4v14h-4M8 12h8';
 
 type BatchMode = Exclude<BreedMode, 'single'>;
 
@@ -166,20 +168,32 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     },
     onThumbs: () => (thumbsDirty = true),
   });
+  // Each entry's hint as its tooltip.
+  lib.thumbs.forEach((c, i) => c.parentElement?.setAttribute('title', `${BREED_OPS[i].hint} · bias 0 = A`));
 
   // ---- parents ----
   const chips = h('div', { id: 'breed-parents', class: 'br-chips', role: 'list', 'aria-label': 'Parents (drag, or ← / → on a chip, to reorder)' });
   const addSel = h(
     'button',
-    { id: 'breed-add-selected', title: 'Add the waveform selected in the Timeline as the next parent', onclick: () => addSelected() },
-    'Add selected',
+    {
+      id: 'breed-add-selected',
+      'aria-label': 'Add selected',
+      title: 'Add selected: the waveform selected in the Timeline becomes the next parent',
+      onclick: () => addSelected(),
+    },
+    icon(ICONS.plus),
   );
   const winSel = h('select', { id: 'breed-window-voice', 'aria-label': 'Voice whose window to use as parents' });
   winSel.addEventListener('change', () => (windowVoiceId = Number(winSel.value)));
   const useWin = h(
     'button',
-    { id: 'breed-use-window', title: 'Parents = the waveforms in the voice’s window (up to 8, evenly spaced)', onclick: () => useWindow() },
-    'Use window of',
+    {
+      id: 'breed-use-window',
+      'aria-label': 'Use window of the chosen voice',
+      title: 'Use window of the chosen voice: parents = the waveforms in its window (up to 8, evenly spaced)',
+      onclick: () => useWindow(),
+    },
+    icon(WINDOW_ICON),
   );
   const clear = h('button', { id: 'breed-clear', class: 'br-clear', title: 'Remove every parent', onclick: () => model.setBreedParents([]) }, 'Clear');
   const parentsRow = h(
@@ -187,12 +201,11 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     { class: 'br-parents' },
     h('span', { class: 'br-parents-h' }, 'Parents'),
     chips,
-    h('div', { class: 'br-parent-acts' }, addSel, h('div', { class: 'br-win' }, useWin, winSel)),
+    h('div', { class: 'seg br-parent-acts', role: 'group', 'aria-label': 'Add parents' }, addSel, useWin, winSel),
   );
 
   // ---- parameters ----
   const title = h('span', { class: 'br-name', id: 'breed-title' });
-  const hint = h('span', { class: 'br-hint', id: 'breed-hint' });
   const biasVal = h('span', { class: 'mut-amount-val', id: 'breed-bias-val' });
   const biasInput = h('input', { type: 'range', id: 'breed-bias', min: 0, max: 1, step: 0.01, value: bias, 'aria-label': 'Bias (0 = parent A)' });
   biasInput.addEventListener('input', () => {
@@ -208,37 +221,33 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   });
   const walkButtons = WALKS.map((x) => h('button', { id: `breed-walk-${x.walk}`, title: x.title, onclick: () => setWalk(x.walk) }, x.label));
   const seedLabel = h('span', { id: 'breed-seed', class: 'mono-label', title: 'Shared by the preview, every card and Add' });
+  const rerollBtn = h('button', { id: 'breed-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => newSeed() }, 'Reroll');
   const seedBox = h(
     'div',
     { class: 'gen-seedbox', id: 'breed-seedbox' },
     h('span', {}, 'Seed'),
     seedLabel,
-    h('button', { id: 'breed-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => newSeed() }, 'Reroll'),
+    rerollBtn,
   );
   const params = h(
     'div',
     { class: 'br-params' },
-    h('div', { class: 'br-op-line' }, title, hint, seedBox),
+    h('label', { class: 'mut-amount br-bias', title: 'Bias: 0 = parent A, then along the walk' }, h('span', {}, 'Bias'), biasInput, biasVal),
+    h('div', { class: 'seg br-walk', role: 'group', 'aria-label': 'Bias walk' }, ...walkButtons),
     h(
-      'div',
-      { class: 'br-ctl-line' },
-      h('label', { class: 'mut-amount br-bias', title: 'Bias: 0 = parent A, then along the walk' }, h('span', {}, 'Bias'), biasInput, biasVal),
-      h('div', { class: 'seg br-walk', role: 'group', 'aria-label': 'Bias walk' }, ...walkButtons),
-      h(
-        'label',
-        { class: 'mut-amount br-rate', title: 'Seeded jitter, strongest between parents (none at a pure parent)' },
-        h('span', {}, 'Mutation'),
-        rateInput,
-        rateVal,
-      ),
+      'label',
+      { class: 'mut-amount br-rate', title: 'Seeded jitter, strongest between parents (none at a pure parent)' },
+      h('span', {}, 'Mutation'),
+      rateInput,
+      rateVal,
     ),
+    seedBox,
   );
 
   const syncParams = () => {
     const o = info();
     title.textContent = `${o.group} › ${o.label}`;
-    hint.textContent = `${o.hint} · bias 0 = A`;
-    hint.title = hint.textContent;
+    title.title = `${o.hint} · bias 0 = A`;
     seedBox.hidden = !usesSeed();
     syncGuards();
   };
@@ -271,12 +280,10 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const waveC = h('canvas', { id: 'breed-wave', role: 'img', 'aria-label': 'Shown child (solid) over the parents (faint, in their colours)' });
   const specC = h('canvas', { id: 'breed-spec', role: 'img', 'aria-label': 'Harmonic spectrum of the shown child over parent A (grey)' });
   const axis = (...labels: string[]) => h('div', { class: 'gen-axis' }, ...labels.map((l) => h('span', {}, l)));
-  const waveBox = h(
-    'div',
-    { class: 'gen-plot-box' },
-    waveC,
-    h('div', { class: 'gen-plot-tags' }, h('span', { class: 'br-tags-left' }, shownLabel, weightsLabel), legend),
-  );
+  // Labels sit in the axis row under the waveform (not over it): operator (hint in its
+  // tooltip), shown child, weights; the parents' legend on the right.
+  const waveBox = h('div', { class: 'gen-plot-box' }, waveC);
+  const tagRow = h('div', { class: 'gen-axis br-tagrow' }, h('span', { class: 'br-tags-left' }, title, shownLabel, weightsLabel), legend);
   const specBox = h('div', { class: 'gen-plot-box' }, specC);
   const viewer = h(
     'div',
@@ -284,7 +291,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     h(
       'div',
       { class: 'gen-views' },
-      h('div', { class: 'gen-plot gen-plot-wave' }, waveBox, axis('0', 'π', '2π')),
+      h('div', { class: 'gen-plot gen-plot-wave' }, waveBox, tagRow),
       h('div', { class: 'gen-plot gen-plot-spec' }, specBox, axis('h1', 'grey = A', `h${SPEC_BINS}`)),
     ),
   );
@@ -339,6 +346,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     const i = strip.shown();
     const b = breedBiasAt(request(), i);
     shownLabel.textContent = mode === 'gen' ? `child ${i + 1} of ${n} · bias ${pct(b)}` : `#${i + 1} of ${n} · bias ${pct(b)}`;
+    tagRow.title = `${title.textContent} · ${shownLabel.textContent}`;
     const P = model.breedParents.length;
     weightsLabel.textContent = P >= 2 ? breedWeights(P, b, walk, weightList()).map((v, k) => `${parentLetter(k)} ${pctN(v)}`).join(' · ') : '';
   };
@@ -362,6 +370,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const newSeed = () => {
     seed = randomSeed();
     seedLabel.textContent = hex(seed);
+    rerollBtn.title = `Seed ${hex(seed)}: shared by the preview, every card and Add. Reroll draws a new one.`;
   };
 
   // ---- parent actions ----
@@ -445,7 +454,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
         weight,
       );
       el.addEventListener('keydown', (e) => {
-        if (e.target !== el) return;
+        if (e.target !== el || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
         const d = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
         if (d) {
           e.preventDefault();
@@ -517,12 +526,15 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
       chipEls.find((c) => c.id === dragId)?.el.classList.add('dragging');
     }
     // Target slot: how many other chips the pointer is past, in reading order (chips wrap
-    // on a phone).
+    // on a phone). Y is clamped to the chips' extent, so on one row only X counts.
+    const first = chipEls[0].el.getBoundingClientRect();
+    const last = chipEls[chipEls.length - 1].el.getBoundingClientRect();
+    const y = Math.max(first.top, Math.min(last.bottom, e.clientY));
     let to = 0;
     for (const c of chipEls) {
       if (c.id === dragId) continue;
       const r = c.el.getBoundingClientRect();
-      if (e.clientY > r.bottom || (e.clientY >= r.top && e.clientX > r.left + r.width / 2)) to++;
+      if (y > r.bottom || (y >= r.top && e.clientX > r.left + r.width / 2)) to++;
     }
     const from = model.breedParents.indexOf(dragId);
     if (from >= 0 && to !== from) model.moveBreedParent(dragId, to - from);

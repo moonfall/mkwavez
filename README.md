@@ -78,13 +78,15 @@ switches (the choice is remembered).
   (search by name, group or hint; ▲/▼ or the arrow keys); each thumbnail is that operator
   applied to the parents at the current bias (faint = parent A), `rnd` marks seeded
   operators. Parents are chips (A, B, …: thumbnail + waveform number): Shift-click (or
-  ⌘-click) or long-press waveforms in the Timeline, "Add selected", or "Use window of Vn";
+  ⌘-click) or long-press waveforms in the Timeline, "Add selected" (+), or "Use window of"
+  ([ ]) the chosen voice;
   drag a chip (or focus it and press ←/→) to reorder, × or Delete removes, Clear removes
-  all. Then the operator's hint, Bias (0 = parent A), how the bias walks the parents
+  all. Then Bias (0 = parent A), how the bias walks the parents
   (Path, Ring, or Custom weights: a small slider on each chip), Mutation (seeded jitter,
   strongest between parents) and the seed (Reroll; shown when the result uses it). The
   large view shows one child (solid) over the parents (faint, in their chip colours) with
-  its spectrum (grey = A). Batch: Sweep (child i of N at bias `B·i/N`) or Generation (N
+  its spectrum (grey = A); the row under it names the operator (its hint in the tooltip,
+  as on the library entries), the shown child and the parents' weights. Batch: Sweep (child i of N at bias `B·i/N`) or Generation (N
   children at B, each with its own seed); the strip shows all N (click, or ←/→ when
   focused), the last by default. "Add shown" / "Add +N" add exactly the previews and
   select the last waveform added (undo restores the selection); Add +N refuses batches of

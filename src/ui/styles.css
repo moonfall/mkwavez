@@ -2662,7 +2662,7 @@ span.wte-full {
   font-size: 11px;
 }
 
-/* ---- breed (library, views, strip: the shared gen-* components; mut-* title / sliders) ---- */
+/* ---- breed (library, views, strip: the shared gen-* components; mut-* sliders) ---- */
 .br-parents {
   display: flex;
   align-items: center;
@@ -2764,8 +2764,8 @@ input.br-chip-weight {
   /* No intrinsic width: the chip is as wide as its top row and the slider fills it. */
   width: 0;
   min-width: calc(100% - 6px);
-  height: 14px;
-  margin: 0 3px 3px;
+  height: 12px;
+  margin: 0 3px 2px;
 }
 .br-chips.show-weights input.br-chip-weight {
   display: block;
@@ -2776,18 +2776,7 @@ input.br-chip-weight {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 28px;
-}
-.br-parent-acts {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.br-parent-acts button,
-.br-parent-acts select {
-  height: 26px;
-  font-size: 12px;
+  line-height: 26px;
 }
 button.br-clear {
   flex: none;
@@ -2804,56 +2793,41 @@ button.br-clear:hover {
   color: var(--text);
   background: none;
 }
-.br-win {
+/* Add selected (+) · Use window of ([ ]) [voice]: one compact group. */
+.br-parent-acts button {
+  width: 28px;
+  height: 26px;
+  padding: 0;
   display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.br-win button {
-  border-radius: 6px 0 0 6px;
+.br-parent-acts button svg {
+  width: 16px;
+  height: 16px;
 }
-.br-win select {
-  border-radius: 0 6px 6px 0;
-  border-left: 0;
+.br-parent-acts select {
+  height: 26px;
+  border: 0;
+  border-left: 1px solid var(--border-strong);
+  border-radius: 0;
   padding: 0 4px;
+  font-size: 12px;
 }
 .br-params {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.br-op-line,
-.br-ctl-line {
-  display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 12px;
+  gap: 6px 12px;
   min-width: 0;
-}
-.br-op-line {
-  gap: 2px 8px;
-}
-.br-name {
-  flex: none;
-  font-weight: 600;
-  font-size: 13px;
-  white-space: nowrap;
-}
-.br-hint {
-  flex: 1 1 0;
-  min-width: 0;
-  font-size: 11px;
-  color: var(--text-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .br-bias {
   flex: 1 1 160px;
-  min-width: 120px;
+  min-width: 130px;
 }
 .br-rate {
   flex: 1 1 150px;
-  min-width: 120px;
+  min-width: 130px;
 }
 .br-walk button {
   padding: 0 7px;
@@ -2861,65 +2835,87 @@ button.br-clear:hover {
 .breed .gen-seedbox {
   flex: none;
 }
-.br-tags-left {
-  display: flex;
-  gap: 10px;
+/* Tag row under the waveform: operator · shown child · weights … legend. */
+.br-tagrow {
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+}
+.br-tags-left {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
   overflow: hidden;
   white-space: nowrap;
 }
+.br-tags-left > * {
+  flex: none;
+}
+.br-name {
+  font-family: var(--font);
+  font-weight: 600;
+  color: var(--text);
+  cursor: help;
+}
 .br-weights {
-  color: var(--text-2);
+  flex: 0 1 auto !important;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .br-legend {
   flex: none;
+  gap: 5px;
+  font-size: inherit;
 }
 .br-key {
   color: var(--pc);
   font-weight: 600;
 }
-.br-key::before {
-  content: '';
-  width: 10px;
-  border-top: 2px solid var(--pc);
-  opacity: 0.7;
-}
 .breed .gen-batch-head > #breed-blocked {
   flex: 1 1 0;
 }
 
-/* Wide shell: parents row; operator line (title, hint ellipsised with its full text in
-   the tooltip, seed); controls line. Compacted via container queries when narrow. */
+/* Wide shell: parents row; one controls row; the result view keeps ≥ 100 px. */
 @media (min-width: 900px) {
   .br-params,
   .br-parents {
     flex: none;
   }
-  .br-op-line,
-  .br-ctl-line {
+  .br-params {
     flex-wrap: nowrap;
+    gap: 10px;
   }
-  .br-op-line {
-    height: 20px;
-  }
-  .br-op-line button.small {
-    height: 20px;
+  .br-params .gen-seedbox button.small {
+    height: 24px;
   }
   .breed .gen-main {
     container: br-main / inline-size;
     gap: 6px;
   }
+  .breed .gen-viewer {
+    min-height: 100px;
+  }
+}
+/* Short laptop / tablet screens: cards without their spectrum. */
+@media (min-width: 900px) and (max-height: 860px) {
+  .breed .gen-card canvas + canvas {
+    display: none;
+  }
 }
 @container br-main (max-width: 700px) {
-  .br-ctl-line {
-    gap: 10px;
+  .br-params {
+    gap: 8px;
   }
+  /* The seed value moves into Reroll's tooltip. */
   .breed .gen-seedbox > span:first-child,
-  .br-parents-h,
-  .br-weights {
+  .breed .gen-seedbox .mono-label,
+  .br-parents-h {
     display: none;
+  }
+  .br-walk button {
+    padding: 0 6px;
   }
 }
 @container br-main (max-width: 480px) {
@@ -2937,13 +2933,6 @@ button.br-clear:hover {
     flex: 1 1 100%;
     flex-wrap: wrap;
     overflow: visible;
-  }
-  .br-parent-acts {
-    flex-wrap: wrap;
-  }
-  .br-hint {
-    flex-basis: 100%;
-    white-space: normal;
   }
   .br-empty {
     white-space: normal;

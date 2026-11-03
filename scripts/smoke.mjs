@@ -1688,7 +1688,8 @@ async function breedChecks(page, tlCount, label) {
     (await page.$$eval('#breed-list .gen-entry', (bs) => bs.filter((b) => b.querySelector('.gen-tag')).map((b) => b.dataset.id))).join() === 'genetic,bands,splice',
     'seeded operators tagged rnd',
   );
-  assert((await title()) === 'Blend › Crossfade' && (await page.textContent('#breed-hint')).includes('bias 0 = A'), 'Group › Name and its hint');
+  assert((await title()) === 'Blend › Crossfade' && (await page.getAttribute('#breed-title', 'title')).includes('bias 0 = A'), 'Group › Name, its hint as the tooltip');
+  assert((await page.getAttribute('#breed-list .gen-entry[data-id="split"]', 'title')).includes('harmonic bands'), 'library entries carry their hint');
   await page.fill('#breed-search', 'crossover');
   assert((await visibleIds()).join() === 'split,genetic,bands', 'search matches the group');
   await page.fill('#breed-search', 'third-octave');
@@ -1754,6 +1755,9 @@ async function breedChecks(page, tlCount, label) {
   assert((await focusedId()) === String(t1), 'focus stays on the moved chip');
   await page.keyboard.press('ArrowLeft');
   assert(await same([t1, t2]), '← moves it back');
+  await page.keyboard.press('Alt+ArrowRight');
+  await page.keyboard.press('Shift+ArrowRight');
+  assert(await same([t1, t2]), 'modified arrows (Alt+← = browser Back) do not reorder');
   const box = async (n) => page.locator(`#breed-parents .br-chip:nth-child(${n})`).boundingBox();
   const a = await box(1);
   const b = await box(2);
@@ -1763,6 +1767,14 @@ async function breedChecks(page, tlCount, label) {
   await page.mouse.move(b.x + b.width - 6, b.y + b.height / 2, { steps: 6 });
   await page.mouse.up();
   assert(await same([t2, t1]), 'dragging chip A past B reorders');
+  // Vertical drift off a single row doesn't snap the chip to the first / last slot.
+  const c1 = await box(1);
+  await page.mouse.move(c1.x + 10, c1.y + c1.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(c1.x + 20, c1.y + c1.height + 14, { steps: 4 });
+  await page.mouse.move(c1.x + 24, c1.y + c1.height + 20, { steps: 4 });
+  await page.mouse.up();
+  assert(await same([t2, t1]), 'a short drag with vertical drift keeps the order');
   await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2, t3]);
   await page.focus('#breed-parents .br-chip:nth-child(3)');
   await page.keyboard.press('Delete');
@@ -2003,7 +2015,13 @@ async function breedChecks(page, tlCount, label) {
     await page.waitForTimeout(250);
     assert((await genFits()) && (await fitsScreen(page)), `${w}×${hh}: Breed fits the Generate panel (custom weights), no page scroll`);
     const wave = await page.$eval('#breed-wave', (c) => c.parentElement.getBoundingClientRect().height);
-    assert(wave >= 60, `${w}×${hh}: the result view keeps ${Math.round(wave)} px`);
+    assert(wave >= 100, `${w}×${hh}: the result view keeps ${Math.round(wave)} px (≥ 100)`);
+    const off = await M(() => {
+      const w = document.querySelector('#breed-wave').parentElement.getBoundingClientRect();
+      const t = document.querySelector('.br-tagrow').getBoundingClientRect();
+      return t.top >= w.bottom - 0.5;
+    });
+    assert(off, `${w}×${hh}: operator / shown label and legend sit below the waveform`);
   }
   if (SHOTS) {
     for (const theme of ['dark', 'light']) {

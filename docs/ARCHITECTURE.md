@@ -282,10 +282,12 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   formula row; wave + spectrum flex; batch row + strip), and so does Mutate (library
   column | source + parameters row; wave + spectrum flex; batch row + strip; the batch
   row wraps when the column is narrower than ~700 px, via a container query), and so
-  does Breed (library column | parent chips row; operator line (title, hint, seed) and
-  controls line (bias, walk, mutation); wave + spectrum flex; batch row + strip; it fits
-  the panel at 1440×900 and 1180×820 without scrolling, the chip row scrolls sideways
-  when there are more parents than fit). The shared Generate pieces use `gen-*`
+  does Breed (library column | parent chips row with a compact Add selected / Use window
+  group; one controls row (bias, walk, mutation, seed); wave + spectrum flex, ≥ 100 px,
+  with the operator / shown child / weights / legend in the row under the waveform;
+  batch row + strip, cards without their spectrum below 860 px tall; it fits the panel at
+  1440×900 and 1180×820 without scrolling, the chip row scrolls sideways when there are
+  more parents than fit). The shared Generate pieces use `gen-*`
   classes (`.gen-tab`, `.gen-lib`, `.gen-strip`, …).
 - **Narrow shell (< 900 px)**: the same panels in the same order, one scrolling
   column, each collapsible (Wavetables starts collapsed); the transport bar is sticky.
