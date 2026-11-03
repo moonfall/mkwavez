@@ -208,21 +208,40 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
     JSON `{ meta, waveforms }` (sample records carry `offset` / `length` in floats), padding
     to 4 bytes, little-endian Float32 sample block. Exports store samples (no recipe-only
     records), so files don't depend on re-render determinism.
-- **Autosave** (`app/autosave.ts` + `browser/sessionStore.ts`): IndexedDB database
-  `mkwavez` with stores `meta` (key `session`; `corrupt` = the last save that couldn't be
-  restored, kept for debugging) and `waveforms` (keyPath `id`). Any model topic or UI pref
+- **Autosave** (`app/autosave.ts`, `app/restore.ts`, `browser/sessionStore.ts`,
+  `browser/tabLock.ts`): IndexedDB database `mkwavez` with stores `meta` (key
+  `session`), `waveforms` (keyPath `id`) and `kept` (key `last`: a session that couldn't
+  be restored, set aside intact — meta and every record). Any model topic or UI pref
   change marks the session dirty; the save runs 1.5 s after the last change (at most 6 s
   after the first), writes new waveform records in chunks of ≤ 64 / ≤ 4 ms with idle-time
-  yields between chunks, then the meta and the deletion of unreferenced records (evicted
-  waveforms; a `ref`'s target is kept while referenced) in one transaction — so the stored
-  meta never references a missing record. Hidden page / `pagehide` flushes at once without
-  yielding. Write errors (quota, …) set an error status and retry on the next change.
-  On load, `main.ts` restores the session before building the UI (the page shows
-  "Loading…" meanwhile); storage unavailable → fresh session, autosave off, a notice;
-  unreadable save → fresh session, the bad meta kept under `corrupt`, a notice with
-  "Discard it". New session / Import replace the model (`AppModel.loadState`, undo
-  cleared), clear the store and save everything. Two tabs on one origin both autosave
-  (last writer wins); there's no cross-tab locking yet.
+  yields, then the meta and the deletion of unreferenced records (evicted waveforms; a
+  `ref`'s target is kept while referenced) in one transaction — so the stored meta never
+  references a missing record. Page hidden / `pagehide`: `flushNow()` issues one
+  transaction synchronously (meta + every unwritten waveform + deletions); a chunked save
+  in progress is superseded (it never commits its older meta).
+  - Restore: only records the restored meta reaches count as saved; any other record
+    (from a save whose meta never landed) is deleted, and new ids are allocated above
+    every stored id (`AppModel.reserveTableIds`), so a stale record can't stand in for a
+    new waveform.
+  - Quota: if a write fails with QuotaExceededError, unreferenced records are deleted
+    first and the write retried once; still full → error status and a notice (Export).
+    Other write errors set an error status and retry on the next change.
+  - Tabs: one tab owns autosave (Web Locks, `mkwavez-autosave`; a reload waits ≤ 1.5 s
+    for the previous document's lock). Other tabs restore the last save but are paused
+    (notice + Session menu "Use autosave here…"); taking over steals the lock (the old
+    owner pauses) and rewrites every waveform (`adopt`: nothing in the store counts as
+    saved, the rest is deleted at commit). Without Web Locks every tab saves (last
+    writer wins).
+  - Startup (`restoreSession`, before the UI is built; the page shows "Loading…"):
+    storage unavailable → fresh session, autosave off, a notice; unrestorable save
+    (corrupt, or a newer version) → moved to `kept` intact in one transaction, fresh
+    session (new ids above the kept ones), a notice offering Export / Discard (also in the
+    Session menu); if it can't be moved, or another tab owns the store, it is left
+    untouched (autosave off / paused).
+  - New session / Import replace the model (`AppModel.loadState`, undo cleared), clear
+    the store and save everything. Imports are capped (256 MB, 4×4096 records, exactly
+    2048 samples per waveform) and the timeline is cut to the cap like an add (oldest
+    unpinned first).
 - **Undo** — snapshots of the timeline array and wavetables (references), selection,
   voice windows with their wavetable (X and Y; switching a voice's wavetable is an undo
   step, so undo puts voices back) and sequence steps; 40 deep. Covers adds, note edits, window edits (a slider drag is one

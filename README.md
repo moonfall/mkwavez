@@ -172,8 +172,9 @@ switches (the choice is remembered).
   (asks first; clears the autosaved copy), **Export…** (one `.mkwz` file) and
   **Import…** (asks first; replaces the current session). If the browser blocks storage
   (e.g. some private windows) the app runs as usual with autosave off and a notice; a
-  save that can't be read starts a fresh session (the bad save is kept, with an offer to
-  discard it).
+  save that can't be restored (damaged, or from a newer version) starts a fresh session
+  and is kept aside, with Export / Discard. With mkwavez open in several tabs only one
+  autosaves; the others say so and offer "Use autosave here…".
 - **Undo** (transport bar) covers waveform adds (including Mutate / Breed adds, Copy to end),
   Timeline moves, window edits, a voice's wavetable switch, note edits and wavetable edits (create, duplicate, rename,
   delete, resize, slot edits). Wavetable settings (Live / Frozen, write head, interpolation)

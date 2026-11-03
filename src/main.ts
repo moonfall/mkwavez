@@ -4,16 +4,17 @@ import { AppModel } from './app/model';
 import { AudioBridge } from './audio/bridge';
 import { WebMidi } from './browser/webMidi';
 import { Autosaver, type SaveScheduler } from './app/autosave';
-import { defaultSessionState } from './app/defaultSession';
 import { SessionStore } from './browser/sessionStore';
-import { decodeSession, type SessionState, type WaveformRecord } from './core/session';
+import { FILE_EXTENSION, packSessionFile, type SessionMeta } from './core/session';
+import { restoreSession } from './app/restore';
+import { TabLock } from './browser/tabLock';
 import { setTheme, storedTheme, throttle } from './ui/canvas';
 import { UiState, type FrameView, type UiContext } from './ui/context';
 import { h } from './ui/dom';
 import { buildGenerate } from './ui/generate';
 import { buildMidi } from './ui/midi';
 import { buildSequences } from './ui/sequences';
-import { buildSessionMenu, showNotice } from './ui/session';
+import { buildSessionMenu, downloadBytes, showNotice, stamp, type SessionHooks } from './ui/session';
 import { installShortcuts } from './ui/shortcuts';
 import { buildTimeline } from './ui/timeline';
 import { buildTransport, togglePlay } from './ui/transport';
@@ -27,20 +28,45 @@ const ctx: UiContext = { model, bridge, ui: new UiState(model) };
 setTheme(storedTheme() ?? 'dark', false);
 
 // ---- session: restore the autosaved one (before the first render), else the default ----
-const boot = await restoreSession();
+const lock = new TabLock();
+const boot = await restoreSession(() => SessionStore.open(), () => lock.acquire());
 model.loadState(boot.state.model);
 ctx.ui.loadPrefs(boot.state.ui);
 const saver = new Autosaver(model, () => ctx.ui.exportPrefs(), boot.store, browserScheduler());
 saver.init(boot.stored);
+// Never reuse an id that a kept (unrestorable) session uses either.
+model.reserveTableIds(boot.reserve);
+if (!boot.owner) saver.setActive(false);
 ctx.ui.onVoice(() => saver.markDirty());
 ctx.ui.onPrefs(() => saver.markDirty());
-// Hidden / closing: write now (no idle yielding; audio runs on its own thread).
+// Hidden / closing: one transaction, issued synchronously (async chains don't survive unload).
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') void saver.flush();
+  if (document.visibilityState === 'hidden') void saver.flushNow();
 });
-window.addEventListener('pagehide', () => void saver.flush());
+window.addEventListener('pagehide', () => void saver.flushNow());
 // A fresh session (nothing restored) is saved right away.
 if (!boot.restored) saver.markDirty();
+const otherTabNotice = () =>
+  showNotice('mkwavez is open in another tab: autosave is paused here (that tab saves its session).', [{ label: 'Use autosave here…', run: () => void takeOver() }]);
+lock.onLost = () => {
+  saver.setActive(false);
+  otherTabNotice();
+};
+/** Take autosave over from the other tab: this tab's session replaces the saved one. */
+async function takeOver(): Promise<void> {
+  if (!boot.store || saver.isActive) return;
+  const ok = window.confirm(
+    'Use autosave in this tab?\n\nThis tab’s session replaces the one saved by the other tab, and the other tab stops saving.',
+  );
+  if (!ok || !(await lock.takeOver())) return;
+  try {
+    saver.adopt(await boot.store.keys());
+    saver.setActive(true);
+  } catch (e) {
+    console.warn('[session] take over failed', e);
+    showNotice('Couldn’t take over autosave in this tab.');
+  }
+}
 
 // ---- MIDI: input events go straight to the router and the worklet (not via the frame loop) ----
 // CC moves reach the worklet at once (voice/patch); the model and sliders catch up per frame
@@ -64,7 +90,26 @@ const timeline = buildTimeline(ctx);
 const wavetables = buildWavetables(ctx);
 const voices = buildVoices(ctx);
 const sequences = buildSequences(ctx);
-const session = buildSessionMenu(ctx, saver);
+const hooks: SessionHooks = {
+  takeOver,
+  hasKept: () => boot.hasKept,
+  async exportKept() {
+    try {
+      const kept = await boot.store?.loadKept();
+      if (!kept) return;
+      downloadBytes(packSessionFile(kept.meta as SessionMeta, kept.records), `mkwavez-unrestored-${stamp(new Date(kept.savedAt))}${FILE_EXTENSION}`);
+    } catch (e) {
+      console.warn('[session] export of the kept session failed', e);
+      showNotice('Couldn’t export the kept session.');
+    }
+  },
+  async discardKept() {
+    if (!window.confirm('Discard the session that couldn’t be restored? It can’t be recovered afterwards.')) return;
+    await boot.store?.clearKept().catch(() => {});
+    boot.hasKept = false;
+  },
+};
+const session = buildSessionMenu(ctx, saver, hooks);
 const root = document.getElementById('app')!;
 root.replaceChildren(
   buildTransport(ctx, fragment(session.el, buildMidi(ctx, midi, webMidi))),
@@ -112,76 +157,18 @@ bridge.onStatus = (s) => {
 // Debug handle for the console and smoke tests.
 (window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, setTheme, midi, webMidi, saver, session };
 
-for (const n of boot.notices) showNotice(n.text, n.actions);
-
-// ---- session restore ----
-
-interface Boot {
-  state: SessionState;
-  store: SessionStore | null;
-  /** Records the store holds (so autosave writes only new waveforms). */
-  stored: WaveformRecord[];
-  restored: boolean;
-  notices: { text: string; actions?: { label: string; run: () => void }[] }[];
+for (const n of boot.notices) {
+  showNotice(
+    n.text,
+    n.kind === 'kept'
+      ? [
+          { label: 'Export it', run: () => void hooks.exportKept() },
+          { label: 'Discard it', run: () => void hooks.discardKept().then(() => session.sync()) },
+        ]
+      : [],
+  );
 }
-
-/**
- * Open storage and decode the last session. Never throws: no storage → a fresh session,
- * autosave off and a notice; an unreadable save → a fresh session, the bad save kept in
- * the store (meta key 'corrupt') and a notice offering to discard it.
- */
-async function restoreSession(): Promise<Boot> {
-  const fresh = (): SessionState => ({ model: defaultSessionState(), ui: {} });
-  let store: SessionStore;
-  try {
-    store = await SessionStore.open();
-  } catch (e) {
-    console.warn('[session] storage unavailable', e);
-    return {
-      state: fresh(),
-      store: null,
-      stored: [],
-      restored: false,
-      notices: [{ text: 'Autosave is off: this browser isn’t allowing storage (private window?). Use Session → Export to keep your work.' }],
-    };
-  }
-  let loaded;
-  try {
-    loaded = await store.load();
-  } catch (e) {
-    console.warn('[session] reading the saved session failed', e);
-    return {
-      state: fresh(),
-      store: null,
-      stored: [],
-      restored: false,
-      notices: [{ text: 'Couldn’t read the saved session; autosave is off for this tab. Use Session → Export to keep your work.' }],
-    };
-  }
-  const stored = [...loaded.records.values()];
-  if (loaded.meta === undefined) return { state: fresh(), store, stored, restored: false, notices: [] };
-  try {
-    const { state, warnings } = decodeSession(loaded.meta, loaded.records);
-    if (warnings.length) console.warn('[session] restored with warnings', warnings);
-    return { state, store, stored, restored: true, notices: warnings.length ? [{ text: `Session restored, but ${warnings[0]}.` }] : [] };
-  } catch (e) {
-    console.warn('[session] the saved session could not be restored', e);
-    const error = e instanceof Error ? e.message : String(e);
-    await store.keepCorrupt(loaded.meta, error).catch(() => {});
-    return {
-      state: fresh(),
-      store,
-      stored,
-      restored: false,
-      notices: [
-        {
-          text: `Couldn’t restore the last session (${error}); started a new one. The unreadable save is kept for debugging.`,
-          actions: [{ label: 'Discard it', run: () => void store.clearCorrupt().catch(() => {}) }],
-        },
-      ],
-    };
-  }
-}
+if (!boot.owner) otherTabNotice();
 
 function browserScheduler(): SaveScheduler {
   const ric = (globalThis as { requestIdleCallback?: (fn: () => void, o?: { timeout: number }) => number }).requestIdleCallback;

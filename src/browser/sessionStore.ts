@@ -1,20 +1,22 @@
 /**
- * IndexedDB storage for the autosaved session (browser only). Two object stores:
- * `meta` (key 'session' = the current SessionMeta, 'corrupt' = the last save that couldn't
- * be restored, kept for debugging) and `waveforms` (WaveformRecord by id, Float32 samples
- * stored as typed arrays). Every call may reject (private mode, quota, blocked): callers
- * catch and carry on without saving.
+ * IndexedDB storage for the autosaved session (browser only). Object stores: `meta` (key
+ * 'session' = the current SessionMeta), `waveforms` (WaveformRecord by id, Float32 samples
+ * stored as typed arrays) and `kept` (key 'last': a session that couldn't be restored —
+ * corrupt, or saved by a newer version — set aside intact, meta and records, so it can be
+ * exported or discarded). Every call may reject (private mode, quota, blocked): callers
+ * catch and carry on.
  */
 import type { SessionBackend } from '../app/autosave';
 import type { SessionMeta, WaveformRecord } from '../core/session';
 import type { TableId } from '../core/table';
 
 const DB_NAME = 'mkwavez';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const META = 'meta';
 const WAVEFORMS = 'waveforms';
+const KEPT = 'kept';
 const SESSION_KEY = 'session';
-const CORRUPT_KEY = 'corrupt';
+const KEPT_KEY = 'last';
 
 function req<T>(r: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -53,6 +55,14 @@ export interface StoredSession {
   records: Map<TableId, WaveformRecord>;
 }
 
+/** A session set aside because it couldn't be restored. */
+export interface KeptSession {
+  savedAt: number;
+  error: string;
+  meta: unknown;
+  records: WaveformRecord[];
+}
+
 export class SessionStore implements SessionBackend {
   private constructor(private db: IDBDatabase) {
     // Another tab upgrading the schema: step aside rather than block it.
@@ -68,6 +78,7 @@ export class SessionStore implements SessionBackend {
       const db = r.result;
       if (!db.objectStoreNames.contains(META)) db.createObjectStore(META);
       if (!db.objectStoreNames.contains(WAVEFORMS)) db.createObjectStore(WAVEFORMS, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(KEPT)) db.createObjectStore(KEPT);
     };
     const db = await withTimeout(req(r), timeoutMs, 'Opening saved-session storage');
     return new SessionStore(db);
@@ -91,38 +102,56 @@ export class SessionStore implements SessionBackend {
     await done(tx);
   }
 
-  async commit(meta: SessionMeta, remove: readonly TableId[]): Promise<void> {
+  async commit(meta: SessionMeta, remove: readonly TableId[], records: readonly WaveformRecord[] = []): Promise<void> {
+    // Created synchronously (before any await): queued even if the page is unloading.
     const tx = this.db.transaction([META, WAVEFORMS], 'readwrite');
-    tx.objectStore(META).put(meta, SESSION_KEY);
     const wf = tx.objectStore(WAVEFORMS);
+    for (const r of records) wf.put(r);
+    tx.objectStore(META).put(meta, SESSION_KEY);
     for (const id of remove) wf.delete(id);
     await done(tx);
   }
 
+  async remove(ids: readonly TableId[]): Promise<void> {
+    const tx = this.db.transaction(WAVEFORMS, 'readwrite');
+    const wf = tx.objectStore(WAVEFORMS);
+    for (const id of ids) wf.delete(id);
+    await done(tx);
+  }
+
+  /** Ids of every stored waveform record. */
+  async keys(): Promise<TableId[]> {
+    const tx = this.db.transaction(WAVEFORMS, 'readonly');
+    return (await req(tx.objectStore(WAVEFORMS).getAllKeys())) as TableId[];
+  }
+
   async clear(): Promise<void> {
     const tx = this.db.transaction([META, WAVEFORMS], 'readwrite');
-    const corrupt = tx.objectStore(META).get(CORRUPT_KEY);
+    tx.objectStore(META).delete(SESSION_KEY);
     tx.objectStore(WAVEFORMS).clear();
-    corrupt.onsuccess = () => {
-      // Keep only the debugging copy of an unreadable save.
-      const keep = corrupt.result;
-      tx.objectStore(META).clear();
-      if (keep !== undefined) tx.objectStore(META).put(keep, CORRUPT_KEY);
-    };
     await done(tx);
   }
 
-  /** Keep an unreadable save (meta + the error) for debugging; the next autosave replaces 'session'. */
-  async keepCorrupt(meta: unknown, error: string): Promise<void> {
-    const tx = this.db.transaction(META, 'readwrite');
-    tx.objectStore(META).put({ savedAt: Date.now(), error, meta }, CORRUPT_KEY);
+  /**
+   * Set an unrestorable session aside, intact (meta + records), and empty the live
+   * session, in one transaction. Replaces a previously kept one.
+   */
+  async keep(meta: unknown, records: readonly WaveformRecord[], error: string): Promise<void> {
+    const tx = this.db.transaction([META, WAVEFORMS, KEPT], 'readwrite');
+    tx.objectStore(KEPT).put({ savedAt: Date.now(), error, meta, records: [...records] } satisfies KeptSession, KEPT_KEY);
+    tx.objectStore(META).delete(SESSION_KEY);
+    tx.objectStore(WAVEFORMS).clear();
     await done(tx);
   }
 
-  /** Drop the debugging copy. */
-  async clearCorrupt(): Promise<void> {
-    const tx = this.db.transaction(META, 'readwrite');
-    tx.objectStore(META).delete(CORRUPT_KEY);
+  async loadKept(): Promise<KeptSession | undefined> {
+    const tx = this.db.transaction(KEPT, 'readonly');
+    return (await req(tx.objectStore(KEPT).get(KEPT_KEY))) as KeptSession | undefined;
+  }
+
+  async clearKept(): Promise<void> {
+    const tx = this.db.transaction(KEPT, 'readwrite');
+    tx.objectStore(KEPT).delete(KEPT_KEY);
     await done(tx);
   }
 }

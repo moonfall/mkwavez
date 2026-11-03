@@ -25,8 +25,9 @@
 // duplicate a built-in, rename, a Live wavetable receives Seed adds, Timeline drags (mouse
 // replace / insert, touch insert via synthetic pointer events), slot reorder, Delete, undo,
 // built-ins refuse drops, delete moves its voice to the Timeline.
-// Session: autosave survives a reload, New session, Export / Import, unreadable save and
-// no-storage paths (sessionChecks).
+// Session: autosave survives a reload, New session, Export / Import, two tabs (one
+// autosaves; take over), unrestorable save set aside and exportable, no-storage paths
+// (sessionChecks).
 //
 // Usage: npm run smoke            (builds, then tests `vite preview` and `vite dev`)
 //        CHROME=/path/to/chrome   (default /usr/bin/google-chrome)
@@ -2067,7 +2068,11 @@ async function sessionChecks(label, url, browser) {
     else await page.goto(url, { waitUntil: 'load' });
     await page.waitForSelector('#sec-generate');
   };
-  const saved = () => page.waitForFunction(() => window.mkwavez.saver.status === 'saved' && window.mkwavez.saver.lastSaved, null, { timeout: 10000 });
+  const saved = () =>
+    page.waitForFunction(() => window.mkwavez.saver.status === 'saved' && window.mkwavez.saver.lastSaved, null, { timeout: 10000 }).catch(async (e) => {
+      const st = await E(() => ({ status: window.mkwavez.saver.status, error: window.mkwavez.saver.lastError, vis: document.visibilityState }));
+      throw new Error(`autosave didn't finish: ${JSON.stringify(st)} (${e.message})`);
+    });
   const snap = () =>
     E(() => {
       const { model: m, ui } = window.mkwavez;
@@ -2157,14 +2162,60 @@ async function sessionChecks(label, url, browser) {
   assert((await page.textContent('#session-notice')).includes('Couldn’t import'), 'bad file: notice, session unchanged');
   assert((await snap()) === before, 'session unchanged after a bad import');
 
-  // An unreadable save: fresh session, bad save kept, notice.
+  // Two tabs: the second one restores the save but autosave is paused there; it can take over.
+  const pageB = await ctx.newPage();
+  watch(pageB);
+  await pageB.goto(url, { waitUntil: 'load' });
+  await pageB.waitForSelector('#sec-generate');
+  assert(
+    (await pageB.evaluate(() => window.mkwavez.saver.status)) === 'paused' &&
+      (await pageB.textContent('#session-notice')).includes('open in another tab') &&
+      (await pageB.evaluate(() => window.mkwavez.model.timeline.length)) === n,
+    'second tab: restores the save, autosave paused, notice',
+  );
+  await pageB.evaluate(() => window.mkwavez.model.setTransport({ bpm: 77 }));
+  await pageB.waitForTimeout(2000);
+  await E(() => window.mkwavez.model.setTransport({ bpm: 112 }));
+  await saved();
+  const storedBpm = () =>
+    E(
+      () =>
+        new Promise((res) => {
+          const r = indexedDB.open('mkwavez');
+          r.onsuccess = () => {
+            const g = r.result.transaction('meta').objectStore('meta').get('session');
+            g.onsuccess = () => {
+              r.result.close();
+              res(g.result?.bpm);
+            };
+          };
+        }),
+    );
+  assert((await storedBpm()) === 112, 'paused tab writes nothing; the owning tab keeps saving');
+  pageB.once('dialog', (d) => d.accept());
+  await pageB.click('#session-notice button:not(.session-notice-close)');
+  await pageB.waitForFunction(() => window.mkwavez.saver.status === 'saved' && window.mkwavez.saver.isActive, null, { timeout: 10000 });
+  await page.waitForFunction(() => window.mkwavez.saver.status === 'paused', null, { timeout: 5000 });
+  assert((await storedBpm()) === 77 && (await page.textContent('#session-notice')).includes('open in another tab'), 'take over: the second tab saves, the first one pauses');
+  await pageB.close();
+  // The first tab takes it back (via the Session menu).
+  page.once('dialog', (d) => d.accept());
+  await page.click('#session-menu');
+  await page.click('#session-takeover');
+  await page.waitForFunction(() => window.mkwavez.saver.status === 'saved' && window.mkwavez.saver.isActive, null, { timeout: 10000 });
+  assert((await storedBpm()) === 112, 'Session menu: take over again');
+  await page.keyboard.press('Escape');
+
+  // An unreadable save: set aside intact (meta + waveforms), fresh session, notice.
+  const storedCount = await E(() => window.mkwavez.model.timeline.length);
+  const maxStored = await E(() => Math.max(...window.mkwavez.model.timeline.map((t) => t.id)));
   await E(
     () =>
       new Promise((res, rej) => {
         const r = indexedDB.open('mkwavez');
         r.onsuccess = () => {
           const tx = r.result.transaction('meta', 'readwrite');
-          tx.objectStore('meta').put({ format: 'mkwavez-session', version: 1, timeline: 'garbage' }, 'session');
+          tx.objectStore('meta').put({ format: 'mkwavez-session', version: 99, timeline: [] }, 'session');
           tx.oncomplete = () => {
             r.result.close();
             res();
@@ -2174,21 +2225,33 @@ async function sessionChecks(label, url, browser) {
         r.onerror = rej;
       }),
   );
-  await E(() => (window.mkwavez.saver.markDirty = () => {})); // keep this tab from re-saving before the reload
   await load();
-  assert((await E(() => window.mkwavez.model.timeline.length)) === 5, 'unreadable save: starts a fresh session');
-  assert((await page.textContent('#session-notice')).includes('Couldn’t restore'), 'unreadable save: notice');
+  assert((await E(() => window.mkwavez.model.timeline.length)) === 5, 'unrestorable save: starts a fresh session');
+  assert((await page.textContent('#session-notice')).includes('newer version'), 'unrestorable save: notice says why');
   const kept = await E(
     () =>
       new Promise((res) => {
         const r = indexedDB.open('mkwavez');
         r.onsuccess = () => {
-          const g = r.result.transaction('meta').objectStore('meta').get('corrupt');
-          g.onsuccess = () => res(!!g.result?.meta && typeof g.result.error === 'string');
+          const g = r.result.transaction('kept').objectStore('kept').get('last');
+          g.onsuccess = () => {
+            r.result.close();
+            res({ version: g.result?.meta?.version, records: g.result?.records?.length ?? 0 });
+          };
         };
       }),
   );
-  assert(kept, 'unreadable save kept for debugging');
+  assert(kept.version === 99 && kept.records >= storedCount, `unrestorable save kept intact (meta + ${kept.records} waveforms)`);
+  await page.click('#seed-add-shown');
+  assert((await E(() => window.mkwavez.model.selectedId)) > maxStored, 'new waveform ids never collide with the kept session');
+  const [dlKept] = await Promise.all([page.waitForEvent('download'), page.click('#session-notice button:not(.session-notice-close)')]);
+  assert(dlKept.suggestedFilename().includes('unrestored') && (await dlKept.path()), 'kept session can be exported');
+  await page.click('#session-menu');
+  assert(await page.isVisible('#session-kept'), 'Session menu lists the kept session');
+  page.once('dialog', (d) => d.accept());
+  await page.click('#session-kept-discard');
+  await page.waitForFunction(() => document.querySelector('#session-kept').hidden, null, { timeout: 3000 });
+  assert(true, 'kept session discarded');
   await ctx.close();
 
   // No IndexedDB (blocked / private mode): runs normally, autosave off, notice.

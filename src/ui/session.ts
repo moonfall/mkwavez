@@ -9,6 +9,7 @@ import {
   encodeMeta,
   encodeWaveforms,
   FILE_EXTENSION,
+  MAX_FILE_BYTES,
   packSessionFile,
   SessionError,
   unpackSessionFile,
@@ -58,8 +59,20 @@ export function showNotice(text: string, actions: { label: string; run: () => vo
 
 // ---- menu ----
 
+/** Browser-side hooks the menu needs beyond the autosaver. */
+export interface SessionHooks {
+  /** Take autosave over from another tab (asks first). */
+  takeOver(): Promise<void>;
+  /** A session that couldn't be restored is kept in storage. */
+  hasKept(): boolean;
+  exportKept(): Promise<void>;
+  discardKept(): Promise<void>;
+}
+
 export interface SessionMenu {
   el: HTMLElement;
+  /** Re-read the hooks' state (kept session present, ...). */
+  sync(): void;
   /** Export the session as a .mkwz file download. */
   exportFile(): void;
   /** Import a .mkwz file (asks before replacing the current session). */
@@ -67,7 +80,7 @@ export interface SessionMenu {
   newSession(): Promise<void>;
 }
 
-export function buildSessionMenu(ctx: UiContext, saver: Autosaver): SessionMenu {
+export function buildSessionMenu(ctx: UiContext, saver: Autosaver, hooks: SessionHooks): SessionMenu {
   const { model, ui } = ctx;
   const open = h(
     'button',
@@ -82,16 +95,12 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver): SessionMenu 
 
   const menu: SessionMenu = {
     el: h('span'),
+    sync: () => {},
     exportFile() {
       try {
         const state = model.exportState();
         const bytes = packSessionFile(encodeMeta({ model: state, ui: ui.exportPrefs() }, Date.now()), encodeWaveforms(state.timeline));
-        const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/octet-stream' }));
-        const a = h('a', { href: url, download: `mkwavez-${stamp(new Date())}${FILE_EXTENSION}` });
-        document.body.append(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        downloadBytes(bytes, `mkwavez-${stamp(new Date())}${FILE_EXTENSION}`);
       } catch (e) {
         console.warn('[session] export failed', e);
         showNotice(`Couldn’t export the session: ${message(e)}`);
@@ -99,6 +108,7 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver): SessionMenu 
     },
     async importFile(f: File) {
       try {
+        if (f.size > MAX_FILE_BYTES) throw new SessionError('file is too large');
         const { meta, records } = unpackSessionFile(new Uint8Array(await f.arrayBuffer()));
         const { state, warnings } = decodeSession(meta, records);
         const n = state.model.timeline.length;
@@ -133,12 +143,22 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver): SessionMenu 
     if (f) void menu.importFile(f);
   });
 
+  const takeOverBtn = h('button', { id: 'session-takeover', class: 'small', hidden: true, onclick: () => void hooks.takeOver() }, 'Use autosave in this tab…');
+  const kept = h(
+    'div',
+    { id: 'session-kept', class: 'session-kept', hidden: true },
+    h('span', {}, 'A session that couldn’t be restored is kept: '),
+    h('button', { id: 'session-kept-export', class: 'small', onclick: () => void hooks.exportKept() }, 'Export it'),
+    h('button', { id: 'session-kept-discard', class: 'small', onclick: () => void hooks.discardKept().then(() => menu.sync()) }, 'Discard it'),
+  );
   const pop = h(
     'div',
     { id: 'session-pop', class: 'midi-pop session-pop', role: 'dialog', 'aria-label': 'Session' },
     h('div', { class: 'midi-pop-head' }, h('strong', {}, 'Session')),
     status,
+    takeOverBtn,
     h('div', { class: 'session-actions' }, newBtn, exportBtn, importBtn, file),
+    kept,
     h(
       'p',
       { class: 'hint' },
@@ -166,7 +186,12 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver): SessionMenu 
         text = 'Autosave is off: this browser isn’t allowing storage (private window?). Use Export to keep your work.';
         break;
       case 'error':
-        text = `Autosave failed: ${saver.lastError}. It retries on the next change; Export keeps a copy.`;
+        text = saver.quotaFull
+          ? 'Autosave stopped: browser storage is full. Export the session to keep it, or free up space; it retries on the next change.'
+          : `Autosave failed: ${saver.lastError}. It retries on the next change; Export keeps a copy.`;
+        break;
+      case 'paused':
+        text = 'Autosave is paused: mkwavez is open in another tab, which saves its session.';
         break;
       case 'saving':
       case 'pending':
@@ -177,6 +202,8 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver): SessionMenu 
     }
     status.textContent = text;
     status.classList.toggle('session-status-error', saver.status === 'off' || saver.status === 'error');
+    takeOverBtn.hidden = saver.status !== 'paused';
+    kept.hidden = !hooks.hasKept();
     open.dataset.state = saver.status;
     open.title = text;
   };
@@ -185,20 +212,33 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver): SessionMenu 
     syncStatus();
     if (saver.status === 'error' && saver.lastError !== lastErrorShown) {
       lastErrorShown = saver.lastError;
-      showNotice(`Autosave failed: ${saver.lastError}.`);
+      if (saver.quotaFull) showNotice('Browser storage is full: autosave stopped. Export the session to keep it, or free up space.', [{ label: 'Export', run: () => menu.exportFile() }]);
+      else showNotice(`Autosave failed: ${saver.lastError}.`);
     }
   };
   syncStatus();
 
+  menu.sync = syncStatus;
   menu.el = h('span', { class: 'session' }, open, pop);
   return menu;
+}
+
+/** Offer bytes as a file download. */
+export function downloadBytes(bytes: Uint8Array, name: string): void {
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/octet-stream' }));
+  const a = h('a', { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+export function stamp(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
 }
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-function stamp(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-}

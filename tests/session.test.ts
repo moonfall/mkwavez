@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Autosaver, type SaveScheduler, type SessionBackend } from '../src/app/autosave';
+import { Autosaver, type SaveScheduler } from '../src/app/autosave';
+import { restoreSession, type RestoreStore } from '../src/app/restore';
 import { defaultSessionState } from '../src/app/defaultSession';
 import { AppModel } from '../src/app/model';
 import { compileFormula } from '../src/browser/formulaEval';
@@ -316,26 +317,62 @@ describe('session corrupt-data handling', () => {
 
 // ---- autosave ----
 
-class MemoryBackend implements SessionBackend {
+class QuotaError extends Error {
+  override name = 'QuotaExceededError';
+}
+
+/** In-memory store: the autosave backend plus what restoreSession reads. */
+class MemoryBackend implements RestoreStore {
   meta: SessionMeta | null = null;
   waveforms = new Map<TableId, WaveformRecord>();
+  kept: { meta: unknown; records: WaveformRecord[]; error: string } | undefined;
   puts = 0;
   written: TableId[] = [];
   fail = false;
+  failKeep = false;
+  /** Max waveform records (quota). */
+  capacity = Infinity;
+  private room(records: readonly WaveformRecord[], removing: readonly TableId[] = []) {
+    const ids = new Set(this.waveforms.keys());
+    for (const id of removing) ids.delete(id);
+    for (const r of records) ids.add(r.id);
+    if (ids.size > this.capacity) throw new QuotaError('The quota has been exceeded.');
+  }
   async putWaveforms(records: readonly WaveformRecord[]) {
-    if (this.fail) throw new Error('quota');
+    if (this.fail) throw new Error('disk error');
+    this.room(records);
     this.puts++;
     for (const r of records) {
       this.waveforms.set(r.id, r);
       this.written.push(r.id);
     }
   }
-  async commit(meta: SessionMeta, remove: readonly TableId[]) {
-    if (this.fail) throw new Error('quota');
+  async commit(meta: SessionMeta, remove: readonly TableId[], records: readonly WaveformRecord[] = []) {
+    if (this.fail) throw new Error('disk error');
+    this.room(records, remove);
+    for (const r of records) {
+      this.waveforms.set(r.id, r);
+      this.written.push(r.id);
+    }
     this.meta = JSON.parse(JSON.stringify(meta));
     for (const id of remove) this.waveforms.delete(id);
   }
+  async remove(ids: readonly TableId[]) {
+    for (const id of ids) this.waveforms.delete(id);
+  }
   async clear() {
+    this.meta = null;
+    this.waveforms.clear();
+  }
+  async load() {
+    return { meta: this.meta ?? undefined, records: new Map(this.waveforms) };
+  }
+  async loadKept() {
+    return this.kept;
+  }
+  async keep(meta: unknown, records: readonly WaveformRecord[], error: string) {
+    if (this.failKeep) throw new Error('disk error');
+    this.kept = { meta, records: [...records], error };
     this.meta = null;
     this.waveforms.clear();
   }
@@ -470,7 +507,8 @@ describe('Autosaver', () => {
     saver.markDirty();
     await saver.flush();
     expect(saver.status).toBe('error');
-    expect(saver.lastError).toBe('quota');
+    expect(saver.lastError).toBe('disk error');
+    expect(saver.quotaFull).toBe(false);
     expect(sched.timers.size).toBe(0); // no retry loop
     be.fail = false;
     m.setTransport({ bpm: 99 });
@@ -491,5 +529,230 @@ describe('Autosaver', () => {
     expect(sched.timers.size).toBe(0);
     await saver.replace({ model: defaultSessionState(), ui: {} }, () => {});
     expect(m.timeline).toHaveLength(5);
+  });
+});
+
+describe('autosave robustness', () => {
+  /** A saved default session in a fresh backend, plus a model that mirrors it. */
+  async function savedDefault(be = new MemoryBackend()) {
+    const m = new AppModel(70);
+    m.loadState(defaultSessionState());
+    const { saver, sched } = saverFor(m, be);
+    saver.markDirty();
+    await saver.flush();
+    return { m, saver, sched, be };
+  }
+
+  /** "Reload": decode what the backend holds into a new model + autosaver. */
+  function reload(be: MemoryBackend) {
+    const m = new AppModel(70);
+    m.loadState(restore(be).model);
+    const { saver, sched } = saverFor(m, be);
+    saver.init(be.waveforms.values());
+    return { m, saver, sched };
+  }
+
+  it('1: an orphan record (waveform written, meta never committed) is never mistaken for a new waveform', async () => {
+    const { m, be } = await savedDefault();
+    m.addTables([generateBasic('saw', 0)], false);
+    const orphan = m.timeline.at(-1)!;
+    await be.putWaveforms([encodeWaveform(orphan)]); // crash before the meta commit
+    const r = reload(be);
+    await Promise.resolve();
+    expect(be.waveforms.has(orphan.id)).toBe(false); // unreachable from the meta: deleted
+    r.m.addTables([generateBasic('square', 0)], false);
+    const added = r.m.timeline.at(-1)!;
+    expect(added.id).toBeGreaterThan(orphan.id); // ids above every stored record
+    await r.saver.flush();
+    const back = restore(be).model.timeline.find((t) => t.id === added.id)!;
+    expect(samplesHash(back.data)).toBe(samplesHash(added.data));
+    expectSameState(r.m.exportState(), restore(be).model);
+  });
+
+  it('1: even if the orphan can not be deleted, a reused id is rewritten', async () => {
+    const { m, be } = await savedDefault();
+    m.addTables([generateBasic('saw', 0)], false);
+    const orphan = m.timeline.at(-1)!;
+    await be.putWaveforms([encodeWaveform(orphan)]);
+    const remove = be.remove.bind(be);
+    be.remove = async () => {
+      throw new Error('blocked');
+    };
+    const r = reload(be);
+    be.remove = remove;
+    // Force a colliding allocator: exactly at the orphan's id.
+    r.m.loadState({ ...r.m.exportState(), nextTableId: orphan.id });
+    r.m.addTables([generateBasic('square', 0)], false);
+    const added = r.m.timeline.at(-1)!;
+    expect(added.id).toBe(orphan.id);
+    await r.saver.flush();
+    expect(samplesHash(restore(be).model.timeline.find((t) => t.id === added.id)!.data)).toBe(samplesHash(added.data));
+  });
+
+  it('2: an unrestorable save is set aside intact and the new session never collides with it', async () => {
+    const { be } = await savedDefault();
+    const oldMeta = { ...be.meta!, version: SESSION_VERSION + 1 }; // from a newer version
+    be.meta = oldMeta as SessionMeta;
+    const oldRecords = new Map(be.waveforms);
+    const boot = await restoreSession(async () => be, async () => true);
+    expect(boot.restored).toBe(false);
+    expect(boot.store).toBe(be);
+    expect(boot.hasKept).toBe(true);
+    expect(boot.notices[0].kind).toBe('kept');
+    expect(boot.notices[0].text).toMatch(/newer version/);
+    expect(be.kept!.meta).toEqual(oldMeta);
+    expect(new Map(be.kept!.records.map((r) => [r.id, r]))).toEqual(oldRecords);
+    // The fresh session saves alongside it, with ids above the kept ones.
+    const m = new AppModel(70);
+    m.loadState(boot.state.model);
+    const { saver } = saverFor(m, be);
+    saver.init(boot.stored);
+    m.reserveTableIds(boot.reserve);
+    m.addTables([generateBasic('saw', 0)]);
+    saver.markDirty();
+    await saver.flush();
+    expect(m.timeline.at(-1)!.id).toBeGreaterThan(Math.max(...oldRecords.keys()));
+    expect(be.kept!.records).toHaveLength(oldRecords.size);
+    // A later restart still finds the kept one and keeps ids clear of it.
+    const again = await restoreSession(async () => be, async () => true);
+    expect(again.restored).toBe(true);
+    expect(again.hasKept).toBe(true);
+    expect(again.reserve).toBe(Math.max(...oldRecords.keys()) + 1);
+  });
+
+  it('2: if it can not be set aside (or another tab owns the store) nothing is overwritten', async () => {
+    const { be } = await savedDefault();
+    be.meta = { ...be.meta!, timeline: 'garbage' } as unknown as SessionMeta;
+    const before = { meta: be.meta, records: new Map(be.waveforms) };
+    const notOwner = await restoreSession(async () => be, async () => false);
+    expect(notOwner.owner).toBe(false);
+    expect(be.kept).toBeUndefined();
+    expect(be.meta).toBe(before.meta);
+    be.failKeep = true;
+    const boot = await restoreSession(async () => be, async () => true);
+    expect(boot.store).toBeNull(); // autosave off in this tab
+    expect(boot.notices[0].kind).toBe('off');
+    expect(be.meta).toBe(before.meta);
+    expect(be.waveforms).toEqual(before.records);
+  });
+
+  it('no storage: fresh session, autosave off', async () => {
+    const boot = await restoreSession(
+      async () => {
+        throw new Error('blocked');
+      },
+      async () => true,
+    );
+    expect(boot.store).toBeNull();
+    expect(boot.state.model.timeline).toHaveLength(5);
+    expect(boot.notices[0].text).toMatch(/Autosave is off/);
+  });
+
+  it('3: only the owning tab writes; taking over rewrites everything, the old owner stops', async () => {
+    const { m: a, saver: sa, be } = await savedDefault();
+    // Tab B restores the same save but doesn't own autosave.
+    const b = reload(be);
+    b.saver.setActive(false);
+    expect(b.saver.status).toBe('paused');
+    // Both add a waveform; they get the same id with different data.
+    a.addTables([generateBasic('saw', 0)]);
+    b.m.addTables([generateBasic('square', 0)]);
+    expect(a.timeline.at(-1)!.id).toBe(b.m.timeline.at(-1)!.id);
+    b.m.setTransport({ bpm: 77 });
+    await sa.flush();
+    await b.saver.flush();
+    expect(b.saver.flushNow()).toBeNull();
+    expect(b.sched.timers.size).toBe(0);
+    expectSameState(a.exportState(), restore(be).model); // B wrote nothing
+    // B takes over.
+    sa.setActive(false);
+    b.saver.adopt(be.waveforms.keys());
+    b.saver.setActive(true);
+    await b.saver.flush();
+    expectSameState(b.m.exportState(), restore(be).model);
+    expect([...be.waveforms.keys()].sort((x, y) => x - y)).toEqual(b.m.timeline.map((t) => t.id).sort((x, y) => x - y));
+    // A's later changes go nowhere.
+    a.setTransport({ bpm: 200 });
+    await sa.flush();
+    expect(sa.flushNow()).toBeNull();
+    expect(restore(be).model.bpm).toBe(77);
+  });
+
+  it('flushNow writes meta and unwritten waveforms in one commit, issued synchronously', async () => {
+    const { m, saver, be } = await savedDefault();
+    m.addTables(generatePerlin(DEFAULT_PERLIN, 4, 12), false);
+    const commits: number[] = [];
+    const commit = be.commit.bind(be);
+    be.commit = (meta, remove, records = []) => {
+      commits.push(records.length);
+      return commit(meta, remove, records);
+    };
+    const p = saver.flushNow();
+    expect(p).not.toBeNull();
+    expect(commits).toEqual([12]);
+    await p;
+    expectSameState(m.exportState(), restore(be).model);
+  });
+
+  it('5: at the storage quota, unreferenced records are deleted first so saving continues', async () => {
+    const be = new MemoryBackend();
+    be.capacity = 70;
+    const { m, saver } = await savedDefault(be);
+    m.addTables(generatePerlin(DEFAULT_PERLIN, 1, 64), false); // 69 waveforms
+    await saver.flush();
+    expect(saver.status).toBe('saved');
+    // Evicts some; storing the new records before deleting the evicted ones would exceed 70.
+    m.addTables(generatePerlin(DEFAULT_PERLIN, 2, 9), false);
+    expect(m.timeline).toHaveLength(70);
+    await saver.flush();
+    expect(saver.status).toBe('saved');
+    expectSameState(m.exportState(), restore(be).model);
+  });
+
+  it('5: a full store reports a quota error and recovers once there is room', async () => {
+    const be = new MemoryBackend();
+    const { m, saver, sched } = await savedDefault(be);
+    be.capacity = 5;
+    m.addTables([generateBasic('saw', 0)]);
+    await saver.flush();
+    expect(saver.status).toBe('error');
+    expect(saver.quotaFull).toBe(true);
+    be.capacity = Infinity;
+    m.setTransport({ bpm: 90 });
+    sched.fire();
+    await saver.flush();
+    expect(saver.status).toBe('saved');
+    expectSameState(m.exportState(), restore(be).model);
+  });
+});
+
+describe('import limits', () => {
+  it('drops sample blocks of the wrong length', () => {
+    const st = defaultSessionState();
+    const meta = encodeMeta({ model: st, ui: {} });
+    const recs = encodeWaveforms(st.timeline);
+    const short = { ...recs[1], samples: recs[1].samples!.subarray(0, 100) };
+    const { meta: m2, records } = unpackSessionFile(packSessionFile(meta, [recs[0], short, ...recs.slice(2)]));
+    expect(records.get(recs[1].id)?.samples).toBeUndefined();
+    const { state, warnings } = decodeSession(m2, records);
+    expect(state.model.timeline).toHaveLength(4);
+    expect(warnings[0]).toMatch(/1 waveform/);
+  });
+
+  it('caps the timeline, dropping the oldest unpinned waveforms', () => {
+    const m = new AppModel(200);
+    m.loadState(defaultSessionState());
+    m.addTables(generatePerlin(DEFAULT_PERLIN, 1, 64), false);
+    m.addTables(generatePerlin(DEFAULT_PERLIN, 2, 20), false);
+    const st = m.exportState();
+    const recs = new Map(encodeWaveforms(st.timeline).map((r) => [r.id, r]));
+    const { state, warnings } = decodeSession(encodeMeta({ model: st, ui: {} }), recs, { cap: 70 });
+    expect(state.model.timeline).toHaveLength(70);
+    expect(warnings.at(-1)).toMatch(/19 oldest waveforms dropped/);
+    // Pinned waveforms (Grid, Last batch) survive; the oldest unpinned went first.
+    const ids = new Set(state.model.timeline.map((t) => t.id));
+    for (const w of state.model.wavetables) if (w.pins) for (const r of w.rows) for (const id of r) if (id !== null) expect(ids.has(id)).toBe(true);
+    expect(ids.has(st.timeline[0].id)).toBe(false);
+    expect(state.model.wavetables[0].rows[0]).toEqual(state.model.timeline.map((t) => t.id));
   });
 });

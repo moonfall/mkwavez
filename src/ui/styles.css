@@ -310,6 +310,21 @@ canvas {
 .session-status-error {
   color: var(--danger);
 }
+.session-kept {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--text-2);
+}
+.session-kept[hidden],
+.session-pop button[hidden] {
+  display: none;
+}
+#session-takeover {
+  margin-bottom: 8px;
+}
 .session-actions {
   display: flex;
   flex-wrap: wrap;

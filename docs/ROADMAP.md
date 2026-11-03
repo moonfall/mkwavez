@@ -192,12 +192,14 @@ Done:
   runs normally with autosave off and a notice.
 - Session menu in the transport bar: New session (confirm; clears the autosave), Export
   / Import one `.mkwz` file (JSON + Float32 samples).
+- One tab autosaves at a time (Web Locks); others are paused and can take over. Orphan
+  records from an interrupted save are never reused; an unrestorable save is set aside
+  intact (exportable); at the storage quota unreferenced records are deleted first.
 
 Open:
 - Undo history isn't saved (it starts empty after a reload / import).
 - Named projects (several saves, a list, rename / delete), save-as; import without
   replacing (merge into the current timeline).
-- Cross-tab coordination (two tabs on one origin both autosave; last writer wins).
 - Seed / Mutate / Breed panel settings (entry, formula edits, amounts) aren't saved.
 - Recipes still have no code-version tag (re-render determinism across versions is only
   checked by a hash for recipe-only waveforms).

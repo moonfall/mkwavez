@@ -620,6 +620,11 @@ export class AppModel {
     };
   }
 
+  /** Allocate future waveform ids at or above `next` (ids already in storage are never reused). */
+  reserveTableIds(next: number): void {
+    if (next > this.tableIds.next) this.tableIds.next = next;
+  }
+
   /**
    * Replace the whole state (restore, import, new session). Clears undo; the transport's
    * play state is kept. Every topic is emitted, timeline first (as for an add).

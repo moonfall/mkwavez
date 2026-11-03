@@ -16,7 +16,7 @@
  * missing / bad waveforms are dropped (with warnings), and anything unusable throws a
  * `SessionError` so the caller can fall back to a fresh session.
  */
-import { MAX_STEPS, TABLE_SIZE } from './constants';
+import { MAX_STEPS, TABLE_SIZE, TIMELINE_CAP } from './constants';
 import { renderRecipe } from './generators';
 import { normalizeSteps, type SequenceData } from './sequence';
 import type { ParamValue, Recipe, TableId, WaveTable } from './table';
@@ -24,6 +24,7 @@ import { DEFAULT_VOICE, clampVoiceWindow, fullWindow, type VoiceParams } from '.
 import {
   builtinWavetables,
   DEFAULT_WRITE,
+  pinnedIds,
   removeTables,
   TIMELINE_WAVETABLE_ID,
   type Slot,
@@ -252,6 +253,8 @@ export interface DecodeOptions {
   migrations?: Readonly<Record<number, Migration>>;
   /** Target schema version (tests). */
   version?: number;
+  /** Timeline cap (default TIMELINE_CAP); the oldest unpinned waveforms beyond it are dropped. */
+  cap?: number;
   cache?: RenderCache;
 }
 
@@ -324,6 +327,27 @@ export function decodeSession(raw: unknown, records: Records, o: DecodeOptions =
     else wavetables.push(b);
   }
   wavetables.push(...decoded.values());
+
+  // Over the cap (e.g. an imported file): drop the oldest unpinned waveforms, as adds do.
+  const cap = o.cap ?? TIMELINE_CAP;
+  if (timeline.length > cap) {
+    const pinned = pinnedIds(wavetables);
+    let excess = timeline.length - cap;
+    const gone = new Set<TableId>();
+    for (const t of timeline) {
+      if (excess <= 0) break;
+      if (!pinned.has(t.id)) {
+        gone.add(t.id);
+        excess--;
+      }
+    }
+    const kept = timeline.filter((t) => !gone.has(t.id));
+    timeline.length = 0;
+    for (const t of kept) timeline.push(t);
+    for (const id of gone) live.delete(id);
+    for (let i = 0; i < wavetables.length; i++) wavetables[i] = removeTables(wavetables[i], gone).wt;
+    warnings.push(`${gone.size} oldest waveform${gone.size === 1 ? '' : 's'} dropped (over the ${cap} limit)`);
+  }
   const wtById = new Map(wavetables.map((w) => [w.id, w]));
 
   // Voices.
@@ -501,6 +525,9 @@ function decodeSequence(raw: unknown, voices: ReadonlySet<number>): SequenceData
 export const FILE_MAGIC = 'MKWZ';
 export const FILE_VERSION = 1;
 export const FILE_EXTENSION = '.mkwz';
+/** Limits on what an imported file may hold (a full session is ~33 MB). */
+export const MAX_FILE_BYTES = 256 * 1024 * 1024;
+export const MAX_FILE_WAVEFORMS = 4 * TIMELINE_CAP;
 
 export function packSessionFile(meta: SessionMeta, records: readonly WaveformRecord[]): Uint8Array {
   let floats = 0;
@@ -530,6 +557,7 @@ export function packSessionFile(meta: SessionMeta, records: readonly WaveformRec
 
 export function unpackSessionFile(bytes: Uint8Array): { meta: unknown; records: Map<TableId, WaveformRecord> } {
   if (bytes.length < 12) throw new SessionError('file is too short');
+  if (bytes.length > MAX_FILE_BYTES) throw new SessionError('file is too large');
   for (let i = 0; i < 4; i++) if (bytes[i] !== FILE_MAGIC.charCodeAt(i)) throw new SessionError('not an mkwavez session file');
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const version = dv.getUint32(4, true);
@@ -543,6 +571,7 @@ export function unpackSessionFile(bytes: Uint8Array): { meta: unknown; records: 
     throw new SessionError('file header is not valid JSON');
   }
   if (!isObj(parsed) || !Array.isArray(parsed.waveforms)) throw new SessionError('file has no waveforms');
+  if (parsed.waveforms.length > MAX_FILE_WAVEFORMS) throw new SessionError('file holds too many waveforms');
   const start = (12 + len + 3) & ~3;
   const totalFloats = Math.max(0, Math.floor((bytes.length - start) / 4));
   const records = new Map<TableId, WaveformRecord>();
@@ -551,7 +580,8 @@ export function unpackSessionFile(bytes: Uint8Array): { meta: unknown; records: 
     const { offset, length, ...rest } = w;
     let rec = rest as unknown as WaveformRecord;
     if (isInt(offset) && isInt(length)) {
-      if (offset < 0 || length < 0 || offset + length > totalFloats) continue;
+      // Every waveform is exactly TABLE_SIZE samples; anything else is dropped unread.
+      if (length !== TABLE_SIZE || offset < 0 || offset + length > totalFloats) continue;
       const s = new Float32Array(length);
       for (let i = 0; i < length; i++) s[i] = dv.getFloat32(start + (offset + i) * 4, true);
       rec = { ...rec, samples: s };
