@@ -920,22 +920,25 @@ async function mutateChecks(page, tlCount, label) {
   assert((await page.textContent('#mutate-src-no')).trim() === `#${src.idx + 1}`, `source chip shows the selection (#${src.idx + 1})`);
 
   // Library.
+  // Offered mutations (core/mutations.ts MUTATION_CHOICES) and the seeded ones among them.
+  const MUTATION_COUNT = 33;
+  const SEEDED = 'toNoise,ring,nwarp,formant,multiples,phaseRandom,jitter,scramble';
   const all = await visibleIds();
-  assert(all.length === 23 && !all.includes('breed'), 'library lists 23 mutations (legacy Breed hidden)');
-  assert((await page.$$('#mutate-list .gen-tag')).length === 6, 'six seeded mutations tagged rnd');
+  assert(all.length === MUTATION_COUNT && !all.includes('breed'), `library lists ${MUTATION_COUNT} mutations (legacy Breed hidden)`);
+  assert((await page.$$('#mutate-list .gen-tag')).length === SEEDED.split(',').length, 'seeded mutations tagged rnd');
   assert((await title()) === 'Waveshape › Fold' && (await page.textContent('#mutate-hint')).includes('gain 1 + 3a · 0% = unchanged'), 'Group › Name and its amount mapping');
   assert(!(await page.isVisible('#mutate-seedbox')), 'no seed / Reroll for an unseeded mutation');
   await waitInk(page, '#mutate-list .gen-entry[data-id="foldSmooth"] canvas');
   assert(true, 'library thumbnails render');
   await page.fill('#mutate-search', 'SPECTRAL');
-  assert((await visibleIds()).length === 7, 'search matches the group');
+  assert((await visibleIds()).length === 14, 'search matches the group');
   await page.fill('#mutate-search', 'seeded');
   const seededIds = await visibleIds();
-  assert(seededIds.join() === 'toNoise,ring,nwarp,formant,jitter,scramble', `search matches mapping hints (${seededIds.join()})`);
+  assert(seededIds.join() === SEEDED, `search matches mapping hints (${seededIds.join()})`);
   await page.fill('#mutate-search', 'zzzz');
   assert((await page.isVisible('#mutate-empty')) && !(await visibleIds()).length, 'no-matches state');
   await page.press('#mutate-search', 'Escape');
-  assert((await visibleIds()).length === 23, 'Escape clears the search');
+  assert((await visibleIds()).length === MUTATION_COUNT, 'Escape clears the search');
   await page.fill('#mutate-search', 'warp');
   await page.press('#mutate-search', 'ArrowDown');
   assert((await title()) === 'Waveshape › Phase warp' && (await focusedId()) === 'warp', 'ArrowDown moves into the results');
