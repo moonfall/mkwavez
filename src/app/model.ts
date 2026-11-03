@@ -9,7 +9,23 @@ import type { ModelState } from '../core/session';
 import { DEFAULT_STEP_LENGTH, emptySteps, isStepLength, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
-import { clampVoiceWindow, DEFAULT_VOICE, followEdit, fullWindow, voiceWindow, type VoiceParams } from '../core/voice';
+import { MAX_USER_PRESETS, presetPatch, resolvePresetWavetable, soundOf as presetSoundOf, type PresetSound, type VoicePreset } from '../core/presets';
+
+import { DEFAULT_SYNTH, SYNTH_AMP_DEFAULTS, type VoiceType } from '../core/synth';
+
+import {
+  applyVoicePatch,
+  clampOscB,
+  clampVoiceWindow,
+  DEFAULT_VOICE,
+  followEdit,
+  fullWindow,
+  oscASource,
+  rehomeVoice,
+  voiceWindow,
+  type VoicePatch,
+  type VoiceParams,
+} from '../core/voice';
 import {
   builtinWavetables,
   cellAt,
@@ -17,6 +33,7 @@ import {
   composeMaps,
   duplicateWavetable,
   FIRST_USER_WAVETABLE_ID,
+  LAST_BATCH_WAVETABLE_ID,
   moveSlot,
   newWavetable,
   normalizeWrite,
@@ -58,12 +75,20 @@ export type Topic =
   | 'transport'
   | 'undo'
   | 'parents'
-  | 'notice';
+  | 'notice'
+  | 'presets';
 
 export const MAX_VOICES = 8;
 
 type Windows = Pick<VoiceParams, 'wavetableId' | 'windowStart' | 'windowEnd' | 'windowStartY' | 'windowEndY'>;
 const WINDOW_KEYS = ['windowStart', 'windowEnd', 'windowStartY', 'windowEndY'] as const;
+/**
+ * Voice fields the Synth voice panel edits: on a Synth voice an edit of any of them is an
+ * undo step (a slider drag is one), and undo restores them. A type switch is an undo step
+ * on any voice. (Simple voices' slider moves stay non-undoable, as before.)
+ */
+const SYNTH_UNDO_KEYS = ['type', 'synth', 'attack', 'decay', 'sustain', 'release', 'level', 'octave', 'position', 'positionY'] as const;
+type SynthSound = Pick<VoiceParams, (typeof SYNTH_UNDO_KEYS)[number]>;
 
 interface Snapshot {
   timeline: readonly WaveTable[];
@@ -71,6 +96,15 @@ interface Snapshot {
   wavetables: readonly Wavetable[];
   selectedId: TableId | null;
   windows: Map<number, Windows>;
+  /** Osc B's wavetable and windows per voice (adds / wavetable edits move them, like osc A's). */
+  bWindows: Map<number, Windows>;
+  /**
+   * The sound of the one voice the undone action edits (a synth edit, type switch, preset,
+   * paste): its type, synth block and, on a Synth voice, the shared params the Synth panel
+   * edits. Other voices' sounds are never touched by undo (so live, non-undoable changes such
+   * as MIDI controller moves survive undoing something else).
+   */
+  sound: { id: number; sound: SynthSound } | null;
   steps: Map<number, readonly number[]>;
 }
 
@@ -91,6 +125,8 @@ export class AppModel {
   nextWavetableId: WavetableId = FIRST_USER_WAVETABLE_ID;
   /** The last notice (see the 'notice' topic). */
   notice = '';
+  /** User voice presets (saved with the session; topic 'presets'). Factory presets live in core/presets.ts. */
+  voicePresets: readonly VoicePreset[] = [];
   readonly cap: number;
   private room: { tl: unknown; wts: unknown; n: number; ok: boolean } | null = null;
 
@@ -244,7 +280,7 @@ export class AppModel {
     return `Timeline full: all ${this.timeline.length} waveforms are used by wavetables — remove some from ${names.join(', ') || 'your wavetables'}.`;
   }
 
-  private setNotice(msg: string): void {
+  setNotice(msg: string): void {
     this.notice = msg;
     this.emit('notice');
   }
@@ -340,20 +376,30 @@ export class AppModel {
 
   // ---- voices ----
 
-  /** Add a voice (on the Timeline unless `patch` says otherwise; window = whole wavetable). */
+  /**
+   * Add a voice (on the Timeline unless `patch` says otherwise; window = whole wavetable).
+   * A Synth voice (`type: 'synth'`) starts from the Init patch with osc B on osc A's
+   * wavetable and window (unless `patch.synth` says otherwise) and synth amp defaults.
+   */
   addVoice(patch: Partial<VoiceParams> = {}): VoiceParams | null {
     if (this.voices.length >= MAX_VOICES) return null;
     const id = this.nextVoiceId++;
     const wt = this.wavetable(patch.wavetableId ?? TIMELINE_WAVETABLE_ID) ?? this.wavetables[0];
+    const type: VoiceType = patch.type === 'synth' ? 'synth' : 'simple';
     let v: VoiceParams = {
       ...DEFAULT_VOICE,
+      ...(type === 'synth' ? SYNTH_AMP_DEFAULTS : {}),
       ...fullWindow(wt),
       ...patch,
+      type,
       wavetableId: wt.id,
       id,
       name: patch.name ?? `V${id}`,
     };
     v = clampVoiceWindow(v, wt);
+    if (!patch.synth) v = { ...v, synth: { ...DEFAULT_SYNTH, b: { ...oscASource(v), position: Math.min(1, v.position + 0.25) } } };
+    v = rehomeVoice(v, (x) => !!this.wavetable(x), this.wavetable(TIMELINE_WAVETABLE_ID)!);
+    v = clampOscB(v, this.wavetable(v.synth.b.wavetableId)!);
     this.voices = [...this.voices, v];
     this.emit('voices');
     return v;
@@ -364,23 +410,39 @@ export class AppModel {
    * be snapshotted too); a drag is one step until endGesture() or another action.
    * Switching wavetable (without an explicit window) selects the whole new wavetable.
    */
-  updateVoice(id: number, patch: Partial<VoiceParams>): void {
+  updateVoice(id: number, patch: VoicePatch, opts: { undo?: boolean } = {}): void {
+    // A wavetable that doesn't exist is ignored (never an empty undo step).
+    if (patch.wavetableId !== undefined && !this.wavetable(patch.wavetableId)) {
+      const { wavetableId: _w, ...rest } = patch;
+      patch = rest;
+    }
+    if (!this.voice(id) || !Object.keys(patch).length) return;
     const windowEdit = WINDOW_KEYS.some((k) => k in patch);
     const v0 = this.voice(id);
     // Switching wavetable is an undo step (undo puts the voice back, window and all).
     const switching = !!v0 && patch.wavetableId !== undefined && patch.wavetableId !== v0.wavetableId && !!this.wavetable(patch.wavetableId);
-    if (switching) this.snapshot();
+    // Synth voices: edits from the panel are undo steps (a drag is one, see endGesture); a
+    // type switch is one on any voice. MIDI controller moves pass `undo: false`.
+    const synthEdit =
+      !!v0 &&
+      opts.undo !== false &&
+      ((patch.type !== undefined && patch.type !== v0.type) || ((v0.type === 'synth' || patch.type === 'synth') && SYNTH_UNDO_KEYS.some((k) => k in patch)));
+    if (switching) this.snapshot(synthEdit ? id : null);
     else if (windowEdit && this.gestureKey !== `window:${id}`) {
-      this.snapshot();
+      this.snapshot(synthEdit ? id : null);
       this.gestureKey = `window:${id}`;
+    } else if (synthEdit && !windowEdit && this.gestureKey !== `synth:${id}`) {
+      this.snapshot(id);
+      this.gestureKey = `synth:${id}`;
     }
     let changed = false;
     this.voices = this.voices.map((v) => {
       if (v.id !== id) return v;
-      let next: VoiceParams = { ...v, ...patch, id };
+      let next: VoiceParams = { ...applyVoicePatch(v, patch), id };
       const wt = this.wavetable(next.wavetableId);
       if (!wt) return v;
       if (next.wavetableId !== v.wavetableId && !windowEdit) next = { ...next, ...fullWindow(wt) };
+      next = this.fixOscB(v, next, patch);
       const ordered = (a: 'windowStart' | 'windowStartY', b: 'windowEnd' | 'windowEndY') => {
         // Keep start <= end by pushing the other handle, not the one being dragged.
         if (next[a] > next[b]) next = b in patch && !(a in patch) ? { ...next, [a]: next[b] } : { ...next, [b]: next[a] };
@@ -392,12 +454,125 @@ export class AppModel {
       changed = true;
       return next;
     });
-    if (changed) this.emit('voices', ...(windowEdit || switching ? (['undo'] as Topic[]) : []));
+    if (changed) this.emit('voices', ...(windowEdit || switching || synthEdit ? (['undo'] as Topic[]) : []));
+  }
+
+  /**
+   * Osc B after an edit: a new wavetable selects all of it (unless the patch sets its
+   * window), the window is rounded, clamped and ordered (pushing the other handle), and a
+   * missing wavetable falls back to the Timeline.
+   */
+  private fixOscB(v: VoiceParams, next: VoiceParams, patch: VoicePatch): VoiceParams {
+    const pb = patch.synth?.b;
+    let b = next.synth.b;
+    if (b === v.synth.b) return next;
+    const bwt = this.wavetable(b.wavetableId);
+    if (!bwt) return rehomeVoice(next, (x) => !!this.wavetable(x), this.wavetable(TIMELINE_WAVETABLE_ID)!);
+    const old = v.synth.b;
+    const winEdit = !!pb && WINDOW_KEYS.some((k) => pb[k] !== old[k]);
+    if (b.wavetableId !== old.wavetableId && !winEdit) b = { ...b, ...fullWindow(bwt) };
+    b = { ...b, windowStart: Math.round(b.windowStart), windowEnd: Math.round(b.windowEnd), windowStartY: Math.round(b.windowStartY), windowEndY: Math.round(b.windowEndY) };
+    const xLen = bwt.shape === 'rows' ? 1 : Math.max(1, bwt.rows[0]?.length ?? 0);
+    const yLen = bwt.shape === '1d' ? 1 : Math.max(1, bwt.rows.length);
+    const c = (x: number, len: number) => Math.max(0, Math.min(len - 1, x));
+    b = { ...b, windowStart: c(b.windowStart, xLen), windowEnd: c(b.windowEnd, xLen), windowStartY: c(b.windowStartY, yLen), windowEndY: c(b.windowEndY, yLen) };
+    const ordered = (s: 'windowStart' | 'windowStartY', e: 'windowEnd' | 'windowEndY') => {
+      if (b[s] <= b[e]) return;
+      const movedEnd = pb && pb[e] !== old[e] && pb[s] === old[s];
+      b = movedEnd ? { ...b, [s]: b[e] } : { ...b, [e]: b[s] };
+    };
+    ordered('windowStart', 'windowEnd');
+    ordered('windowStartY', 'windowEndY');
+    return { ...next, synth: { ...next.synth, b } };
   }
 
   /** End a coalesced gesture (slider released). */
   endGesture(): void {
     this.gestureKey = null;
+  }
+
+  // ---- voice presets ----
+
+  /**
+   * Apply a preset's sound to a voice (it becomes a Synth voice). One undo step. Its
+   * wavetables are found by reference (built-in kind, or your wavetable's name + shape);
+   * one that isn't in this session falls back to Last batch, with a notice.
+   */
+  applyPreset(voiceId: number, sound: PresetSound, name = 'Preset'): void {
+    if (!this.voice(voiceId)) return;
+    const missing: string[] = [];
+    const fallback = this.wavetable(LAST_BATCH_WAVETABLE_ID)!;
+    const pick = (id: number, ref: PresetSound['aRef'], osc: string) => {
+      const wt = resolvePresetWavetable(this.wavetables, id, ref);
+      if (wt) return wt.id;
+      missing.push(`osc ${osc} (“${ref?.name ?? `#${id}`}”)`);
+      return fallback.id;
+    };
+    const aId = pick(sound.a.wavetableId, sound.aRef, 'A');
+    const bId = pick(sound.synth.b.wavetableId, sound.bRef, 'B');
+    const patch = presetPatch({ ...sound, a: { ...sound.a, wavetableId: aId }, synth: { ...sound.synth, b: { ...sound.synth.b, wavetableId: bId } } });
+    this.updateVoice(voiceId, patch);
+    this.endGesture();
+    if (missing.length) this.setNotice(`${name}: wavetable not in this session for ${missing.join(' and ')} — playing Last batch instead.`);
+  }
+
+  /** How many of these presets refer to a wavetable this session doesn't have. */
+  presetsMissingWavetables(list: readonly VoicePreset[]): number {
+    return list.filter(
+      (p) => !resolvePresetWavetable(this.wavetables, p.sound.a.wavetableId, p.sound.aRef) || !resolvePresetWavetable(this.wavetables, p.sound.synth.b.wavetableId, p.sound.bRef),
+    ).length;
+  }
+
+  /** Save a voice's sound as a user preset (name trimmed, made unique). */
+  savePreset(voiceId: number, name: string): VoicePreset | null {
+    const v = this.voice(voiceId);
+    if (!v || this.voicePresets.length >= MAX_USER_PRESETS) return null;
+    const p: VoicePreset = { id: this.presetId(), name: this.presetName(name), sound: presetSoundOf(v, (id) => this.wavetable(id)) };
+    this.voicePresets = [...this.voicePresets, p];
+    this.emit('presets');
+    return p;
+  }
+
+  deletePreset(id: string): void {
+    if (!this.voicePresets.some((p) => p.id === id)) return;
+    this.voicePresets = this.voicePresets.filter((p) => p.id !== id);
+    this.emit('presets');
+  }
+
+  /** Add presets (an imported file): fresh ids, unique names, up to the limit. Returns how many were added. */
+  importPresets(list: readonly VoicePreset[]): number {
+    let n = 0;
+    for (const p of list) {
+      if (this.voicePresets.length >= MAX_USER_PRESETS) break;
+      this.voicePresets = [...this.voicePresets, { ...p, id: this.presetId(), name: this.presetName(p.name) }];
+      n++;
+    }
+    if (n) this.emit('presets');
+    return n;
+  }
+
+  /** Copy another voice's settings onto a voice (everything but its id, name and mute). Undoable on Synth voices. */
+  pasteVoice(voiceId: number, from: VoiceParams): void {
+    if (!this.voice(voiceId)) return;
+    const { id: _id, name: _name, mute: _mute, ...rest } = from;
+    this.updateVoice(voiceId, rest);
+    this.endGesture();
+  }
+
+  private presetId(): string {
+    let n = 1;
+    for (const p of this.voicePresets) {
+      const m = /^user-(\d+)$/.exec(p.id);
+      if (m) n = Math.max(n, Number(m[1]) + 1);
+    }
+    return `user-${n}`;
+  }
+
+  private presetName(name: string): string {
+    const base = name.trim().slice(0, 40) || 'Preset';
+    const used = new Set(this.voicePresets.map((p) => p.name));
+    if (!used.has(base)) return base;
+    for (let i = 2; ; i++) if (!used.has(`${base} ${i}`)) return `${base} ${i}`;
   }
 
   removeVoice(id: number): void {
@@ -459,10 +634,10 @@ export class AppModel {
     return id;
   }
 
-  /** Voices whose wavetable is gone move to the Timeline (whole window). */
+  /** Voices whose wavetable (osc A or B) is gone move that oscillator to the Timeline (whole window). */
   private rehomeVoices(): void {
     const tl = this.wavetable(TIMELINE_WAVETABLE_ID)!;
-    this.voices = this.voices.map((v) => (this.wavetable(v.wavetableId) ? v : clampVoiceWindow({ ...v, wavetableId: tl.id, ...fullWindow(tl) }, tl)));
+    this.voices = this.voices.map((v) => rehomeVoice(v, (id) => !!this.wavetable(id), tl));
   }
 
   /** `base`, or `base 2`, `base 3`, … — the first name no wavetable has. */
@@ -620,6 +795,7 @@ export class AppModel {
       selectedId: this.selectedId,
       breedParents: this.breedParents,
       bpm: this.bpm,
+      voicePresets: this.voicePresets,
     };
   }
 
@@ -648,18 +824,23 @@ export class AppModel {
     this.selectedId = s.selectedId !== null && this.byId.has(s.selectedId) ? s.selectedId : (s.timeline.at(-1)?.id ?? null);
     this.breedParents = s.breedParents.filter((id) => this.byId.has(id)).slice(0, MAX_PARENTS);
     this.bpm = Math.max(40, Math.min(300, s.bpm));
-    this.emit('timeline', 'wavetables', 'voices', 'sequences', 'selection', 'transport', 'undo', 'parents');
+    this.voicePresets = s.voicePresets ?? [];
+    this.emit('timeline', 'wavetables', 'voices', 'sequences', 'selection', 'transport', 'undo', 'parents', 'presets');
   }
 
   // ---- undo ----
 
-  private snapshot(): void {
+  /** Push an undo step; `soundVoice` = the voice whose sound this action edits (see Snapshot.sound). */
+  private snapshot(soundVoice: number | null = null): void {
     this.gestureKey = null;
+    const sv = soundVoice === null ? undefined : this.voice(soundVoice);
     this.undoStack.push({
       timeline: this.timeline,
       selectedId: this.selectedId,
       wavetables: this.wavetables,
       windows: new Map(this.voices.map((v) => [v.id, windowsOf(v)])),
+      bWindows: new Map(this.voices.map((v) => [v.id, windowsOf(v.synth.b)])),
+      sound: sv ? { id: sv.id, sound: soundOf(sv) } : null,
       steps: new Map(this.sequences.map((s) => [s.id, s.steps])),
     });
     if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift();
@@ -684,9 +865,16 @@ export class AppModel {
     // too); a voice whose wavetable no longer exists (an undone create) moves to the Timeline.
     this.voices = this.voices.map((v) => {
       const w = s.windows.get(v.id);
-      const next = w && this.wavetable(w.wavetableId) ? { ...v, ...w } : v;
+      let next = w && this.wavetable(w.wavetableId) ? { ...v, ...w } : v;
+      const bw = s.bWindows.get(next.id);
+      if (bw && this.wavetable(bw.wavetableId)) next = { ...next, synth: { ...next.synth, b: { ...next.synth.b, ...bw } } };
+      // The edited voice's sound: type and synth block; the shared params only if it was a Synth voice.
+      const snd = s.sound?.id === next.id ? s.sound.sound : undefined;
+      if (snd) next = snd.type === 'synth' ? { ...next, ...snd } : { ...next, type: snd.type, synth: snd.synth };
       const wt = this.wavetable(next.wavetableId);
-      return wt ? clampVoiceWindow(next, wt) : next;
+      if (wt) next = clampVoiceWindow(next, wt);
+      const bwt = this.wavetable(next.synth.b.wavetableId);
+      return bwt ? clampOscB(next, bwt) : next;
     });
     this.rehomeVoices();
     this.sequences = this.sequences.map((q) => {
@@ -702,7 +890,24 @@ export class AppModel {
   }
 }
 
-function windowsOf(v: VoiceParams): Windows {
+function soundOf(v: VoiceParams): SynthSound {
+  return {
+    type: v.type,
+    synth: v.synth,
+    attack: v.attack,
+    decay: v.decay,
+    sustain: v.sustain,
+    release: v.release,
+    level: v.level,
+    octave: v.octave,
+    position: v.position,
+    positionY: v.positionY,
+  };
+}
+
+function windowsOf(v: Windows): Windows {
+
+
   return { wavetableId: v.wavetableId, windowStart: v.windowStart, windowEnd: v.windowEnd, windowStartY: v.windowStartY, windowEndY: v.windowEndY };
 }
 

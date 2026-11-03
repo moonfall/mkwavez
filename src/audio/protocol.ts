@@ -2,7 +2,7 @@
 import type { EngineStatus } from '../core/engine/engine';
 import type { CcMap, MidiVoiceEvent } from '../core/midi';
 import type { SequenceData } from '../core/sequence';
-import type { VoiceParams } from '../core/voice';
+import type { VoicePatch, VoiceParams } from '../core/voice';
 import type { PackedWavetable } from '../core/wavetablePlayback';
 
 export const PROCESSOR_NAME = 'mkwavez-engine';
@@ -19,7 +19,7 @@ export type ToWorklet =
   | { type: 'voice/set'; voice: VoiceParams }
   | { type: 'voice/remove'; id: number }
   /** A few params of one voice (MIDI CCs), without resending the whole voice. */
-  | { type: 'voice/patch'; id: number; patch: Partial<VoiceParams> }
+  | { type: 'voice/patch'; id: number; patch: VoicePatch }
   | { type: 'sequence/set'; sequence: SequenceData }
   | { type: 'sequence/remove'; id: number }
   | { type: 'transport'; playing: boolean; bpm: number }

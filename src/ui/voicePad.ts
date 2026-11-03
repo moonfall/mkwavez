@@ -30,9 +30,9 @@ function rowSpan(wt: Wavetable, v: VoiceParams): [number, number] {
  * dot's X is the same fraction of every row (how the engine aligns rows). The cell layer is
  * cached and rebuilt only when the wavetable, size, visible rows or theme change.
  */
-export function createVoicePad(model: AppModel, bridge: AudioBridge) {
+export function createVoicePad(model: AppModel, bridge: AudioBridge, id = 'voice-pad') {
   const canvas = document.createElement('canvas');
-  canvas.id = 'voice-pad';
+  canvas.id = id;
   canvas.setAttribute('role', 'img');
   const base = document.createElement('canvas');
   let baseKey = '';
@@ -89,8 +89,12 @@ export function createVoicePad(model: AppModel, bridge: AudioBridge) {
     }
   };
 
-  /** Draw for voice v on wavetable wt (2D or Rows) at CSS height hh. */
-  const draw = (v: VoiceParams, wt: Wavetable, hh: number) => {
+  /**
+   * Draw for voice v on wavetable wt (2D or Rows) at CSS height hh. `o.pos` / `o.mix`
+   * override where the dot comes from (a Synth voice's osc B: pass a voice-shaped view of
+   * its source with no LFO, its live position and its mix).
+   */
+  const draw = (v: VoiceParams, wt: Wavetable, hh: number, o: { pos?: { x: number; y: number; live: boolean }; mix?: (out: Mix) => Mix } = {}) => {
     const [g, w, H] = fit(canvas, hh);
     const rows = rowSpan(wt, v);
     const dpr = window.devicePixelRatio || 1;
@@ -150,11 +154,12 @@ export function createVoicePad(model: AppModel, bridge: AudioBridge) {
     g.setLineDash([]);
     g.globalAlpha = 1;
     // Dot: the played position (the chosen cell in Step).
-    const pos = voicePositions(model, bridge, v);
+    const pos = o.pos ?? voicePositions(model, bridge, v);
     let dx = px(pos.x, pos.y);
     let dy = py(pos.y);
     if (wt.interp === 'step') {
-      const m = playingMix(model, bridge, v, mix);
+      const m = o.mix ? o.mix(mix) : playingMix(model, bridge, v, mix);
+
       if (m.n) {
         const L = isRows ? Math.max(1, wt.rows[m.y]?.length ?? 1) : W;
         dx = isRows ? ((m.x + 0.5) / L) * w : (m.x + 0.5) * cw;

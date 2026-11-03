@@ -19,8 +19,11 @@
 import { MAX_STEPS, TABLE_SIZE, TIMELINE_CAP } from './constants';
 import { renderRecipe } from './generators';
 import { DEFAULT_STEP_LENGTH, normalizeSteps, type SequenceData, stepLengthOf } from './sequence';
+import { normalizePresets, type VoicePreset } from './presets';
+import { isVoiceType, normalizeSynth } from './synth';
+
 import type { ParamValue, Recipe, TableId, WaveTable } from './table';
-import { DEFAULT_VOICE, clampVoiceWindow, fullWindow, type VoiceParams } from './voice';
+import { DEFAULT_VOICE, clampOscB, clampVoiceWindow, oscASource, rehomeVoice, type VoiceParams } from './voice';
 import {
   builtinWavetables,
   DEFAULT_WRITE,
@@ -39,9 +42,11 @@ import {
 /**
  * Current meta schema version. Bump it and add a migration when the shape changes.
  * 1: first schema. 2: `nextWavetableId` (user wavetables, monotonic ids). 3: per-sequence
- * `stepLength` (earlier sessions played eighth notes: they migrate to '1/8').
+ * `stepLength` (earlier sessions played eighth notes: they migrate to '1/8'). 4: voice
+ * `type` ('simple' | 'synth') and `synth` params (earlier voices migrate to 'simple', which
+ * sounds exactly as before; missing synth params take the Init patch).
  */
-export const SESSION_VERSION = 3;
+export const SESSION_VERSION = 4;
 export const SESSION_FORMAT = 'mkwavez-session';
 /** Voices a session may hold (matches AppModel.MAX_VOICES). */
 const MAX_VOICES = 8;
@@ -60,6 +65,8 @@ export interface ModelState {
   readonly selectedId: TableId | null;
   readonly breedParents: readonly TableId[];
   readonly bpm: number;
+  /** User voice presets (missing in older sessions: none). */
+  readonly voicePresets?: readonly VoicePreset[];
 }
 
 /** UI prefs saved with the session (selected voice tab, open tabs, ...). JSON values only. */
@@ -89,6 +96,8 @@ export interface SessionMeta {
   readonly nextSeqId: number;
   readonly bpm: number;
   readonly ui: UiPrefs;
+  /** User voice presets (optional: added without a schema bump; missing = none). */
+  readonly voicePresets?: readonly VoicePreset[];
 }
 
 export type WaveformEncoding = 'samples' | 'recipe' | 'ref';
@@ -137,6 +146,7 @@ export function encodeMeta(s: SessionState, savedAt = 0): SessionMeta {
     nextSeqId: m.nextSeqId,
     bpm: m.bpm,
     ui: s.ui,
+    voicePresets: m.voicePresets ?? [],
   };
 }
 
@@ -246,6 +256,13 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
     ...m,
     version: 3,
     sequences: Array.isArray(m.sequences) ? m.sequences.map((s: unknown) => (isObj(s) ? { ...s, stepLength: DEFAULT_STEP_LENGTH } : s)) : m.sequences,
+  }),
+  // 3 → 4: voice types. Every earlier voice is a Simple voice (its synth block is filled
+  // with the Init patch when decoded; osc B starts on osc A's wavetable and window).
+  3: (m) => ({
+    ...m,
+    version: 4,
+    voices: Array.isArray(m.voices) ? m.voices.map((v: unknown) => (isObj(v) ? { ...v, type: 'simple' } : v)) : m.voices,
   }),
 };
 
@@ -429,6 +446,7 @@ export function decodeSession(raw: unknown, records: Records, o: DecodeOptions =
         selectedId,
         breedParents,
         bpm,
+        voicePresets: normalizePresets(m.voicePresets),
       },
       ui: isObj(m.ui) ? m.ui : {},
     },
@@ -549,16 +567,18 @@ function decodeVoice(raw: unknown, wavetables: ReadonlyMap<number, Wavetable>): 
     out[k] = typeof v === typeof def && (typeof v !== 'number' || Number.isFinite(v)) ? v : def;
   }
   out.name = typeof raw.name === 'string' ? raw.name : `V${raw.id}`;
+  out.type = isVoiceType(raw.type) ? raw.type : 'simple';
   let v = out as unknown as VoiceParams;
-  const wt = wavetables.get(v.wavetableId);
-  if (!wt) {
-    const tl = wavetables.get(TIMELINE_WAVETABLE_ID)!;
-    v = { ...v, wavetableId: tl.id, ...fullWindow(tl) };
-    return clampVoiceWindow(v, tl);
-  }
   const round = { windowStart: Math.round(v.windowStart), windowEnd: Math.round(v.windowEnd), windowStartY: Math.round(v.windowStartY), windowEndY: Math.round(v.windowEndY) };
-  return clampVoiceWindow({ ...v, ...round }, wt);
+  v = { ...v, ...round };
+  // Osc B defaults to osc A's wavetable / window / position (a voice saved before Synth voices).
+  v = { ...v, synth: normalizeSynth(raw.synth, oscASource(v)) };
+  const tl = wavetables.get(TIMELINE_WAVETABLE_ID)!;
+  v = rehomeVoice(v, (id) => wavetables.has(id), tl);
+  v = clampVoiceWindow(v, wavetables.get(v.wavetableId)!);
+  return clampOscB(v, wavetables.get(v.synth.b.wavetableId)!);
 }
+
 
 function decodeSequence(raw: unknown, voices: ReadonlySet<number>): SequenceData | null {
   if (!isObj(raw) || !isInt(raw.id)) return null;

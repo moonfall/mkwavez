@@ -1,6 +1,7 @@
 import { MAX_VOICES } from '../app/model';
 import { TABLE_SIZE } from '../core/constants';
 import { LFO_RATE_MAX, LFO_RATE_MIN } from '../core/midi';
+import type { VoiceType } from '../core/synth';
 import type { VoiceParams } from '../core/voice';
 import { shapeLabel } from '../core/wavetable';
 import { Mix } from '../core/wavetablePlayback';
@@ -9,6 +10,8 @@ import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './c
 import { h, icon, ICONS, panel, slider, voiceColorVar, type Slider } from './dom';
 import { playingMix } from './playing';
 import { SHORTCUTS } from './shortcuts';
+import { buildCopyPaste } from './presets';
+import { buildSynthPanel } from './synthPanel';
 import { createVoicePad } from './voicePad';
 
 const OCT_MIN = -2;
@@ -50,7 +53,63 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
     id: 'voice-tabs',
     'aria-keyshortcuts': `${SHORTCUTS.prevVoice} ${SHORTCUTS.nextVoice}`,
   });
-  const addBtn = h('button', { id: 'add-voice', class: 'small icon-btn', 'aria-label': 'Add voice', title: 'Add voice', onclick: () => addVoice() }, icon(ICONS.plus));
+  const addBtn = h(
+    'button',
+    { id: 'add-voice', class: 'small icon-btn', 'aria-label': 'Add voice', title: 'Add voice (Synth or Simple)', 'aria-haspopup': 'menu', 'aria-expanded': 'false' },
+    icon(ICONS.plus),
+  );
+  // "+": a small menu — Synth (two oscillators, filter, envelopes) or Simple (one wavetable oscillator).
+  const addMenu = h(
+    'div',
+    { id: 'add-voice-menu', class: 'add-voice-menu', role: 'menu', hidden: true },
+    h('button', { id: 'add-voice-synth', role: 'menuitem', onclick: () => addVoice('synth') }, h('b', {}, 'Synth voice'), h('span', {}, 'Two oscillators, sub, noise, filter, envelopes')),
+    h('button', { id: 'add-voice-simple', role: 'menuitem', onclick: () => addVoice('simple') }, h('b', {}, 'Simple voice'), h('span', {}, 'One wavetable oscillator with position LFOs')),
+  );
+  document.body.append(addMenu);
+  const closeMenu = () => {
+    if (addMenu.hidden) return;
+    addMenu.hidden = true;
+    addBtn.setAttribute('aria-expanded', 'false');
+  };
+  addBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!addMenu.hidden) return closeMenu();
+    const r = addBtn.getBoundingClientRect();
+    addMenu.hidden = false;
+    addBtn.setAttribute('aria-expanded', 'true');
+    const mw = addMenu.offsetWidth;
+    const mh = addMenu.offsetHeight;
+    addMenu.style.left = `${Math.max(8, Math.min(innerWidth - mw - 8, r.left))}px`;
+    addMenu.style.top = `${r.bottom + 4 + mh > innerHeight ? Math.max(8, r.top - mh - 4) : r.bottom + 4}px`;
+    (addMenu.firstElementChild as HTMLElement).focus();
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (!addMenu.contains(e.target as Node) && e.target !== addBtn && !addBtn.contains(e.target as Node)) closeMenu();
+  });
+  addMenu.addEventListener('keydown', (e) => {
+    const items = [...addMenu.querySelectorAll('button')];
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'Escape') {
+      closeMenu();
+      addBtn.focus();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+    }
+  });
+  // Voice type: switching a sounding voice crossfades (click-free); undoable.
+  const typeSel = h(
+    'select',
+    { id: 'voice-type', class: 'voice-type', 'aria-label': 'Voice type', title: 'Voice type: Synth (two oscillators, filter, envelopes) or Simple (one wavetable oscillator)' },
+    h('option', { value: 'synth' }, 'Synth'),
+    h('option', { value: 'simple' }, 'Simple'),
+  );
+  const typeSlot = h('span', { class: 'voice-type-slot' });
+  typeSel.addEventListener('change', () => {
+
+    set({ type: typeSel.value === 'synth' ? 'synth' : 'simple' });
+    model.endGesture();
+  });
   const muteBtn = h('button', { id: 'voice-mute', class: 'small', 'aria-keyshortcuts': SHORTCUTS.mute, onclick: () => set({ mute: !cur()?.mute }) });
   const removeBtn = h('button', {
     id: 'voice-remove',
@@ -61,8 +120,9 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
   });
   sec.tools.append(tabs, addBtn, h('span', { class: 'grow' }), muteBtn, removeBtn);
 
-  const addVoice = () => {
-    const v = model.addVoice();
+  const addVoice = (type: VoiceType) => {
+    closeMenu();
+    const v = model.addVoice({ type });
     if (!v) return;
     model.addSequence(v.id);
     ui.setVoice(v.id);
@@ -185,6 +245,9 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
   watchVisibility(scope);
   watchVisibility(pad.canvas);
 
+  const synthPanel = buildSynthPanel(model, bridge, ui);
+  const copyPaste = buildCopyPaste(model, cur);
+  synthPanel.el.hidden = true;
   const empty = h('p', { class: 'hint voice-empty', hidden: true }, 'No voices. Add one with +.');
   const body = h(
     'div',
@@ -203,9 +266,9 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
       rows2d,
       h('div', { class: 'vrows' }, level.el),
     ),
-    h('div', { class: 'voice-side' }, padBox, scopeBox, envBox, h('div', { class: 'vrows vrows-adsr' }, att.el, dec.el, sus.el, rel.el)),
+    h('div', { class: 'voice-side' }, h('div', { class: 'voice-type-row' }, copyPaste.copy, copyPaste.paste, typeSlot), padBox, scopeBox, envBox, h('div', { class: 'vrows vrows-adsr' }, att.el, dec.el, sus.el, rel.el)),
   );
-  sec.body.append(empty, body);
+  sec.body.append(empty, body, synthPanel.el);
 
   let dirtyScope = true;
   let dirtyEnv = true;
@@ -222,10 +285,30 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
     addBtn.disabled = model.voices.length >= MAX_VOICES;
     sec.meta.textContent = `${model.voices.length} / ${MAX_VOICES}`;
     const v = cur();
-    body.hidden = !v;
+    const synth = v?.type === 'synth';
+    body.hidden = !v || synth;
+    synthPanel.el.hidden = !v || !synth;
     empty.hidden = !!v;
-    muteBtn.hidden = removeBtn.hidden = !v;
+    muteBtn.hidden = removeBtn.hidden = typeSel.hidden = !v;
     if (!v) return;
+    typeSel.value = v.type;
+    copyPaste.sync();
+    // The type select sits in the Simple body's top row, or in the Synth body's section tabs.
+    const slot = synth ? synthPanel.typeSlot : typeSlot;
+    if (typeSel.parentElement !== slot) slot.append(typeSel);
+    sec.el.dataset.voiceType = v.type;
+    muteBtn.textContent = v.mute ? 'Unmute' : 'Mute';
+    muteBtn.setAttribute('aria-pressed', String(v.mute));
+    muteBtn.setAttribute('aria-label', `${v.mute ? 'Unmute' : 'Mute'} ${v.name}`);
+    muteBtn.title = `${v.mute ? 'Unmute' : 'Mute'} ${v.name} (M)`;
+    removeBtn.replaceChildren(icon(ICONS.close));
+    removeBtn.setAttribute('aria-label', `Remove ${v.name}`);
+    removeBtn.title = `Remove ${v.name}`;
+    if (synth) {
+      synthPanel.el.setAttribute('aria-labelledby', `voice-tab-${v.id}`);
+      synthPanel.sync(v);
+      return;
+    }
     const color = `var(${voiceColorVar(v.id - 1)})`;
     body.style.setProperty('--vc', color);
     body.setAttribute('aria-labelledby', `voice-tab-${v.id}`);
@@ -272,13 +355,6 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
     octLabel.textContent = `Oct ${v.octave > 0 ? '+' : v.octave < 0 ? '−' : ''}${Math.abs(v.octave)}`;
     octDown.disabled = v.octave <= OCT_MIN;
     octUp.disabled = v.octave >= OCT_MAX;
-    muteBtn.textContent = v.mute ? 'Unmute' : 'Mute';
-    muteBtn.setAttribute('aria-pressed', String(v.mute));
-    muteBtn.setAttribute('aria-label', `${v.mute ? 'Unmute' : 'Mute'} ${v.name}`);
-    muteBtn.title = `${v.mute ? 'Unmute' : 'Mute'} ${v.name} (M)`;
-    removeBtn.replaceChildren(icon(ICONS.close));
-    removeBtn.setAttribute('aria-label', `Remove ${v.name}`);
-    removeBtn.title = `Remove ${v.name}`;
     envLabel.textContent = `A ${secs(v.attack)} · D ${secs(v.decay)} · S ${pct(v.sustain)} · R ${secs(v.release)}`;
     dirtyScope = dirtyEnv = dirtyPad = true;
   };
@@ -366,7 +442,11 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
   });
   ui.onVoice(sync);
   onThemeChange(() => (dirtyScope = dirtyEnv = dirtyPad = true));
-  sec.onToggle(() => (dirtyScope = dirtyEnv = dirtyPad = true));
+  sec.onToggle(() => {
+    dirtyScope = dirtyEnv = dirtyPad = true;
+    synthPanel.markDirty();
+  });
+
   new ResizeObserver(() => (dirtyScope = dirtyEnv = dirtyPad = true)).observe(body);
   sync();
 
@@ -376,6 +456,7 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
       frame() {
         const v = cur();
         if (!v || !sec.isOpen()) return;
+        if (v.type === 'synth') return synthPanel.frame(v);
         if (isOnScreen(scope) && (dirtyScope || model.playing)) {
           dirtyScope = false;
           drawScope(v);

@@ -36,13 +36,23 @@ src/
                         newWavetable / duplicateWavetable
     wavetablePlayback.ts  packed wavetable (engine form), position → tables + weights
                         (resolveMix: Blend / bilinear / row-aligned, Step, empty slots)
-    voice.ts            VoiceParams (X / Y window, position, LFOs), followEdit()
+    voice.ts            VoiceParams (type, synth block, X / Y window, position, LFOs),
+                        VoicePatch / applyVoicePatch (synth fields merge), followEdit()
+                        (osc A and B), rehomeVoice
+    synth.ts            SynthParams (Synth voice settings), defaults (Init), ranges,
+                        normalizeSynth (untrusted data → valid params)
+    modulation.ts       LFO shapes / sync divisions, mod sources / destinations, matrix
+                        arithmetic (applyMatrix)
+    presets.ts          voice presets (PresetSound), the factory set, export file format
     sequence.ts         SequenceData, step lengths / clock ticks / bars, scale → frequency
     midi.ts             MIDI bytes → messages, MidiRouter (channel / Omni routing, held-note
                         tracking per source), velocity curve, bend scale, CC map + learn
     session.ts          session schema (meta + per-waveform records), encode / decode,
                         migrations, the .mkwz file container
-    engine/             SynthEngine (audio-thread engine), Adsr, NoteStack (held keys)
+    engine/             SynthEngine (audio-thread engine), Adsr, NoteStack (held keys),
+                        WtOsc (one oscillator's table mix: Simple voice and Synth osc A / B),
+                        synthVoice.ts (the Synth voice path), svf.ts (ZDF multimode filter,
+                        drive, limiter, response curve)
   browser/formulaEval.ts  JS expression → FormulaFn (browser-only convenience)
   browser/glyphTrace.ts character → canvas → outer contour polyline (Glyph contour mode)
   browser/webMidi.ts    Web MIDI access: permission, inputs + hot-plug, chosen input(s),
@@ -71,7 +81,9 @@ src/
                         (the expanded editor: list, views, header, write head settings,
                         drop zones); waveDrag.ts (pointer-event waveform drags: ghost,
                         drop zones, auto-scroll); voicePad.ts (X/Y pad of
-                        a 2D / Rows voice); playing.ts (what a voice plays, as the
+                        a 2D / Rows voice or Synth oscillator); synthPanel.ts (the
+                        Synth voice's Osc · Mix · Filter · Env · Mod pages); presets.ts
+                        (preset picker, ⋯ menu, voice copy / paste); playing.ts (what a voice plays, as the
                         engine resolves it); midi.ts (transport MIDI picker,
                         LED, popover with routing and CC map); shortcuts.ts
                         (page-wide keys: Space, [ / ], M, Shift+←/→; one
@@ -190,10 +202,33 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 - **Adds** (`AppModel.addTables`): write into every live wavetable, then pin, then evict
   from the timeline, then drop evicted ids from the (non-pinning) wavetables, then voice
   windows follow; one undo snapshot covers all of it (timeline, wavetables, windows).
-- **VoiceParams** — wavetable id, inclusive X window (`windowStart/End`) and Y window
+- **VoiceParams** — `type` ('simple' | 'synth'), wavetable id, inclusive X window (`windowStart/End`) and Y window
   (`windowStartY/EndY`), positions X / Y, LFO depth / rate / phase per axis, octave,
-  level, mute, ADSR. Interpolation belongs to the wavetable. Switching wavetable selects
-  all of it. Plain data shared verbatim with the engine.
+  level, mute, ADSR, and `synth` (SynthParams; every voice carries one, so switching type
+  keeps it). Interpolation belongs to the wavetable. Switching wavetable selects
+  all of it. Plain data shared verbatim with the engine. A Synth voice's osc A is the
+  voice's own wavetable / window / position; osc B's is `synth.b` (an OscSource: the same
+  fields), which follows wavetable edits, eviction and deletes exactly like A's (followEdit,
+  rehomeVoice, clampOscB). The Simple voice's position LFOs are not used by Synth voices
+  (their motion comes from the mod matrix). Patches (`VoicePatch`: MIDI CCs, sliders)
+  merge `synth` fields into the voice's block.
+- **SynthParams** (core/synth.ts) — osc A / B tuning (octave, coarse, fine) and level, osc B
+  source, sub (wave, octave, level), noise (type, level), ring, FM, hard sync, unison per
+  osc (copies, detune, spread), filter (mode, cutoff Hz, resonance, drive, key track, env /
+  velocity amounts), saturation, filter ADSR, pitch envelope (A, D, ± semitones, target),
+  velocity → amp, glide (+ legato only), bend range, pan, width, three LFOs, the mod
+  envelope (AD / ADSR) and 8 matrix slots (source, destination, amount −1..1). Ranges in
+  SYNTH_RANGES; `normalizeSynth` validates untrusted data (missing fields → the Init
+  patch's, so new fields need no schema bump; unknown fields kept).
+- **Voice presets** (core/presets.ts) — `{ id, name, sound }`, sound = synth block + osc A
+  source + amp ADSR + octave + level, plus `aRef` / `bRef` wavetable references (a
+  built-in by kind; your wavetable by name + shape — ids are per session and only a hint).
+  `resolvePresetWavetable` finds them on apply; one that isn't in the session falls back to
+  Last batch with a notice (and an import warns how many presets that affects). Factory
+  presets reference built-ins with "whole wavetable" windows (clamped on apply). User presets live in
+  `AppModel.voicePresets` (topic 'presets'), saved in the session meta (`voicePresets`,
+  optional: older sessions have none) and exported as `{ format: 'mkwavez-presets',
+  version: 1, presets }` JSON. Applying = one `updateVoice` (undoable).
 - **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate, step
   length (`'1/4' | '1/8' | '1/16' | '1/8T' | '1/16T'`, default `'1/8'`). Timing helpers
   live in `core/sequence.ts`: `STEP_TICKS` (clock ticks per step: 12 / 6 / 3 / 4 / 2 at
@@ -224,7 +259,10 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
     a newer or unmigratable version is a `SessionError` ('incompatible'). Version 2
     added `nextWavetableId` (1 → 2: the highest wavetable id + 1); version 3 added each
     sequence's `stepLength` (2 → 3: `'1/8'`, what every earlier sequence played; decode
-    also maps a missing / unknown value to `'1/8'`).
+    also maps a missing / unknown value to `'1/8'`); version 4 added voice `type` and
+    `synth` (3 → 4: every voice 'simple'; decode fills `synth` with the Init patch, osc B on
+    osc A's wavetable / window, validates it, and moves osc B to the Timeline if its
+    wavetable is gone).
   - User wavetables (editor) are stored like the built-ins: every field, write head and
     Live state; "full" (`isFull`, MAX_USER_SLOTS) is derived, so it round-trips. Decoding
     keeps them within the editor's limits (≤ MAX_USER_SLOTS slots, keeping the newest as
@@ -283,8 +321,13 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
     2048 samples per waveform) and the timeline is cut to the cap like an add (oldest
     unpinned first).
 - **Undo** — snapshots of the timeline array and wavetables (references), selection,
-  voice windows with their wavetable (X and Y; switching a voice's wavetable is an undo
-  step, so undo puts voices back) and sequence steps; 40 deep. Covers adds, note edits, window edits (a slider drag is one
+  voice windows with their wavetable (X and Y, osc A and osc B; switching a voice's wavetable is an undo
+  step, so undo puts voices back), the sound of the one voice a Synth edit touched (type,
+  synth block, and on a Synth voice its amp ADSR / level / octave / position: other
+  voices' sounds are never restored, so live MIDI-controller changes survive) and sequence steps; 40 deep.
+  Synth voice edits (any synth field, amp ADSR, level, octave, position; presets, paste)
+  and type switches are undo steps, coalesced per gesture (`endGesture` on slider release);
+  MIDI CC moves pass `undo: false`. Simple voices' slider moves stay non-undoable. Covers adds, note edits, window edits (a slider drag is one
   step) and wavetable content edits (create, duplicate, rename, delete, resize, slot
   edits; `AppModel.editWavetable`); other slider moves are not undoable. Wavetable
   settings (interpolation, Live / Frozen, write settings, head moves) are not undo steps
@@ -340,7 +383,7 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 - Remembered per browser (localStorage, try/catch): `mkwavez.theme` (only once
   toggled; default dark, applied before first paint by an inline script in
   index.html), `mkwavez.timelineView` (Waveform / Spectral / both) and `mkwavez.midi`
-  (`{ input: 'off'|'all'|id, inputName, omni, cc: {position, positionY, lfoDepth, lfoRate, level} }`).
+  (`{ input: 'off'|'all'|id, inputName, omni, cc: {position, positionY, lfoDepth, lfoRate, level, cutoff, …, lfo3Depth} }`; every CC_PARAMS target, missing ones unassigned).
 - MIDI popover: native `popover` (top layer, light dismiss; a `hidden` toggle where
   unsupported), fixed under the transport bar, so it never affects the shell layout.
   Below 640 px the bar keeps only the MIDI button (LED inside); the picker is in the popover.
@@ -455,6 +498,9 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   `0.01 + 0.99·(v/127)²` multiplies the level (through the existing gain smoother).
   Bend: ±2 st target, one-pole smoothed per control block (4 ms) and ramped linearly
   within the block; mip level uses the higher of the block's ratios.
+- Mod wheel (CC 1, besides whatever the CC map does with it) and channel pressure (0xDn,
+  parsed by parseMidi) are routed as `mod` / `pressure` events: per-voice values the
+  Synth voice's matrix reads. Synth voices scale the (±2 st) bend by their own bend range.
 - MIDI vs sequence: while a voice has held keys, its sequence's steps are skipped (the
   sequencer keeps counting); once all keys are up, the next step plays as usual.
   Transport stop releases only voices without held keys. Muted voices stay silent.
@@ -499,6 +545,58 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   insertions remap windows so they keep pointing at the same tables; Last batch keeps
   indices (clamped) and its end follows, so a voice on it plays each new batch in full.
   2D windows are fixed.
+
+## Synth voice (engine)
+
+- `SynthEngine.process(out, frames, outR?)` renders stereo (without `outR`: the mono sum
+  (L + R) / 2). Simple voices are added to both channels unchanged, so a session of Simple
+  voices renders sample-identically to the engine before Synth voices
+  (`tests/simpleVoice.test.ts` against the frozen `tests/fixtures/mainEngine.ts`).
+- Note handling, gate, amp ADSR (the voice's attack / decay / sustain / release), bend
+  smoothing and the sequencer are shared; a Synth voice's `SynthVoice` (allocated on the
+  command thread when it first becomes Synth) adds the rest. Switching type crossfades the
+  two paths over 10 ms; every switch into Synth re-syncs the path (pitch snapped to the
+  current note, envelopes per the gate, filter cleared if silent).
+- Control block (64 samples): glide (one-pole on the pitch, ~98% after the glide time),
+  pitch envelope and mod envelope (stepped per block), LFOs, the matrix (sources →
+  destinations, `applyMatrix`), then block-end phase increments (pitch + bend × range / 2
+  + tuning + pitch env + matrix), unison copy weights / detune ratios / stereo gains, mip
+  levels (ring mod: one level fewer harmonics on both oscillators; FM: A's level keeps
+  every harmonic plus the Carson sidebands, (2π·1.5·fm + 1)·f_B, under the limit), both table mixes
+  (WtOsc.resolve: the same crossfaded, id-tracked mixes as the Simple voice), the block
+  part of the log cutoff (knob + key tracking + velocity + matrix; one-pole smoothed),
+  resonance, levels, pan and gain targets. Per sample everything is ramped linearly
+  across the block; the filter envelope runs per sample and the cutoff (tan) is
+  recomputed every sample.
+- Per sample: osc B copies (FM source: B's first copy), osc A copies at phase + FM, mixer
+  (A, B, ring A × B, sub with polyBLEP square, seeded white / pink noise), drive, filter
+  (two ZDF SVF cores; LP24 = Butterworth first stage + resonant second), saturation, amp,
+  width (mid / side), soft limiter (linear to ±1, < ±2). While unison copies are spread the
+  voice is stereo (a second filter, which starts from the first one's state; back to mono
+  once the copies are gone and both filters agree). Unison places are symmetric for every
+  count (1: centre; 2: ±½ detune, hard left / right; 3: centre, ±1; 4: ±⅓, ±1 — detune
+  and spread alike); when the count changes, copies glide to their new places (~30 ms) and
+  fade in / out over 10 ms (weights towards 1/√n). The pitch reference is a virtual centre
+  copy per oscillator (ratio 1, its own phase): its wraps drive Step-mode table switches
+  and hard sync (B's centre restarts A's copies at the fraction of the sample past its
+  wrap; A isn't advanced again that sample), and B's centre is the FM source. With one copy
+  audible the centre phase is locked to it.
+  Tempo-synced LFOs that don't retrigger steer into lock with the transport position
+  (cycles from beat 0) while it plays, at up to ±½ of their own speed — so Play never makes
+  them jump (a slow division can take up to about a cycle to lock; only forward wraps start
+  a new S&H cycle); LFO-rate modulation multiplies their speed (unlocked while it is non-zero,
+  then they glide back into lock). Denormal-range filter / pink state is flushed per block.
+- CPU guard: per control block the engine counts the unison copies of Synth voices holding
+  a note (release tails don't count); over `UNISON_BUDGET` (32) it limits — each voice's
+  copies are scaled by budget / count (floor, ≥ 1 per oscillator: 8 voices at 4 + 4 →
+  2 + 2; they fade, never cut) until the count falls to ¾ of the budget (hysteresis) — and
+  `status.unisonLimited` is set. Bench (`npm run bench`, node, this machine): 8 Synth
+  voices ≈ 0.24 ms per 128-sample quantum (9% of real time at 48 kHz); the worst case
+  (unison 4 + 4 on all 8, FM, sync, spread; guarded to 2 + 2) ≈ 0.44 ms (17%).
+
+
+- Determinism: noise and modulation randomness (S&H, smooth random, per-note random) come
+  from per-voice PRNGs seeded from the voice id.
 
 ## Porting notes
 

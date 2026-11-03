@@ -186,6 +186,12 @@ for the plugin; `plugin/core` stays the audio engine (and a base for hardware la
 
 ## Known gaps
 
+- **Synth voices** (main's Synth voice type: two oscillators, sub, noise, ZDF filter, mod
+  envelope, three LFOs, mod matrix, hard sync, FM, unison, aftertouch / mod-wheel routing)
+  are not in the C++ engine yet: inside the plugin they play as Simple voices. Porting
+  `src/core/engine/{synthVoice,svf,wtOsc}.ts`, `core/modulation.ts` and `core/synth.ts`
+  (with golden scenarios) is the next parity step.
+
 - Only voices 1–4 have host parameters (the page allows 8 voices; 5–8 play and save but
   can't be automated). Window, wavetable and interpolation aren't parameters.
 - Mapped MIDI CCs patch the engine voice at once and the page's model a frame later; the

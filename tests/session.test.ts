@@ -256,7 +256,7 @@ describe('session migration', () => {
     // A version-2 meta: sequences had no step length.
     const meta: Record<string, unknown> = { ...JSON.parse(JSON.stringify(encodeMeta({ model: st, ui: {} }))), version: 2 };
     meta.sequences = (meta.sequences as Record<string, unknown>[]).map(({ stepLength: _, ...s }) => s);
-    const up = migrateMeta(meta);
+    const up = migrateMeta(meta, MIGRATIONS, 3);
     expect(up.version).toBe(3);
     expect((up.sequences as Record<string, unknown>[]).map((s) => s.stepLength)).toEqual(['1/8', '1/8']);
     // Everything else about the sequences is untouched.
@@ -265,9 +265,9 @@ describe('session migration', () => {
     const recs = new Map(encodeWaveforms(st.timeline).map((r) => [r.id, r]));
     const out = decodeSession(meta, recs).state.model;
     expect(out.sequences).toEqual(st.sequences.map((s) => ({ ...s, stepLength: '1/8' })));
-    // Re-saved, it is a version-3 session that round-trips as is.
+    // Re-saved, it is a current-version session that round-trips as is.
     const again = JSON.parse(JSON.stringify(encodeMeta({ model: out, ui: {} }))) as SessionMeta;
-    expect(again.version).toBe(3);
+    expect(again.version).toBe(SESSION_VERSION);
     expect(decodeSession(again, recs).state.model.sequences).toEqual(out.sequences);
     // A version-1 session goes through both migrations.
     const v1meta: Record<string, unknown> = { ...meta, version: 1 };
