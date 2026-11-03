@@ -24,6 +24,20 @@ npm run smoke      # build, then headless-Chrome smoke test against preview and 
 The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to override;
 `SHOTS=dir` saves screenshots at 1440×900, 1180×820, 1920×1080 and 390×844, dark and light).
 
+## GitHub Pages
+
+`.github/workflows/pages.yml` runs `npm ci`, `npm test` and `npm run build` on every push
+to `master` (or by hand: Actions → Deploy to GitHub Pages → Run workflow) and deploys
+`dist/` to `https://<owner>.github.io/<repo>/`, e.g. https://moonfall.github.io/mkwavez/.
+
+- One-time setup: the repo's **Settings → Pages → Source: GitHub Actions**. On free plans
+  Pages needs a public repository.
+- The build uses `base: './'` (vite.config.ts), so the scripts, stylesheet and the
+  AudioWorklet module all resolve relative to the page and work under the `/<repo>/`
+  sub-path without configuration.
+- github.io is served over HTTPS, so audio (AudioWorklet) and Web MIDI work there
+  (both need a secure context: HTTPS or localhost).
+
 ## Using it
 
 On a laptop / tablet (≥ 900 px wide) everything is on one screen: the transport bar
