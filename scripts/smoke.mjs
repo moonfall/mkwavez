@@ -2009,6 +2009,7 @@ async function midiChecks(label, url, browser) {
     Object.defineProperty(navigator, 'requestMIDIAccess', { configurable: true, value: undefined });
   });
   await p2.goto(url, { waitUntil: 'load' });
+  await p2.waitForSelector('#midi-status', { state: 'attached' }); // the UI is built once the session is restored
   await p2.waitForFunction(() => document.querySelector('#midi-status').textContent !== '', null, { timeout: 3000 });
   assert(
     (await p2.textContent('#midi-status')) === 'No Web MIDI' &&
@@ -2084,6 +2085,7 @@ async function sessionChecks(label, url, browser) {
         bpm: m.bpm,
         voices: m.voices,
         wavetables: m.wavetables,
+        nextWavetableId: m.nextWavetableId,
         sequences: m.sequences,
         voiceTab: ui.voiceId,
       });
@@ -2107,6 +2109,33 @@ async function sessionChecks(label, url, browser) {
     m.select(m.timeline[3].id);
     ui.setVoice(2);
   });
+  // User wavetables (editor): a 2D one created and resized in the UI, renamed, slots edited,
+  // Live with a moved write head; another created and deleted (its id is never reused).
+  await page.click('#wt-edit');
+  await page.click('#wte-new-2d');
+  const g2 = await E(() => window.mkwavez.model.wavetables.at(-1).id);
+  await page.fill('#wte-w', '3');
+  await page.press('#wte-w', 'Tab');
+  await page.fill('#wte-h', '2');
+  await page.press('#wte-h', 'Tab');
+  await page.click('#wte-rename');
+  await page.fill('#wte-name-input', 'Saved pad');
+  await page.press('#wte-name-input', 'Enter');
+  await E((id) => {
+    const m = window.mkwavez.model;
+    m.placeInWavetable(id, { kind: 'slot', x: 0, y: 0 }, m.timeline[1].id);
+    m.placeInWavetable(id, { kind: 'slot', x: 2, y: 1 }, m.timeline[4].id);
+    m.setWavetableLive(id, true);
+    m.setWavetableWrite(id, { dir: '+y', edge: 'stop' });
+    m.setWavetableHead(id, 1, 0);
+    m.addVoice({ wavetableId: id, windowStart: 0, windowEnd: 2, windowStartY: 0, windowEndY: 1, positionY: 0.6 });
+    const gone = m.createWavetable('rows');
+    m.deleteWavetable(gone.id);
+  }, g2);
+  const wt2 = await E((id) => window.mkwavez.model.wavetable(id), g2);
+  assert(wt2.name === 'Saved pad' && wt2.shape === '2d' && wt2.rows.length === 2 && wt2.rows[0].length === 3 && wt2.live, 'user 2D wavetable created, resized, renamed, edited');
+  const nextWt = await E(() => window.mkwavez.model.nextWavetableId);
+  await page.click('#wt-collapse');
   await page.click('#tab-mutate');
   const before = await snap();
   const n = await E(() => window.mkwavez.model.timeline.length);
@@ -2119,6 +2148,11 @@ async function sessionChecks(label, url, browser) {
     'reload restores the Generate tab and the voice tab',
   );
   assert((await page.inputValue('#bpm')) === '111' && (await E(() => window.mkwavez.model.undoDepth)) === 0, 'BPM control shows the restored tempo; undo history starts empty');
+  assert((await E(() => window.mkwavez.model.nextWavetableId)) === nextWt, 'wavetable id counter restored (deleted ids not reused)');
+  await page.click('#wt-edit');
+  await page.click(`#wte-item-${g2}`);
+  assert((await page.textContent('#wte-name')) === 'Saved pad' && (await page.getAttribute('#wte-canvas', 'data-shape')) === '2d', 'restored user wavetable opens in the editor');
+  await page.click('#wt-collapse');
 
   // Playback after restore.
   await page.click('#play');

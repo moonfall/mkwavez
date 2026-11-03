@@ -24,6 +24,10 @@ import { DEFAULT_VOICE, clampVoiceWindow, fullWindow, type VoiceParams } from '.
 import {
   builtinWavetables,
   DEFAULT_WRITE,
+  duplicateWavetable,
+  FIRST_USER_WAVETABLE_ID,
+  MAX_GRID,
+  MAX_USER_SLOTS,
   pinnedIds,
   removeTables,
   TIMELINE_WAVETABLE_ID,
@@ -32,8 +36,11 @@ import {
   type WriteSettings,
 } from './wavetable';
 
-/** Current meta schema version. Bump it and add a migration when the shape changes. */
-export const SESSION_VERSION = 1;
+/**
+ * Current meta schema version. Bump it and add a migration when the shape changes.
+ * 1: first schema. 2: `nextWavetableId` (user wavetables, monotonic ids).
+ */
+export const SESSION_VERSION = 2;
 export const SESSION_FORMAT = 'mkwavez-session';
 /** Voices a session may hold (matches AppModel.MAX_VOICES). */
 const MAX_VOICES = 8;
@@ -43,6 +50,8 @@ export interface ModelState {
   readonly timeline: readonly WaveTable[];
   readonly nextTableId: number;
   readonly wavetables: readonly Wavetable[];
+  /** Next user wavetable id (monotonic: ids of deleted wavetables are never reused). */
+  readonly nextWavetableId: number;
   readonly voices: readonly VoiceParams[];
   readonly nextVoiceId: number;
   readonly sequences: readonly SequenceData[];
@@ -72,6 +81,7 @@ export interface SessionMeta {
   readonly breedParents: readonly TableId[];
   /** Verbatim (plain data); unknown fields are kept. */
   readonly wavetables: readonly Wavetable[];
+  readonly nextWavetableId: number;
   readonly voices: readonly VoiceParams[];
   readonly nextVoiceId: number;
   readonly sequences: readonly SequenceData[];
@@ -119,6 +129,7 @@ export function encodeMeta(s: SessionState, savedAt = 0): SessionMeta {
     selectedId: m.selectedId,
     breedParents: m.breedParents.slice(),
     wavetables: m.wavetables,
+    nextWavetableId: m.nextWavetableId,
     voices: m.voices,
     sequences: m.sequences,
     nextVoiceId: m.nextVoiceId,
@@ -215,10 +226,21 @@ export function encodeWaveforms(tables: readonly WaveTable[], o: { allowRecipe?:
 export type Migration = (meta: Record<string, unknown>) => Record<string, unknown>;
 
 /**
- * Registered migrations, keyed by the version they upgrade from. Version 1 is the first
- * schema; add `1: (m) => ({ ...m, version: 2, ... })` here when SESSION_VERSION becomes 2.
+ * Registered migrations, keyed by the version they upgrade from (`v: (m) => ({ ...m,
+ * version: v + 1, ... })`).
  */
-export const MIGRATIONS: Readonly<Record<number, Migration>> = {};
+export const MIGRATIONS: Readonly<Record<number, Migration>> = {
+  // 1 → 2: the user wavetable id counter. Version 1 had no user wavetables to delete, so
+  // the next id after the highest one is exact.
+  1: (m) => ({
+    ...m,
+    version: 2,
+    nextWavetableId: Math.max(
+      FIRST_USER_WAVETABLE_ID,
+      ...(Array.isArray(m.wavetables) ? m.wavetables : []).map((w: unknown) => (isObj(w) && isInt(w.id) ? w.id + 1 : 0)),
+    ),
+  }),
+};
 
 export function migrateMeta(
   raw: unknown,
@@ -328,7 +350,7 @@ export function decodeSession(raw: unknown, records: Records, o: DecodeOptions =
   }
   wavetables.push(...decoded.values());
 
-  // Over the cap (e.g. an imported file): drop the oldest unpinned waveforms, as adds do.
+  // Over the cap (e.g. an imported file): drop the oldest unpinned waveforms first.
   const cap = o.cap ?? TIMELINE_CAP;
   if (timeline.length > cap) {
     const pinned = pinnedIds(wavetables);
@@ -337,6 +359,14 @@ export function decodeSession(raw: unknown, records: Records, o: DecodeOptions =
     for (const t of timeline) {
       if (excess <= 0) break;
       if (!pinned.has(t.id)) {
+        gone.add(t.id);
+        excess--;
+      }
+    }
+    // The Timeline never exceeds its cap: if wavetables pin too much, their oldest go too.
+    for (const t of timeline) {
+      if (excess <= 0) break;
+      if (!gone.has(t.id)) {
         gone.add(t.id);
         excess--;
       }
@@ -380,6 +410,11 @@ export function decodeSession(raw: unknown, records: Records, o: DecodeOptions =
         timeline,
         nextTableId: Math.max(isInt(m.nextTableId) ? m.nextTableId : 0, maxId + 1),
         wavetables,
+        nextWavetableId: Math.max(
+          FIRST_USER_WAVETABLE_ID,
+          isInt(m.nextWavetableId) ? m.nextWavetableId : 0,
+          ...wavetables.map((w) => w.id + 1),
+        ),
         voices,
         nextVoiceId: Math.max(isInt(m.nextVoiceId) ? m.nextVoiceId : 0, maxOf(voices) + 1),
         sequences,
@@ -478,7 +513,25 @@ function decodeWavetable(raw: unknown, live: ReadonlySet<TableId>, fresh: readon
   const missing = new Set<TableId>();
   for (const r of rows) for (const s of r) if (s !== null && !live.has(s)) missing.add(s);
   if (missing.size) wt = removeTables(wt, missing).wt;
+  if (!base) wt = capUserWavetable(wt);
   return wt;
+}
+
+/** User wavetables stay within the editor's limits (MAX_USER_SLOTS; 2D sides ≤ MAX_GRID). */
+function capUserWavetable(wt: Wavetable): Wavetable {
+  if (wt.shape === '2d') {
+    const w = wt.rows[0]?.length ?? 0;
+    if (w <= MAX_GRID && wt.rows.length <= MAX_GRID) return wt;
+    const rows = wt.rows.slice(0, MAX_GRID).map((r) => r.slice(0, MAX_GRID));
+    const head = { x: Math.min(wt.head.x, MAX_GRID - 1), y: Math.min(wt.head.y, MAX_GRID - 1) };
+    return { ...wt, rows, head };
+  }
+  let n = 0;
+  for (const r of wt.rows) n += r.length;
+  if (n <= MAX_USER_SLOTS) return wt;
+  // Keep the newest slots / rows, as a duplicate does.
+  const d = duplicateWavetable(wt, wt.id, wt.name);
+  return { ...wt, rows: d.rows, head: d.head };
 }
 
 function decodeVoice(raw: unknown, wavetables: ReadonlyMap<number, Wavetable>): VoiceParams | null {

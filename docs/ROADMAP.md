@@ -182,8 +182,9 @@ Done:
   incremental: each waveform written once, chunked at idle time; flushed when the page
   is hidden) and restored before the first render. Saved: timeline (samples, or the
   recipe for exact cheap basic / pulse waveforms, or a reference for copies), id
-  allocators, selection, Breed parents, all wavetables (built-ins' state, user
-  wavetables, write heads; stored generically), voices (incl. 2D / Rows), sequences,
+  allocators (incl. the monotonic wavetable id), selection, Breed parents, all wavetables
+  (built-ins' state, user wavetables from the editor with write heads and Live state;
+  stored generically), voices (incl. 2D / Rows), sequences,
   BPM, voice tab and Generate tab. Theme, timeline view and MIDI settings stay in
   localStorage.
 - Versioned schema (`SESSION_VERSION`, `MIGRATIONS`); corrupt / incompatible saves fall

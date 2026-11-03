@@ -182,7 +182,8 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   all of it. Plain data shared verbatim with the engine.
 - **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate.
 - **Session** (`core/session.ts`, M5 part 1) — what is saved: the timeline (ids in order
-  plus one record per waveform), the id allocators (`nextTableId`, `nextVoiceId`,
+  plus one record per waveform), the id allocators (`nextTableId`, `nextWavetableId` —
+  monotonic, a deleted wavetable's id is never reused after a restore — `nextVoiceId`,
   `nextSeqId`), selection and Breed parents, every wavetable (built-ins' contents / heads /
   interpolation and user wavetables, stored verbatim so new fields round-trip without
   schema changes; decode validates known fields and keeps unknown ones), voices (all
@@ -199,7 +200,14 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
     bytes). Formula, Perlin, CA, mutate and breed waveforms always store samples (no user
     JS is evaluated at load; parents may be gone).
   - Versioned: `migrateMeta` runs `MIGRATIONS[v]` (v → v+1) up to `SESSION_VERSION`;
-    a newer or unmigratable version is a `SessionError` ('incompatible').
+    a newer or unmigratable version is a `SessionError` ('incompatible'). Version 2
+    added `nextWavetableId` (1 → 2: the highest wavetable id + 1).
+  - User wavetables (editor) are stored like the built-ins: every field, write head and
+    Live state; "full" (`isFull`, MAX_USER_SLOTS) is derived, so it round-trips. Decoding
+    keeps them within the editor's limits (≤ MAX_USER_SLOTS slots, keeping the newest as
+    Duplicate does; 2D sides ≤ MAX_GRID); a voice whose wavetable is missing moves to the
+    Timeline (whole window). The decoded Timeline never exceeds its cap (oldest unpinned
+    first, then the oldest).
   - Decoding never trusts input: missing / malformed / non-finite waveform records are
     dropped (with warnings; wavetables drop the slots the way eviction does, voices are
     clamped); if no waveform survives, or the meta is unusable, it throws and the app

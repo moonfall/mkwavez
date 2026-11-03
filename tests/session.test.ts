@@ -13,6 +13,7 @@ import {
   encodeWaveform,
   encodeWaveforms,
   migrateMeta,
+  MIGRATIONS,
   packSessionFile,
   samplesHash,
   SESSION_FORMAT,
@@ -24,9 +25,15 @@ import {
   type SessionState,
   type WaveformRecord,
 } from '../src/core/session';
+import { TIMELINE_CAP } from '../src/core/constants';
 import type { TableId } from '../src/core/table';
 import {
   BATCHES_WAVETABLE_ID,
+  FIRST_USER_WAVETABLE_ID,
+  isFull,
+  MAX_GRID,
+  MAX_USER_SLOTS,
+  slotCount,
   GRID_WAVETABLE_ID,
   LAST_BATCH_WAVETABLE_ID,
   make1D,
@@ -193,10 +200,38 @@ describe('session encode / decode', () => {
 describe('session migration', () => {
   const v1 = () => JSON.parse(JSON.stringify(encodeMeta({ model: defaultSessionState(), ui: {} }))) as Record<string, unknown>;
 
+  /** A version-1 meta (before user wavetable ids were saved) holding two user wavetables. */
+  const version1 = () => {
+    const m = new AppModel(64);
+    m.loadState(defaultSessionState());
+    m.createWavetable('2d');
+    m.createWavetable('1d');
+    const st = m.exportState();
+    const meta: Record<string, unknown> = { ...JSON.parse(JSON.stringify(encodeMeta({ model: st, ui: {} }))), version: 1 };
+    delete meta.nextWavetableId;
+    return { meta, st };
+  };
+
+  it('migrates version 1 (no wavetable id counter) to the current version', () => {
+    const { meta, st } = version1();
+    const ids = st.wavetables.map((w) => w.id);
+    const m = migrateMeta(meta);
+    expect(m.version).toBe(SESSION_VERSION);
+    expect(m.nextWavetableId).toBe(Math.max(...ids) + 1);
+    const recs = new Map(encodeWaveforms(st.timeline).map((r) => [r.id, r]));
+    const out = decodeSession(meta, recs).state.model;
+    expect(out.wavetables).toEqual(st.wavetables);
+    expect(out.nextWavetableId).toBe(Math.max(...ids) + 1);
+    // A version-1 session without user wavetables starts at the first user id.
+    const plain: Record<string, unknown> = { ...v1(), version: 1 };
+    delete plain.nextWavetableId;
+    expect(migrateMeta(plain).nextWavetableId).toBe(FIRST_USER_WAVETABLE_ID);
+  });
+
   it('runs registered migrations in order up to the current version', () => {
     const old: Record<string, unknown> = { ...v1(), version: 0, tempo: 101 };
     delete old.bpm;
-    const migrations = { 0: ({ tempo, ...m }: Record<string, unknown>) => ({ ...m, bpm: tempo, version: 1 }) };
+    const migrations = { ...MIGRATIONS, 0: ({ tempo, ...m }: Record<string, unknown>) => ({ ...m, bpm: tempo, version: 1 }) };
     const m = migrateMeta(old, migrations);
     expect(m.version).toBe(SESSION_VERSION);
     expect(m.bpm).toBe(101);
@@ -206,11 +241,12 @@ describe('session migration', () => {
 
   it('chains migrations across several versions', () => {
     const migrations = {
-      1: (m: Record<string, unknown>) => ({ ...m, version: 2, a: 1 }),
-      2: (m: Record<string, unknown>) => ({ ...m, version: 3, b: (m.a as number) + 1 }),
+      ...MIGRATIONS,
+      2: (m: Record<string, unknown>) => ({ ...m, version: 3, a: 1 }),
+      3: (m: Record<string, unknown>) => ({ ...m, version: 4, b: (m.a as number) + 1 }),
     };
-    const m = migrateMeta(v1(), migrations, 3);
-    expect([m.version, m.a, m.b]).toEqual([3, 1, 2]);
+    const m = migrateMeta({ ...version1().meta }, migrations, 4);
+    expect([m.version, m.a, m.b, typeof m.nextWavetableId]).toEqual([4, 1, 2, 'number']);
   });
 
   it('rejects newer versions and missing / failing migrations', () => {
@@ -888,5 +924,94 @@ describe('tab ownership', () => {
     expect(a.be.kept!.records.map((r) => r.id).sort()).toEqual(ids.sort());
     expect(boot.keptCount).toBe(2);
     expectSameState(b.exportState(), restore(a.be).model);
+  });
+});
+
+describe('user wavetables (editor) round-trip', () => {
+  /** Built through the model's editor API: create / edit / duplicate / rename / delete, live heads. */
+  function editedModel() {
+    const m = new AppModel(200);
+    m.loadState(defaultSessionState());
+    m.addTables(generatePerlin(DEFAULT_PERLIN, 5, 6), false);
+    const ids = m.timeline.map((t) => t.id);
+    const g = m.createWavetable('2d', 3, 2);
+    m.placeInWavetable(g.id, { kind: 'slot', x: 0, y: 0 }, ids[1]);
+    m.placeInWavetable(g.id, { kind: 'slot', x: 2, y: 1 }, ids[4]);
+    m.setWavetableLive(g.id, true);
+    m.setWavetableWrite(g.id, { dir: '+y', edge: 'stop', onWrap: 'next' });
+    m.setWavetableHead(g.id, 1, 0);
+    m.renameWavetable(g.id, 'Pad');
+    m.setWavetableInterp(g.id, 'step');
+    const line = m.createWavetable('1d');
+    m.placeInWavetable(line.id, { kind: 'gap', x: 0, y: 0 }, ids[2]);
+    m.placeInWavetable(line.id, { kind: 'gap', x: 1, y: 0 }, ids[3]);
+    m.resizeWavetable1D(line.id, true, 4);
+    const rows = m.createWavetable('rows');
+    m.placeInWavetable(rows.id, { kind: 'row', y: 0 }, ids[0]);
+    m.placeInWavetable(rows.id, { kind: 'row', y: 1 }, ids[5]);
+    m.setWavetableLive(rows.id, true);
+    const dup = m.duplicateWavetable(GRID_WAVETABLE_ID)!;
+    const gone = m.createWavetable('1d');
+    m.deleteWavetable(gone.id); // its id must never come back
+    m.addVoice({ wavetableId: g.id, windowStart: 0, windowEnd: 2, windowStartY: 1, windowEndY: 1, positionY: 0.3 });
+    m.addVoice({ wavetableId: rows.id, windowStartY: 0, windowEndY: 1 });
+    // A live add writes at the heads.
+    m.addTables(generatePerlin(DEFAULT_PERLIN, 6, 2), false);
+    m.clearUndo();
+    return { m, g, line, rows, dup, gone };
+  }
+
+  it('saves every user wavetable field, write heads and the id counter', () => {
+    const { m, g, gone } = editedModel();
+    const s: SessionState = { model: m.exportState(), ui: {} };
+    expect(s.model.nextWavetableId).toBe(gone.id + 1);
+    const bytes = packSessionFile(encodeMeta(s), encodeWaveforms(s.model.timeline));
+    const { meta, records } = unpackSessionFile(bytes);
+    const out = decodeSession(meta, records).state.model;
+    expectSameState(s.model, out);
+    expect(out.wavetables.find((w) => w.id === g.id)!.head).toEqual(s.model.wavetables.find((w) => w.id === g.id)!.head);
+    // Restored into a model: new wavetables never reuse the deleted id.
+    const r = new AppModel(200);
+    r.loadState(out);
+    const probe = new AppModel(200);
+    probe.loadState(out);
+    expect(probe.createWavetable('1d').id).toBe(gone.id + 1);
+    // ... and live heads keep writing exactly as in the original.
+    const add = generatePerlin(DEFAULT_PERLIN, 7, 3);
+    m.addTables(add, false);
+    r.addTables(add, false);
+    expect(r.exportState().wavetables).toEqual(m.exportState().wavetables);
+  });
+
+  it('a full user wavetable (MAX_USER_SLOTS) stays full; oversized ones are cut to the limits', () => {
+    const m = new AppModel(TIMELINE_CAP);
+    m.loadState(defaultSessionState());
+    m.addTables(Array.from({ length: 60 }, () => generateBasic('saw', 0)), false);
+    const ids = m.timeline.map((t) => t.id);
+    const st = m.exportState();
+    const full = make1D(40, 'Full', Array.from({ length: MAX_USER_SLOTS }, (_, i) => ids[i % ids.length]), { live: true });
+    const huge = make1D(41, 'Huge', Array.from({ length: MAX_USER_SLOTS + 10 }, (_, i) => ids[i % ids.length]));
+    const grid = make2D(42, 'Big', 70, 2, []);
+    const state = { ...st, wavetables: [...st.wavetables, full, huge, grid], nextWavetableId: 50 };
+    const out = decodeSession(encodeMeta({ model: state, ui: {} }), new Map(encodeWaveforms(st.timeline).map((r) => [r.id, r]))).state.model;
+    const by = (id: number) => out.wavetables.find((w) => w.id === id)!;
+    expect(isFull(by(40))).toBe(true);
+    expect(by(40)).toEqual(full);
+    expect(slotCount(by(41))).toBe(MAX_USER_SLOTS);
+    expect(by(41).rows[0]).toEqual(huge.rows[0].slice(10)); // the newest slots kept
+    expect(by(42).rows[0].length).toBe(MAX_GRID);
+    expect(out.nextWavetableId).toBe(50);
+  });
+
+  it('voices on a wavetable that is gone fall back to the Timeline', () => {
+    const { m, g } = editedModel();
+    const st = m.exportState();
+    const meta = JSON.parse(JSON.stringify(encodeMeta({ model: st, ui: {} })));
+    meta.wavetables = meta.wavetables.filter((w: { id: number }) => w.id !== g.id);
+    const out = decodeSession(meta, new Map(encodeWaveforms(st.timeline).map((r) => [r.id, r]))).state.model;
+    const v = out.voices.find((x) => x.id === st.voices.find((y) => y.wavetableId === g.id)!.id)!;
+    expect(v.wavetableId).toBe(TIMELINE_WAVETABLE_ID);
+    expect([v.windowStart, v.windowEnd]).toEqual([0, st.timeline.length - 1]);
+    expect(out.nextWavetableId).toBe(st.nextWavetableId); // the counter doesn't go back
   });
 });

@@ -610,6 +610,7 @@ export class AppModel {
       timeline: this.timeline,
       nextTableId: this.tableIds.next,
       wavetables: this.wavetables,
+      nextWavetableId: this.nextWavetableId,
       voices: this.voices,
       nextVoiceId: this.nextVoiceId,
       sequences: this.sequences,
@@ -636,6 +637,8 @@ export class AppModel {
     this.byId = new Map(s.timeline.map((t) => [t.id, t]));
     this.tableIds = new IdAllocator(Math.max(s.nextTableId, ...s.timeline.map((t) => t.id + 1), 1));
     this.wavetables = s.wavetables;
+    // Monotonic: never below a saved counter or any existing id (deleted ids aren't reused).
+    this.nextWavetableId = Math.max(FIRST_USER_WAVETABLE_ID, s.nextWavetableId, ...s.wavetables.map((w) => w.id + 1));
     this.voices = s.voices;
     this.nextVoiceId = Math.max(s.nextVoiceId, ...s.voices.map((v) => v.id + 1), 1);
     this.sequences = s.sequences;
