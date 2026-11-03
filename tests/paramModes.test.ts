@@ -5,6 +5,7 @@ import {
   DEFAULT_ADDITIVE,
   DEFAULT_CONTOUR,
   DEFAULT_LIFE,
+  LIFE_RULES,
   encodeContour,
   glyphTable,
   parseContour,
@@ -179,6 +180,15 @@ describe('parameter modes', () => {
     lifeBoard(p, 5, 4, c);
     const viaCheckpoint = lifeBoard(p, 5, 10, c).slice();
     expect(Array.from(viaCheckpoint)).toEqual(Array.from(lifeBoard(p, 5, 10, new StepCache())));
+    // No silent waveform: every rule × density × a few seeds, every read.
+    LIFE_RULES.forEach((_, rule) => {
+      for (const density of [0.1, 0.3, 0.5, 0.7, 0.9])
+        for (const seed of [1, 2, 3])
+          for (const read of [0, 3])
+            seedBatch(req('life-like-ca', { rule, density, read, size: 16 }, 8, seed)).forEach((t, i) =>
+              expect(peak(t.data), `rule ${rule} density ${density} seed ${seed} read ${read} #${i}`).toBeGreaterThan(0.99),
+            );
+    });
     // Uniform lines fall back to a non-uniform one.
     const board = new Uint8Array(64);
     board[8 * 2 + 3] = 1;
@@ -210,5 +220,9 @@ describe('parameter modes', () => {
     expect(describeRecipe(b[2].recipe)).toContain('“A”');
     expect(same(renderRecipe(b[2].recipe), b[2].data)).toBe(true);
     expect(maxDiff(b[0].data, b[2].data)).toBeGreaterThan(1e-3);
+    // Degenerate contours (collinear, a point) fall back to the default instead of silence.
+    const fallback = glyphTable({ contour: '', skew: 0, skewEnd: 0 }, 0, 1);
+    for (const c of ['0.1,0.1 0.5,0.5 0.9,0.9', '0.5,0.5 0.5,0.5 0.5,0.5'])
+      expect(same(glyphTable({ contour: c, skew: 0, skewEnd: 0 }, 0, 1), fallback), c).toBe(true);
   });
 });

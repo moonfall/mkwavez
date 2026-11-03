@@ -7,7 +7,8 @@
 import { encodeContour } from '../core/generators/glyph';
 
 const SIZE = 192;
-const MAX_POINTS = 240;
+/** Contour points kept (recipes store them; plenty for a 72-harmonic waveform). */
+const MAX_POINTS = 64;
 /** Clockwise (screen coordinates) from west. */
 const DIRS: readonly (readonly [number, number])[] = [
   [-1, 0],

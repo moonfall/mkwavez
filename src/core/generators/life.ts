@@ -3,7 +3,7 @@
  * torus, started from a seeded random fill. Each table reads one line of the board (a
  * row, a column, the diagonal) or a projection (live cells per column / per row) as
  * steps across the cycle; a batch is consecutive generations (start + i·step).
- * A board that dies out is refilled from the same PRNG, so every generation is
+ * A board that dies out or fills up is refilled from the same PRNG, so every generation is
  * reproducible from (rule, size, density, seed, generation).
  */
 import { TABLE_SIZE } from '../constants';
@@ -61,8 +61,11 @@ export interface Board {
   rng: number;
 }
 
+/** Seeded random fill, never all dead or all alive (one cell is flipped if it would be). */
 function fill(cells: Uint8Array, r: Prng, density: number): void {
-  for (let i = 0; i < cells.length; i++) cells[i] = r.next() < density ? 1 : 0;
+  let alive = 0;
+  for (let i = 0; i < cells.length; i++) alive += cells[i] = r.next() < density ? 1 : 0;
+  if (alive === 0 || alive === cells.length) cells[r.int(cells.length)] ^= 1;
 }
 
 function advance(b: Board, n: number, size: number, rule: { birth: boolean[]; survive: boolean[] }, density: number): void {
@@ -86,7 +89,8 @@ function advance(b: Board, n: number, size: number, rule: { birth: boolean[]; su
       }
     }
     b.cells.set(next);
-    if (!alive) fill(b.cells, r, density);
+    // A dead or completely full board (uniform: silent) is refilled from the same PRNG.
+    if (alive === 0 || alive === size * size) fill(b.cells, r, density);
   }
   b.rng = r.state;
 }
@@ -117,31 +121,30 @@ export function lifeBoard(p: LifeParams, seed: number, generation: number, cache
 
 const uniform = (v: readonly number[]) => v.every((x) => x === v[0]);
 
-/** The values a table reads from a board (falls back to other lines if the chosen one is uniform). */
+/**
+ * The values a table reads from a board. If the chosen read is uniform (silent) the
+ * next one that varies is used: other rows / columns, then the projections. Any board
+ * that isn't uniform has a varying row or column, and boards are never uniform.
+ */
 export function lifeLine(cells: Uint8Array, size: number, read: number): number[] {
   const row = (y: number) => Array.from(cells.subarray(y * size, (y + 1) * size));
   const col = (x: number) => Array.from({ length: size }, (_, y) => cells[y * size + x]);
   const perCol = () => Array.from({ length: size }, (_, x) => col(x).reduce((s, v) => s + v, 0));
   const perRow = () => Array.from({ length: size }, (_, y) => row(y).reduce((s, v) => s + v, 0));
+  const diag = () => Array.from({ length: size }, (_, i) => cells[i * size + i]);
   const mid = size >> 1;
-  let line: number[];
-  switch (Math.round(read)) {
-    case 1:
-      line = col(mid);
-      for (let d = 1; uniform(line) && d < size; d++) line = col((mid + d) % size);
-      break;
-    case 2:
-      line = Array.from({ length: size }, (_, i) => cells[i * size + i]);
-      break;
-    case 3:
-      return perCol();
-    case 4:
-      return perRow();
-    default:
-      line = row(mid);
-      for (let d = 1; uniform(line) && d < size; d++) line = row((mid + d) % size);
-  }
-  return uniform(line) ? perCol() : line;
+  const rows = Array.from({ length: size }, (_, d) => () => row((mid + d) % size));
+  const cols = Array.from({ length: size }, (_, d) => () => col((mid + d) % size));
+  const order: (() => number[])[] = [
+    [...rows, ...cols, perCol, perRow],
+    [...cols, ...rows, perCol, perRow],
+    [diag, ...rows, ...cols, perCol, perRow],
+    [perCol, perRow, ...rows, ...cols],
+    [perRow, perCol, ...rows, ...cols],
+  ][clamp(Math.round(read), 0, 4)];
+  let line: number[] = [];
+  for (const f of order) if (!uniform((line = f()))) break;
+  return line;
 }
 
 /** Table `index` of a batch: generation start + index·step, read as held steps. */

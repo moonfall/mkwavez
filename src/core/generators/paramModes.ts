@@ -238,7 +238,8 @@ export const PARAM_MODES = [
     name: 'Glyph contour',
     about:
       'The outer contour of a character, read as radius vs angle around its centre. A batch takes the next ' +
-      'characters of the text, sweeps the font weight, or sweeps a skew. Waveforms store the traced contour, not the font.',
+      'characters of the text, sweeps the font weight (and the skew, as fonts have few weights), or sweeps the skew. ' +
+      'Waveforms store the traced contour, not the font.',
     params: [
       { key: 'batch', label: 'Batch', min: 0, max: 2, step: 1, value: 0, options: opts(['Next characters', 'Sweep weight', 'Sweep skew']) },
       { key: 'weight', label: 'Weight', min: 100, max: 900, step: 100, value: 700 },
@@ -250,7 +251,7 @@ export const PARAM_MODES = [
     // `contour` (and `glyph`, the character) come per table from the host: SeedRequest.inputs.
     render: (p, _seed, index, count) =>
       glyphTable(
-        { contour: String(p.contour ?? ''), skew: num(p, 'skew'), skewEnd: num(p, num(p, 'batch') === 2 ? 'skewEnd' : 'skew') },
+        { contour: String(p.contour ?? ''), skew: num(p, 'skew'), skewEnd: num(p, num(p, 'batch') === 0 ? 'skew' : 'skewEnd') },
         index,
         count,
       ),

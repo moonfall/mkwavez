@@ -84,17 +84,41 @@ export interface GlyphParams {
   skewEnd: number;
 }
 
-/** Table `index` of a batch: the contour's radius vs angle, skewed by skew → skewEnd. */
-export function glyphTable(p: GlyphParams, index: number, count: number): Float32Array {
-  let pts = parseContour(p.contour);
-  if (pts.length < 6) pts = parseContour(DEFAULT_CONTOUR);
-  const s = p.skew + (p.skewEnd - p.skew) * batchU(index, count);
-  pts = pts.map((v, i) => (i % 2 ? v : v + s * (pts[i + 1] - 0.5)));
+/** |area| of a closed polygon. */
+function area(p: readonly number[]): number {
+  const n = p.length / 2;
+  let A = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    A += p[2 * i] * p[2 * j + 1] - p[2 * j] * p[2 * i + 1];
+  }
+  return Math.abs(A) / 2;
+}
+
+/** Radius vs angle of the (skewed) contour, or null when it is flat (silent). */
+function radii(contour: readonly number[], s: number): Float64Array | null {
+  const pts = contour.map((v, i) => (i % 2 ? v : v + s * (contour[i + 1] - 0.5)));
   const [cx, cy] = centroid(pts);
   const x = new Float64Array(TABLE_SIZE);
+  let lo = Infinity;
+  let hi = -Infinity;
   for (let i = 0; i < TABLE_SIZE; i++) {
     const a = (2 * Math.PI * i) / TABLE_SIZE;
     x[i] = rayRadius(pts, cx, cy, Math.cos(a), Math.sin(a));
+    lo = Math.min(lo, x[i]);
+    hi = Math.max(hi, x[i]);
   }
+  return hi - lo > 1e-6 ? x : null;
+}
+
+/**
+ * Table `index` of a batch: the contour's radius vs angle, skewed by skew → skewEnd. A
+ * missing, degenerate (area ≈ 0, e.g. collinear) or flat-reading contour falls back to
+ * DEFAULT_CONTOUR, so a table is never silent.
+ */
+export function glyphTable(p: GlyphParams, index: number, count: number): Float32Array {
+  const s = p.skew + (p.skewEnd - p.skew) * batchU(index, count);
+  const pts = parseContour(p.contour);
+  const x = (pts.length >= 6 && area(pts) > 1e-4 && radii(pts, s)) || radii(parseContour(DEFAULT_CONTOUR), s)!;
   return shape(x);
 }
