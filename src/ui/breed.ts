@@ -1,191 +1,129 @@
 import {
-  breedBatch,
+  breed,
+  breedBatchTable,
+  breedBiasAt,
   breedWeights,
   BREED_OPS,
   isSeededOp,
-  mutationAmount,
   MAX_PARENTS,
-  sweepBiases,
+  mutationAmount,
   type BiasWalk,
   type BreedMode,
-  type BreedOpId,
   type BreedRequest,
 } from '../core/breed';
 import { randomSeed } from '../core/prng';
 import { describeRecipe, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
-import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
+import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
+import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { h, selectField, slider } from './dom';
+import { h } from './dom';
+import { buildLibrary } from './library';
 
-const WAVE_H = 64;
-const SPEC_H = 30;
-const THUMB_H = 34;
-/** Minimum interval between preview recomputes while a control is being dragged. */
+/** Minimum interval between preview restarts while a control is dragged. */
 const PREVIEW_MS = 50;
+/** Minimum interval between library thumbnail restarts (parents / bias / walk / seed changes). */
+const THUMBS_MS = 150;
+/** Main-thread time per frame spent computing preview children and thumbnails. */
+const BUDGET_MS = 8;
+const THUMB_W = 44;
+const THUMB_H = 18;
+const CHIP_W = 26;
+const CHIP_H = 16;
+/** Pointer travel (px) before a press on a parent chip becomes a drag. */
+const DRAG_SLOP = 4;
+const DEFAULT_OP = 'mix';
 
-const WALKS: [BiasWalk, string][] = [
-  ['path', 'Path A→B→…'],
-  ['ring', 'Ring A→…→A'],
-  ['weights', 'Custom weights'],
+type BatchMode = Exclude<BreedMode, 'single'>;
+
+const MODES: { mode: BatchMode; label: string; title: string }[] = [
+  { mode: 'sweep', label: 'Sweep', title: 'Sweep: child i of N uses bias B·i/N (the last is B), one seed' },
+  { mode: 'gen', label: 'Generation', title: 'Generation: N children at bias B, each with its own seed' },
 ];
-const MODES: [Exclude<BreedMode, 'single'>, string][] = [
-  ['sweep', 'Sweep (0→Bias)'],
-  ['gen', 'Generation'],
+const WALKS: { walk: BiasWalk; label: string; title: string }[] = [
+  { walk: 'path', label: 'Path', title: 'Bias walks A → B → C → … → the last parent' },
+  { walk: 'ring', label: 'Ring', title: 'Bias walks A → B → … → the last parent → back to A' },
+  { walk: 'weights', label: 'Custom', title: 'Bias moves from A alone to your per-parent weights (sliders on the parent chips)' },
 ];
 
 export interface BreedPanelOpts {
-  /** Shared batch size N from the Generate section. */
+  /** Shared batch size N (also used by Seed / Mutate). */
   count(): number;
+  setCount(n: number): void;
   onCount(fn: (n: number) => void): void;
   /** True while the Generate section is open and the Breed tab is showing. */
   active(): boolean;
 }
 
 export const parentLetter = (i: number) => String.fromCharCode(65 + i);
+/** Parent colour CSS variable (`--par-0`…`--par-7`; palette in styles.css). */
+const parentVar = (i: number) => `--par-${i % MAX_PARENTS}`;
 const hex = (s: number) => (s >>> 0).toString(16).padStart(8, '0');
 const pct = (v: number) => {
+  const p = v * 100;
+  return `${p < 10 && p > 0 ? p.toFixed(1) : Math.round(p)}%`;
+};
+const pctN = (v: number) => {
   const p = v * 100;
   return p < 10 && p > 0 ? p.toFixed(1) : String(Math.round(p));
 };
 
+/** A preview batch being computed incrementally in the frame loop. */
+interface Job {
+  key: string;
+  req: BreedRequest;
+  parents: WaveTable[];
+  tables: (GeneratedTable | undefined)[];
+  next: number;
+}
+
 /**
- * Generate → Breed. Parents live in the model (AppModel.breedParents) so the Timeline
- * can toggle them; evicted parents drop out there. The preview is computed in the frame
- * loop (throttled, only while visible) with the seed Breed / Breed N will use.
+ * Generate → Breed: operator library (search, ▲/▼, thumbnails of each operator applied to
+ * the parents at the current bias), parent chips + parameters, the shown child large over
+ * the parents, and the batch strip. Parents live in the model (AppModel.breedParents) so
+ * the Timeline can toggle them; evicted parents drop out there. Preview children are
+ * computed in the frame loop (only while the tab is visible, restarted at most every
+ * PREVIEW_MS, BUDGET_MS per frame) through the same breedBatchTable() as Add, with the same
+ * seed / bias / walk / mode / N, so Add appends exactly what is shown. Add shown / Add +N
+ * select the last waveform added.
  */
 export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTMLElement; view: FrameView } {
   const { model } = ctx;
-  let op: BreedOpId = 'mix';
+
+  // ---- state ----
+  let sel = Math.max(
+    0,
+    BREED_OPS.findIndex((o) => o.id === DEFAULT_OP),
+  );
   let bias = 0.5;
   let walk: BiasWalk = 'path';
   let rate = 0.05;
-  let mode: Exclude<BreedMode, 'single'> = 'sweep';
+  let mode: BatchMode = 'sweep';
   let seed = randomSeed();
   let windowVoiceId: number | null = null;
   /** Custom weights by table id (walk 'weights'); default 1. */
   const weights = new Map<TableId, number>();
 
-  // ---- parents ----
-  const cards = h('div', { id: 'breed-parents', class: 'parents' });
-  const addSel = h('button', { id: 'breed-add-selected', class: 'grow', onclick: () => addSelected() }, 'Add selected');
-  const winSel = h('select', { id: 'breed-window-voice', 'aria-label': 'Voice whose window to use as parents', style: 'flex:0 0 auto' });
-  winSel.addEventListener('change', () => (windowVoiceId = Number(winSel.value)));
-  const useWin = h('button', { id: 'breed-use-window', style: 'flex:0 0 auto', onclick: () => useWindow() }, 'Use window');
-  const clear = h('button', { id: 'breed-clear', onclick: () => model.setBreedParents([]) }, 'Clear');
-  const parentsMeta = h('span', { class: 'hint-inline', id: 'breed-parents-meta' });
-
-  // ---- preview ----
-  const pvWave = h('canvas', { id: 'breed-pv-wave', 'aria-label': 'Preview of the Breed result over parent A' });
-  const pvSpec = h('canvas', { id: 'breed-pv-spec', 'aria-label': 'Preview spectrum' });
-  const seedLabel = h('span', { id: 'breed-seed', class: 'mono-label', title: 'Shared by the preview, Breed and Breed N' });
-  const weightsLabel = h('span', { id: 'breed-weights', class: 'mono-label' });
-  const reroll = h('button', { id: 'breed-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => newSeed() }, 'Reroll');
-  watchVisibility(pvWave);
-
-  // ---- controls ----
-  const opSel = h('select', { id: 'breed-op', 'aria-label': 'Breed operator' });
-  const groups = new Map<string, HTMLOptGroupElement>();
-  for (const o of BREED_OPS) {
-    let g = groups.get(o.group);
-    if (!g) {
-      g = h('optgroup', { label: o.group });
-      groups.set(o.group, g);
-      opSel.append(g);
-    }
-    g.append(h('option', { value: o.id }, o.label));
-  }
-  opSel.value = op;
-  opSel.addEventListener('change', () => {
-    op = opSel.value as BreedOpId;
-    updateSteps();
-  });
-  const biasSlider = slider({
-    label: 'Bias (A → others)',
-    min: 0,
-    max: 1,
-    step: 0.01,
-    value: bias,
-    format: (v) => `${Math.round(v * 100)}%`,
-    onInput: (v) => {
-      bias = v;
-      updateSteps();
-    },
-  });
-  biasSlider.input.id = 'breed-bias';
-  const walkField = selectField('Bias walks', WALKS, walk, (v) => {
-    walk = v as BiasWalk;
-    cards.classList.toggle('show-weights', walk === 'weights');
-    updateSteps();
-  });
-  walkField.select.id = 'breed-walk';
-  const rateSlider = slider({
-    label: 'Mutation',
-    min: 0,
-    max: 0.5,
-    step: 0.01,
-    value: rate,
-    format: (v) => `${Math.round(v * 100)}%`,
-    onInput: (v) => {
-      rate = v;
-      updateSteps();
-    },
-  });
-  rateSlider.input.id = 'breed-rate';
-  const modeField = selectField('Batch mode', MODES, mode, (v) => {
-    mode = v as typeof mode;
-    updateSteps();
-  });
-  modeField.select.id = 'breed-mode';
-  const stepsLabel = h('div', { id: 'breed-steps', class: 'steps' });
-
-  const apply1 = h('button', { id: 'breed-apply1', class: 'primary grow', onclick: () => applySingle() }, 'Breed');
-  const applyN = h('button', { id: 'breed-applyN', class: 'primary grow', onclick: () => applyBatch() }, `Breed ${opts.count()}`);
-  opts.onCount((n) => {
-    applyN.textContent = `Breed ${n}`;
-    updateSteps();
-  });
-
-  const el = h(
-    'div',
-    { role: 'tabpanel', id: 'panel-breed', class: 'gen-cols' },
-    h(
-      'div',
-      { class: 'gen-col' },
-      h('div', { class: 'label' }, h('span', {}, `Parents (2–${MAX_PARENTS})`), parentsMeta),
-      cards,
-      h('div', { class: 'row' }, addSel, winSel, useWin, clear),
-      h(
-        'div',
-        { class: 'field' },
-        h('div', { class: 'label' }, h('span', {}, 'Preview'), weightsLabel, reroll),
-        pvWave,
-        pvSpec,
-        h('div', { class: 'label' }, seedLabel, h('span', { class: 'hint-inline' }, 'faint = A')),
-      ),
-    ),
-    h(
-      'div',
-      { class: 'gen-col' },
-      h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Operator')), opSel), biasSlider.el),
-      h('div', { class: 'grid2' }, walkField.el, rateSlider.el),
-      h('div', { class: 'grid2' }, modeField.el, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Children')), stepsLabel)),
-      h('div', { class: 'row' }, apply1, applyN),
-      h(
-        'p',
-        { class: 'hint' },
-        'Shift-click or long-press waveforms in the Timeline to add or remove parents. Bias 0 is parent A. ' +
-          'Breed adds one child and selects it; Breed N sweeps the bias from A (or makes N seeded children at the same bias) ' +
-          'and sets the ticked voices’ windows. Mutation adds seeded jitter, strongest between parents.',
-      ),
-    ),
-  );
-
-  // ---- state helpers ----
+  const info = () => BREED_OPS[sel];
   const parents = (): WaveTable[] => model.breedParents.map((id) => model.table(id)).filter((t): t is WaveTable => !!t);
   const weightList = () => model.breedParents.map((id) => weights.get(id) ?? 1);
   const ready = () => model.breedParents.length >= 2;
+  /** The result depends on the seed: a seeded operator, or mutation (seeded jitter). */
+  const usesSeed = () => isSeededOp(info().id) || rate > 0;
+  const request = (): BreedRequest => ({
+    op: info().id,
+    bias,
+    walk,
+    weights: walk === 'weights' ? weightList() : undefined,
+    rate,
+    seed,
+    mode,
+    count: opts.count(),
+  });
+  const keyOf = (ids: readonly TableId[], r: BreedRequest) =>
+    `${ids.join(',')}|${r.op}|${r.bias}|${r.walk}|${r.weights?.join(',') ?? ''}|${r.rate}|${r.seed}|${r.mode}|${r.count}`;
+
   /**
-   * Why Breed N would only add copies, or null. Sweep at bias 0 is N copies of A. A
+   * Why Add +N would only add copies, or null. A sweep at bias 0 is N copies of A. A
    * generation is N identical children when there's no mutation (rate 0, or one parent
    * holding all the weight, e.g. bias 0 or a path stop on B) and either the operator
    * isn't seeded or a single parent wins every seeded pick.
@@ -197,9 +135,236 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     const w = breedWeights(P, bias, walk, weightList());
     if (mutationAmount(rate, w) > 0) return null;
     if (Math.max(...w) >= 1 - 1e-9) return `${parentLetter(w.indexOf(Math.max(...w)))} holds all the weight: copies`;
-    return isSeededOp(op) ? null : 'identical: pick a seeded operator or raise Mutation';
+    return isSeededOp(info().id) ? null : 'Identical children: pick a seeded operator or raise Mutation';
   };
 
+  // Dirty flags (drawn in the frame loop).
+  let mainDirty = true;
+  let cardsDirty = true;
+  let thumbsDirty = true;
+  let chipsDirty = true;
+
+  // ---- library ----
+  const lib = buildLibrary({
+    idPrefix: 'breed',
+    title: 'Operators',
+    placeholder: 'Search name, group, hint',
+    items: BREED_OPS.map((o) => ({
+      id: o.id,
+      group: o.group,
+      name: o.label,
+      tag: o.seeded ? 'rnd' : undefined,
+      tagTitle: 'Uses the seed',
+      search: `${o.label}\n${o.group}\n${o.hint}`,
+    })),
+    initial: sel,
+    onChange: (i) => {
+      sel = i;
+      flash('');
+      syncParams();
+      mainDirty = cardsDirty = thumbsDirty = true;
+    },
+    onThumbs: () => (thumbsDirty = true),
+  });
+
+  // ---- parents ----
+  const chips = h('div', { id: 'breed-parents', class: 'br-chips', role: 'list', 'aria-label': 'Parents (drag, or ← / → on a chip, to reorder)' });
+  const addSel = h(
+    'button',
+    { id: 'breed-add-selected', title: 'Add the waveform selected in the Timeline as the next parent', onclick: () => addSelected() },
+    'Add selected',
+  );
+  const winSel = h('select', { id: 'breed-window-voice', 'aria-label': 'Voice whose window to use as parents' });
+  winSel.addEventListener('change', () => (windowVoiceId = Number(winSel.value)));
+  const useWin = h(
+    'button',
+    { id: 'breed-use-window', title: 'Parents = the waveforms in the voice’s window (up to 8, evenly spaced)', onclick: () => useWindow() },
+    'Use window of',
+  );
+  const clear = h('button', { id: 'breed-clear', class: 'br-clear', title: 'Remove every parent', onclick: () => model.setBreedParents([]) }, 'Clear');
+  const parentsRow = h(
+    'div',
+    { class: 'br-parents' },
+    h('span', { class: 'br-parents-h' }, 'Parents'),
+    chips,
+    h('div', { class: 'br-parent-acts' }, addSel, h('div', { class: 'br-win' }, useWin, winSel)),
+  );
+
+  // ---- parameters ----
+  const title = h('span', { class: 'br-name', id: 'breed-title' });
+  const hint = h('span', { class: 'br-hint', id: 'breed-hint' });
+  const biasVal = h('span', { class: 'mut-amount-val', id: 'breed-bias-val' });
+  const biasInput = h('input', { type: 'range', id: 'breed-bias', min: 0, max: 1, step: 0.01, value: bias, 'aria-label': 'Bias (0 = parent A)' });
+  biasInput.addEventListener('input', () => {
+    bias = Number(biasInput.value);
+    syncValues();
+  });
+  const rateVal = h('span', { class: 'mut-amount-val', id: 'breed-rate-val' });
+  const rateInput = h('input', { type: 'range', id: 'breed-rate', min: 0, max: 0.5, step: 0.01, value: rate, 'aria-label': 'Mutation rate' });
+  rateInput.addEventListener('input', () => {
+    rate = Number(rateInput.value);
+    syncParams();
+    syncValues();
+  });
+  const walkButtons = WALKS.map((x) => h('button', { id: `breed-walk-${x.walk}`, title: x.title, onclick: () => setWalk(x.walk) }, x.label));
+  const seedLabel = h('span', { id: 'breed-seed', class: 'mono-label', title: 'Shared by the preview, every card and Add' });
+  const seedBox = h(
+    'div',
+    { class: 'gen-seedbox', id: 'breed-seedbox' },
+    h('span', {}, 'Seed'),
+    seedLabel,
+    h('button', { id: 'breed-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => newSeed() }, 'Reroll'),
+  );
+  const params = h(
+    'div',
+    { class: 'br-params' },
+    h('div', { class: 'br-op-line' }, title, hint, seedBox),
+    h(
+      'div',
+      { class: 'br-ctl-line' },
+      h('label', { class: 'mut-amount br-bias', title: 'Bias: 0 = parent A, then along the walk' }, h('span', {}, 'Bias'), biasInput, biasVal),
+      h('div', { class: 'seg br-walk', role: 'group', 'aria-label': 'Bias walk' }, ...walkButtons),
+      h(
+        'label',
+        { class: 'mut-amount br-rate', title: 'Seeded jitter, strongest between parents (none at a pure parent)' },
+        h('span', {}, 'Mutation'),
+        rateInput,
+        rateVal,
+      ),
+    ),
+  );
+
+  const syncParams = () => {
+    const o = info();
+    title.textContent = `${o.group} › ${o.label}`;
+    hint.textContent = `${o.hint} · bias 0 = A`;
+    hint.title = hint.textContent;
+    seedBox.hidden = !usesSeed();
+    syncGuards();
+  };
+
+  const syncValues = () => {
+    biasVal.textContent = pct(bias);
+    rateVal.textContent = pct(rate);
+    relabelCards();
+    syncShownLabel();
+    syncGuards();
+    mainDirty = true;
+  };
+
+  const setWalk = (w: BiasWalk) => {
+    walk = w;
+    WALKS.forEach((x, i) => {
+      walkButtons[i].classList.toggle('seg-on', x.walk === w);
+      walkButtons[i].setAttribute('aria-pressed', String(x.walk === w));
+    });
+    chips.classList.toggle('show-weights', w === 'weights');
+    syncGuards();
+    syncShownLabel();
+    mainDirty = true;
+  };
+
+  // ---- result over parents ----
+  const shownLabel = h('span', { class: 'mono-label', id: 'breed-shown' });
+  const weightsLabel = h('span', { class: 'mono-label br-weights', id: 'breed-weights' });
+  const legend = h('span', { class: 'mut-legend br-legend', 'aria-hidden': 'true' });
+  const waveC = h('canvas', { id: 'breed-wave', role: 'img', 'aria-label': 'Shown child (solid) over the parents (faint, in their colours)' });
+  const specC = h('canvas', { id: 'breed-spec', role: 'img', 'aria-label': 'Harmonic spectrum of the shown child over parent A (grey)' });
+  const axis = (...labels: string[]) => h('div', { class: 'gen-axis' }, ...labels.map((l) => h('span', {}, l)));
+  const waveBox = h(
+    'div',
+    { class: 'gen-plot-box' },
+    waveC,
+    h('div', { class: 'gen-plot-tags' }, h('span', { class: 'br-tags-left' }, shownLabel, weightsLabel), legend),
+  );
+  const specBox = h('div', { class: 'gen-plot-box' }, specC);
+  const viewer = h(
+    'div',
+    { class: 'gen-viewer' },
+    h(
+      'div',
+      { class: 'gen-views' },
+      h('div', { class: 'gen-plot gen-plot-wave' }, waveBox, axis('0', 'π', '2π')),
+      h('div', { class: 'gen-plot gen-plot-spec' }, specBox, axis('h1', 'grey = A', `h${SPEC_BINS}`)),
+    ),
+  );
+
+  // ---- batch ----
+  const modeButtons = MODES.map((m) => h('button', { id: `breed-mode-${m.mode}`, title: m.title, onclick: () => setMode(m.mode) }, m.label));
+  const stepper = buildStepper('breed', opts);
+  const addShownBtn = h('button', { id: 'breed-add-shown', onclick: () => addShown() }, 'Add shown');
+  const addBatchBtn = h('button', { id: 'breed-add-batch', class: 'primary', onclick: () => addBatch() }, `Add +${opts.count()}`);
+  const status = h('div', { class: 'gen-status', id: 'breed-status', role: 'status' });
+  const blockedNote = h('div', { class: 'gen-status warn', id: 'breed-blocked' });
+  const flash = flasher(status);
+  const strip = buildStrip('breed-strip', {
+    onShow: () => {
+      mainDirty = true;
+      syncShownLabel();
+    },
+  });
+  const batchBox = h(
+    'div',
+    { class: 'gen-box gen-batch' },
+    h(
+      'div',
+      { class: 'gen-batch-head' },
+      h('span', { class: 'gen-h' }, 'Batch'),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Batch mode' }, ...modeButtons),
+      stepper.el,
+      status,
+      blockedNote,
+      h('div', { class: 'gen-adds' }, addShownBtn, addBatchBtn),
+    ),
+    strip.el,
+  );
+
+  const setMode = (m: BatchMode) => {
+    mode = m;
+    MODES.forEach((x, i) => {
+      modeButtons[i].classList.toggle('seg-on', x.mode === m);
+      modeButtons[i].setAttribute('aria-pressed', String(x.mode === m));
+    });
+    flash('');
+    relabelCards();
+    syncShownLabel();
+    syncGuards();
+  };
+
+  const cardLabel = (i: number) => (mode === 'gen' ? `child ${i + 1}` : `b ${pct(breedBiasAt(request(), i))}`);
+  const relabelCards = () => strip.resize(opts.count(), cardLabel);
+
+  const syncShownLabel = () => {
+    const n = opts.count();
+    const i = strip.shown();
+    const b = breedBiasAt(request(), i);
+    shownLabel.textContent = mode === 'gen' ? `child ${i + 1} of ${n} · bias ${pct(b)}` : `#${i + 1} of ${n} · bias ${pct(b)}`;
+    const P = model.breedParents.length;
+    weightsLabel.textContent = P >= 2 ? breedWeights(P, b, walk, weightList()).map((v, k) => `${parentLetter(k)} ${pctN(v)}`).join(' · ') : '';
+  };
+
+  /** Add buttons (need two parents; Add +N refuses batches of copies) and Add selected. */
+  const syncGuards = () => {
+    const blocked = ready() ? batchBlocked() : null;
+    // Timeline full (every waveform used by a wavetable): adds are refused.
+    const room1 = model.roomFor(1);
+    const roomN = model.roomFor(opts.count());
+    const full = model.fullMessage();
+    addShownBtn.disabled = !ready() || !room1;
+    addBatchBtn.disabled = !ready() || blocked !== null || !roomN;
+    addShownBtn.title = !ready() ? 'Needs at least two parents' : room1 ? '' : full;
+    addBatchBtn.title = !ready() ? 'Needs at least two parents' : !roomN ? full : (blocked ?? '');
+    blockedNote.textContent = ready() && !roomN ? full : (blocked ?? '');
+    const s = model.selectedId;
+    addSel.disabled = s === null || model.breedParents.includes(s) || model.breedParents.length >= MAX_PARENTS;
+  };
+
+  const newSeed = () => {
+    seed = randomSeed();
+    seedLabel.textContent = hex(seed);
+  };
+
+  // ---- parent actions ----
   const addSelected = () => {
     if (model.selectedId !== null && !model.breedParents.includes(model.selectedId)) model.toggleBreedParent(model.selectedId);
   };
@@ -208,7 +373,6 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const useWindow = () => {
     const v = windowVoiceId === null ? undefined : model.voice(windowVoiceId);
     if (!v) return;
-    // Every table in the window (any wavetable shape), in slot order.
     const win = model.windowTables(v);
     const len = win.length;
     const n = Math.min(len, MAX_PARENTS);
@@ -221,9 +385,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   let voiceSig = '';
   const renderVoices = () => {
     const vs = model.voices;
-    if (windowVoiceId === null || !vs.some((v) => v.id === windowVoiceId)) {
-      windowVoiceId = vs[0]?.id ?? null;
-    }
+    if (windowVoiceId === null || !vs.some((v) => v.id === windowVoiceId)) windowVoiceId = vs[0]?.id ?? null;
     const sig = vs.map((v) => `${v.id}:${v.name}`).join('|');
     if (sig !== voiceSig) {
       voiceSig = sig;
@@ -233,193 +395,394 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     winSel.disabled = useWin.disabled = !vs.length;
   };
 
-  let thumbs: { id: TableId; canvas: HTMLCanvasElement; label: HTMLElement }[] = [];
-  const renderCards = () => {
+  // ---- parent chips ----
+  /** Chip to focus after a keyboard move / remove re-renders the row. */
+  let focusId: TableId | null = null;
+  let chipEls: { id: TableId; el: HTMLElement; canvas: HTMLCanvasElement; no: HTMLElement }[] = [];
+  const renderChips = () => {
     const ids = model.breedParents;
     for (const id of [...weights.keys()]) if (!ids.includes(id)) weights.delete(id);
-    thumbs = [];
-    if (!ids.length) {
-      cards.replaceChildren(
-        h('p', { class: 'hint parents-empty' }, 'No parents yet: add the selected waveform, use a voice’s window, or Shift-click / long-press waveforms in the Timeline.'),
+    chipEls = ids.map((id, i) => {
+      const L = parentLetter(i);
+      const canvas = h('canvas', { class: 'br-chip-wave', 'aria-hidden': 'true' });
+      const no = h('span', { class: 'br-chip-no' });
+      const weight = h('input', {
+        type: 'range',
+        class: 'br-chip-weight',
+        min: 0,
+        max: 1,
+        step: 0.01,
+        value: weights.get(id) ?? 1,
+        'aria-label': `Weight ${L}`,
+      });
+      weight.addEventListener('input', () => {
+        weights.set(id, Number(weight.value));
+        weight.title = `Weight ${L}: ${pctN(Number(weight.value))}`;
+        syncShownLabel();
+        syncGuards();
+        mainDirty = true;
+      });
+      weight.title = `Weight ${L}: ${pctN(weights.get(id) ?? 1)}`;
+      const el = h(
+        'div',
+        {
+          class: `br-chip${id === dragId && dragging ? ' dragging' : ''}`,
+          role: 'listitem',
+          tabindex: 0,
+          'data-id': String(id),
+          'aria-label': `Parent ${L}`,
+          'aria-description': 'Drag, or ← / → to reorder; Delete removes',
+          style: `--pc: var(${parentVar(i)})`,
+        },
+        h(
+          'div',
+          { class: 'br-chip-row' },
+          h('span', { class: 'br-letter' }, L),
+          canvas,
+          no,
+          h('button', { class: 'br-x', tabindex: -1, 'aria-label': `Remove parent ${L}`, onclick: () => model.toggleBreedParent(id) }, '×'),
+        ),
+        weight,
       );
-    } else {
-      cards.replaceChildren(
-        ...ids.map((id, i) => {
-          const L = parentLetter(i);
-          const canvas = h('canvas', { class: 'pc-wave', 'aria-label': `Parent ${L} waveform` });
-          const label = h('span', { class: 'pc-id' });
-          thumbs.push({ id, canvas, label });
-          const w = slider({
-            label: `Weight ${L}`,
-            min: 0,
-            max: 1,
-            step: 0.01,
-            value: weights.get(id) ?? 1,
-            format: (v) => `${Math.round(v * 100)}`,
-            onInput: (v) => {
-              weights.set(id, v);
-              updateSteps();
-            },
-          });
-          w.input.classList.add('pc-weight');
-          w.el.classList.add('pc-weight-field');
-          return h(
-            'div',
-            { class: 'parent-card', 'data-id': String(id) },
-            h('div', { class: 'pc-head' }, h('span', { class: 'pc-letter' }, L), label),
-            canvas,
-            w.el,
-            h(
-              'div',
-              { class: 'pc-btns' },
-              h('button', { class: 'small', 'aria-label': `Move ${L} earlier`, disabled: i === 0, onclick: () => model.moveBreedParent(id, -1) }, '‹'),
-              h('button', { class: 'small', 'aria-label': `Move ${L} later`, disabled: i === ids.length - 1, onclick: () => model.moveBreedParent(id, 1) }, '›'),
-              h('button', { class: 'small', 'aria-label': `Remove parent ${L}`, onclick: () => model.toggleBreedParent(id) }, '×'),
-            ),
-          );
-        }),
-      );
+      el.addEventListener('keydown', (e) => {
+        if (e.target !== el) return;
+        const d = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+        if (d) {
+          e.preventDefault();
+          focusId = id;
+          model.moveBreedParent(id, d);
+        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          const ids = model.breedParents;
+          const k = ids.indexOf(id);
+          focusId = ids[k + 1] ?? ids[k - 1] ?? null;
+          model.toggleBreedParent(id);
+        }
+      });
+      return { id, el, canvas, no };
+    });
+    chips.replaceChildren(
+      ...(chipEls.length
+        ? [...chipEls.map((c) => c.el), clear]
+        : [h('span', { class: 'br-empty' }, `Add 2–${MAX_PARENTS}: Shift-click or long-press waveforms in the Timeline, or Add selected`)]),
+    );
+    if (focusId !== null) {
+      chipEls.find((c) => c.id === focusId)?.el.focus();
+      focusId = null;
     }
-    parentsMeta.textContent = ids.length ? `${ids.length} · ${ids.map((_, i) => parentLetter(i)).join(' ')}` : '';
-    clear.disabled = !ids.length;
-    dirtyThumbs = dirty = true;
-    syncButtons();
+    legend.replaceChildren(
+      ...ids.map((_, i) => h('span', { class: 'br-key', style: `--pc: var(${parentVar(i)})` }, parentLetter(i))),
+      h('span', {}, h('i', { class: 'mut-key-res' }), 'child'),
+    );
+    chipsDirty = mainDirty = cardsDirty = thumbsDirty = true;
+    syncShownLabel();
+    syncGuards();
   };
 
-  /** Buttons and the Children readout (Breed N is disabled when it would only add copies). */
-  const updateSteps = () => {
-    const n = opts.count();
-    const blocked = batchBlocked();
-    const s = blocked ?? (mode === 'gen' ? `${n} × ${pct(bias)}%, seeds differ` : sweepBiases(n, bias).map(pct).join(' '));
-    stepsLabel.textContent = s;
-    stepsLabel.title = s;
-    // Timeline full (every waveform used by a wavetable): adds are refused.
-    const room1 = model.roomFor(1);
-    const roomN = model.roomFor(n);
-    apply1.disabled = !ready() || !room1;
-    applyN.disabled = !ready() || blocked !== null || !roomN;
-    apply1.title = room1 ? '' : model.fullMessage();
-    applyN.title = roomN ? '' : model.fullMessage();
-    addSel.disabled = model.selectedId === null || model.breedParents.includes(model.selectedId) || model.breedParents.length >= MAX_PARENTS;
-  };
-  const syncButtons = updateSteps;
-
-  const newSeed = () => {
-    seed = randomSeed();
-    seedLabel.textContent = `seed ${hex(seed)}`;
-    dirty = true;
-  };
-
-  // ---- preview (computed in the frame loop) ----
-  let pvKey = '';
-  let pv: GeneratedTable | null = null;
-  let lastCompute = -Infinity;
-  let dirty = true;
-  let dirtyThumbs = true;
-
-  const request = (m: BreedMode, count: number): BreedRequest => ({
-    op,
-    bias,
-    walk,
-    weights: walk === 'weights' ? weightList() : undefined,
-    rate,
-    seed,
-    mode: m,
-    count,
-  });
-  const currentKey = () =>
-    `${model.breedParents.join(',')}|${op}|${bias}|${walk}|${walk === 'weights' ? weightList().join(',') : ''}|${rate}|${seed}`;
-
-  const computePreview = (key: string) => {
-    pv = ready() ? breedBatch(request('single', 1), parents())[0] : null;
-    pvKey = key;
-    dirty = true;
-  };
-
-  const drawThumbs = () => {
-    const c = cssColor('--text');
-    for (const t of thumbs) {
+  const drawChips = () => {
+    chipsDirty = false;
+    const c = cssColor('--wave');
+    for (const t of chipEls) {
       const tab = model.table(t.id);
-      const [g, w, hh] = fit(t.canvas, THUMB_H);
+      const g = fitFixed(t.canvas, CHIP_W, CHIP_H);
       if (!tab) continue;
-      t.label.textContent = `#${model.indexOf(t.id) + 1}`;
-      t.label.title = `id ${t.id} · ${describeRecipe(tab.recipe)}`;
-      drawWave(g, 0, 0, w, hh, tab.data, c, { lineWidth: 1.25 });
+      const idx = model.indexOf(t.id);
+      t.no.textContent = `#${idx + 1}`;
+      t.el.title = `#${idx + 1} · id ${t.id} · ${describeRecipe(tab.recipe)}`;
+      drawWave(g, 0, 0, CHIP_W, CHIP_H, tab.data, c, { lineWidth: 1.1, points: CHIP_W * 2 });
     }
   };
 
-  const draw = () => {
-    const P = model.breedParents.length;
-    const w = P ? breedWeights(P, bias, walk, weightList()) : [];
-    weightsLabel.textContent = P >= 2 ? w.map((v, i) => `${parentLetter(i)} ${pct(v)}`).join(' · ') : '';
-    const axis = cssColor('--border');
-    const [g, ww, hh] = fit(pvWave, WAVE_H);
-    const [s, sw, sh] = fit(pvSpec, SPEC_H);
-    const a = model.table(model.breedParents[0] ?? null);
-    if (!pv || !a) {
-      g.fillStyle = cssColor('--muted');
+  // Drag to reorder (touch too: chips are touch-action pan-y, so a horizontal drag reorders
+  // and a vertical one scrolls the page). The pointer is captured by the row, which
+  // survives the chips being re-rendered.
+  let dragId: TableId | null = null;
+  let dragging = false;
+  let dragX = 0;
+  chips.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const chip = (e.target as HTMLElement).closest<HTMLElement>('.br-chip');
+    if (!chip || (e.target as HTMLElement).closest('button, input')) return;
+    dragId = Number(chip.dataset.id);
+    dragging = false;
+    dragX = e.clientX;
+    chips.setPointerCapture(e.pointerId);
+  });
+  chips.addEventListener('pointermove', (e) => {
+    if (dragId === null) return;
+    if (!dragging) {
+      if (Math.abs(e.clientX - dragX) < DRAG_SLOP) return;
+      dragging = true;
+      chips.classList.add('dragging');
+      chipEls.find((c) => c.id === dragId)?.el.classList.add('dragging');
+    }
+    // Target slot: how many other chips the pointer is past, in reading order (chips wrap
+    // on a phone).
+    let to = 0;
+    for (const c of chipEls) {
+      if (c.id === dragId) continue;
+      const r = c.el.getBoundingClientRect();
+      if (e.clientY > r.bottom || (e.clientY >= r.top && e.clientX > r.left + r.width / 2)) to++;
+    }
+    const from = model.breedParents.indexOf(dragId);
+    if (from >= 0 && to !== from) model.moveBreedParent(dragId, to - from);
+  });
+  const endDrag = () => {
+    if (dragId === null) return;
+    dragId = null;
+    dragging = false;
+    chips.classList.remove('dragging');
+    for (const c of chipEls) c.el.classList.remove('dragging');
+  };
+  chips.addEventListener('pointerup', endDrag);
+  chips.addEventListener('pointercancel', endDrag);
+  chips.addEventListener('lostpointercapture', endDrag);
+  // A vertical wheel scrolls the chip row sideways.
+  chips.addEventListener(
+    'wheel',
+    (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && chips.scrollWidth > chips.clientWidth) {
+        chips.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    },
+    { passive: false },
+  );
+
+  // ---- preview job ----
+  let job: Job | null = null;
+  let lastStart = -Infinity;
+
+  const startJob = (): Job | null => {
+    const ps = parents();
+    const req = request();
+    job = ps.length >= 2 ? { key: keyOf(model.breedParents, req), req, parents: ps, tables: new Array(req.count), next: 0 } : null;
+    cardsDirty = mainDirty = true;
+    return job;
+  };
+
+  /** The job for the current request (started synchronously if needed), or null. */
+  const currentJob = (): Job | null => (ready() && job?.key === keyOf(model.breedParents, request()) ? job : startJob());
+
+  const computeOne = (j: Job, i: number): GeneratedTable => {
+    let t = j.tables[i];
+    if (!t) {
+      t = j.tables[i] = breedBatchTable(j.req, j.parents, i);
+      cardsDirty = true;
+      if (i === strip.shown()) mainDirty = true;
+    }
+    return t;
+  };
+
+  /** Shown child first, then the rest in order, within the frame budget. */
+  const work = (j: Job, deadline: number) => {
+    computeOne(j, Math.min(strip.shown(), j.req.count - 1));
+    while (j.next < j.req.count && performance.now() < deadline) computeOne(j, j.next++);
+  };
+
+  /**
+   * The child that is shown and added. A planned Edit layer (draw / edit harmonics) slots
+   * in here, as in the Seed tab.
+   */
+  const finalTable = (j: Job, i: number): GeneratedTable => computeOne(j, i);
+
+  // ---- actions ----
+  const afterAdd = (msg: string) => {
+    if (usesSeed()) {
+      newSeed();
+      flash(`${msg} · new seed`);
+    } else flash(msg);
+  };
+
+  const addShown = () => {
+    const j = currentJob();
+    if (!j) return;
+    const i = strip.shown();
+    if (!model.addTables([finalTable(j, i)], true).length) return; // refused (Timeline full): the notice says why
+    afterAdd(`Added ${mode === 'gen' ? `child ${i + 1}` : `#${i + 1}`} to the Timeline (selected)`);
+  };
+
+  const addBatch = () => {
+    if (batchBlocked()) return;
+    const j = currentJob();
+    if (!j) return;
+    const tables = Array.from({ length: j.req.count }, (_, i) => finalTable(j, i));
+    if (!model.addTables(tables, true).length) return; // refused: keep the seed
+    afterAdd(`Added ${tables.length} waveform${tables.length > 1 ? 's' : ''} to the Timeline (the last is selected)`);
+  };
+
+  // ---- drawing ----
+  // Until a restarted preview has produced the shown child, the last good frame stays
+  // drawn (no flicker). Fewer than two parents clears the views.
+  const drawMain = () => {
+    mainDirty = false;
+    const ps = parents();
+    const cur = job && ready() && job.parents.length === ps.length && job.parents.every((p, i) => p === ps[i]) ? job : null;
+    const t = cur?.tables[Math.min(strip.shown(), cur.req.count - 1)];
+    if (ready() && !t) return; // redrawn when computeOne() produces the shown child
+    const data = t?.data;
+    const grid = cssColor('--surface-2');
+    const [g, w, hh] = fit(waveC, Math.max(40, waveBox.clientHeight || 150));
+    g.strokeStyle = grid;
+    g.lineWidth = 1;
+    g.beginPath();
+    for (const f of [0.25, 0.5, 0.75]) {
+      g.moveTo(Math.round(w * f) + 0.5, 0);
+      g.lineTo(Math.round(w * f) + 0.5, hh);
+    }
+    g.stroke();
+    g.strokeStyle = cssColor('--border');
+    g.beginPath();
+    g.moveTo(0, Math.round(hh / 2) + 0.5);
+    g.lineTo(w, Math.round(hh / 2) + 0.5);
+    g.stroke();
+    g.globalAlpha = 0.6;
+    ps.forEach((p, i) => drawWave(g, 0, 0, w, hh, p.data, cssColor(parentVar(i)), { lineWidth: 1.25 }));
+    g.globalAlpha = 1;
+    if (data) drawWave(g, 0, 0, w, hh, data, cssColor('--wave'), { lineWidth: 2 });
+    else {
+      g.fillStyle = cssColor('--text-2');
       g.font = '12px system-ui, sans-serif';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText(P < 2 ? 'Add at least two parents' : '…', ww / 2, hh / 2);
-      return;
+      g.fillText(ps.length ? 'Add at least two parents' : 'No parents yet', w / 2, hh / 2 + 14);
     }
-    const cPv = cssColor('--new');
-    drawWave(g, 0, 0, ww, hh, a.data, cssColor('--muted'), { axis, lineWidth: 1 });
-    drawWave(g, 0, 0, ww, hh, pv.data, cPv, { lineWidth: 1.75 });
-    drawSpectrum(s, sw, sh, pv.data, cPv);
+    const [gs, sw, sh] = fit(specC, Math.max(30, specBox.clientHeight || 90));
+    gs.strokeStyle = grid;
+    gs.beginPath();
+    for (const f of [1 / 3, 2 / 3]) {
+      gs.moveTo(0, Math.round(sh * f) + 0.5);
+      gs.lineTo(sw, Math.round(sh * f) + 0.5);
+    }
+    gs.stroke();
+    if (ps[0]) drawSpectrum(gs, sw, sh, ps[0].data, cssColor('--border-strong'), { bins: SPEC_BINS });
+    if (data) {
+      gs.globalAlpha = 0.85;
+      drawSpectrum(gs, sw, sh, data, cssColor('--accent'), { bins: SPEC_BINS });
+      gs.globalAlpha = 1;
+    }
   };
 
-  // ---- actions ----
-  const applySingle = () => {
-    if (!ready()) return;
-    const gen = pv && pvKey === currentKey() ? pv : breedBatch(request('single', 1), parents())[0];
-    if (!model.addTables([gen], true).length) return; // refused (Timeline full): keep the seed
-    newSeed();
+  const drawCards = () => {
+    cardsDirty = false;
+    const cur = ready() && job?.key === keyOf(model.breedParents, request()) ? job : null;
+    strip.cards.forEach((c, i) => {
+      const t = cur && i < cur.req.count ? cur.tables[i] : undefined;
+      // Keep the previous drawing until the current job has computed this card.
+      if (c.drawn === t || (!t && ready())) return;
+      c.drawn = t;
+      drawCard(c, t?.data);
+    });
   };
 
-  const applyBatch = () => {
-    if (!ready() || batchBlocked()) return;
-    if (!model.addTables(breedBatch(request(mode, opts.count()), parents()), false).length) return; // refused: keep the seed
-    newSeed();
+  // Library thumbnails: each operator applied to the parents at the current bias / walk /
+  // mutation / seed (= the last sweep card) over a faint parent A. Restarted at most every
+  // THUMBS_MS; only entries scrolled into view, within the frame budget; old drawings stay
+  // until replaced.
+  const thumbDrawn: string[] = BREED_OPS.map(() => '');
+  let thumbTarget = '';
+  let thumbTargetAt = -Infinity;
+  const thumbKey = () => `${model.breedParents.join(',')}|${bias}|${walk}|${walk === 'weights' ? weightList().join(',') : ''}|${rate}|${seed}`;
+  let thumbParams: { ps: WaveTable[]; bias: number; walk: BiasWalk; weights?: number[]; rate: number; seed: number } | null = null;
+  const drawThumbs = (now: number, deadline: number) => {
+    const target = thumbKey();
+    if (target !== thumbTarget) {
+      if (now - thumbTargetAt < THUMBS_MS) return; // stay dirty; retried next frame
+      thumbTarget = target;
+      thumbTargetAt = now;
+      const ps = parents();
+      thumbParams = ps.length >= 2 ? { ps, bias, walk, weights: walk === 'weights' ? weightList() : undefined, rate, seed } : null;
+    }
+    const tp = thumbParams;
+    const normal = cssColor('--text-2');
+    const current = cssColor('--accent-text');
+    const ghost = cssColor('--border-strong');
+    let pending = false;
+    for (const i of lib.inView()) {
+      const color = i === sel ? current : normal;
+      const want = `${thumbTarget}|${color}`;
+      if (thumbDrawn[i] === want) continue;
+      if (performance.now() > deadline) {
+        pending = true;
+        break;
+      }
+      const g = fitFixed(lib.thumbs[i], THUMB_W, THUMB_H);
+      if (tp) {
+        drawWave(g, 0, 0, THUMB_W, THUMB_H, tp.ps[0].data, ghost, { lineWidth: 1, points: THUMB_W * 2 });
+        const out = breed(
+          tp.ps.map((p) => p.data),
+          { op: BREED_OPS[i].id, bias: tp.bias, walk: tp.walk, weights: tp.weights, rate: tp.rate, seed: tp.seed },
+        );
+        drawWave(g, 0, 0, THUMB_W, THUMB_H, out, color, { lineWidth: 1.2, points: THUMB_W * 2 });
+      }
+      thumbDrawn[i] = want;
+    }
+    thumbsDirty = pending || thumbTarget !== target;
   };
 
-  // ---- subscriptions ----
-  model.on('parents', renderCards);
-  model.on('voices', renderVoices);
-  model.on('selection', syncButtons);
-  model.on('timeline', () => {
-    dirtyThumbs = dirty = true;
-    syncButtons();
+  // ---- assembly ----
+  const el = h(
+    'div',
+    { role: 'tabpanel', id: 'panel-breed', class: 'gen-tab breed' },
+    lib.el,
+    h('div', { class: 'gen-main' }, parentsRow, params, viewer, batchBox),
+  );
+  watchVisibility(el);
+
+  opts.onCount((n) => {
+    const atEnd = strip.shown() >= strip.cards.length - 1;
+    stepper.sync(n);
+    addBatchBtn.textContent = `Add +${n}`;
+    syncGuards();
+    relabelCards();
+    if (atEnd) strip.setShown(n - 1);
+    syncShownLabel();
+    cardsDirty = mainDirty = true;
+    flash('');
   });
-  model.on('wavetables', syncButtons);
-  onThemeChange(() => (dirtyThumbs = dirty = true));
-  new ResizeObserver(() => (dirtyThumbs = dirty = true)).observe(el);
+  model.on('parents', renderChips);
+  model.on('voices', renderVoices);
+  model.on('selection', syncGuards);
+  model.on('timeline', () => {
+    chipsDirty = mainDirty = true;
+    syncGuards();
+  });
+  model.on('wavetables', syncGuards);
+  onThemeChange(() => {
+    thumbDrawn.fill('');
+    for (const c of strip.cards) c.drawn = null;
+    thumbsDirty = cardsDirty = mainDirty = chipsDirty = true;
+  });
+  new ResizeObserver(() => (mainDirty = true)).observe(viewer);
 
-  renderVoices();
-  renderCards();
-  updateSteps();
+  setMode(mode);
+  setWalk(walk);
+  strip.setShown(opts.count() - 1);
   newSeed();
+  renderVoices();
+  renderChips();
+  syncParams();
+  syncValues();
 
   return {
     el,
     view: {
       frame(now) {
-        if (!opts.active()) return;
-        if (dirtyThumbs && thumbs.length) {
-          dirtyThumbs = false;
-          drawThumbs();
+        if (!opts.active() || !isOnScreen(el)) return;
+        const deadline = performance.now() + BUDGET_MS;
+        const key = keyOf(model.breedParents, request());
+        if (ready() && job?.key !== key && now - lastStart >= PREVIEW_MS) {
+          lastStart = now;
+          startJob();
+        } else if (!ready() && job) {
+          job = null;
+          mainDirty = cardsDirty = true;
         }
-        if (!isOnScreen(pvWave)) return;
-        const key = currentKey();
-        if (key !== pvKey && now - lastCompute >= PREVIEW_MS) {
-          lastCompute = now;
-          computePreview(key);
-        }
-        if (dirty) {
-          dirty = false;
-          draw();
-        }
+        if (job?.key === key) work(job, deadline);
+        if (chipsDirty) drawChips();
+        if (mainDirty) drawMain();
+        if (cardsDirty) drawCards();
+        if (thumbsDirty || thumbKey() !== thumbTarget) drawThumbs(now, deadline + 4);
       },
     },
   };

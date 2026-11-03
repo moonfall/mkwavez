@@ -36,16 +36,20 @@ import type { GeneratedTable, Recipe, TableId, WaveTable } from './table';
 const N = TABLE_SIZE;
 export const MAX_PARENTS = 8;
 
+/** Splice: number of time segments and crossfade width (samples, raised cosine). */
+export const SPLICE_SEGMENTS = 8;
+export const SPLICE_FADE = 64;
+
 export const BREED_OPS = [
-  { group: 'Blend', id: 'mix', label: 'Crossfade', seeded: false },
-  { group: 'Blend', id: 'spectral', label: 'Spectral mix', seeded: false },
-  { group: 'Swap', id: 'magsA', label: 'A mags + others’ phases', seeded: false },
-  { group: 'Swap', id: 'phasesA', label: 'A phases + others’ mags', seeded: false },
-  { group: 'Swap', id: 'envelope', label: 'Envelope transfer', seeded: false },
-  { group: 'Crossover', id: 'split', label: 'Harmonic split', seeded: false },
-  { group: 'Crossover', id: 'genetic', label: 'Genetic (harmonics)', seeded: true },
-  { group: 'Crossover', id: 'bands', label: 'Genetic (bands)', seeded: true },
-  { group: 'Crossover', id: 'splice', label: 'Time splice', seeded: true },
+  { group: 'Blend', id: 'mix', label: 'Crossfade', seeded: false, hint: 'Weighted sum of the parents’ samples' },
+  { group: 'Blend', id: 'spectral', label: 'Spectral mix', seeded: false, hint: 'Harmonic magnitudes and phases mixed separately (no cancellation)' },
+  { group: 'Swap', id: 'magsA', label: 'Magnitudes from A', seeded: false, hint: 'A’s harmonic magnitudes; phases move toward the others’' },
+  { group: 'Swap', id: 'phasesA', label: 'Phases from A', seeded: false, hint: 'A’s phases; harmonic magnitudes move toward the others’' },
+  { group: 'Shape', id: 'envelope', label: 'Envelope transfer', seeded: false, hint: 'A’s harmonics re-weighted toward the others’ smoothed spectral envelope' },
+  { group: 'Crossover', id: 'split', label: 'Harmonic split', seeded: false, hint: 'Contiguous harmonic bands, A lowest, sized by the weights' },
+  { group: 'Crossover', id: 'genetic', label: 'Genetic per harmonic', seeded: true, hint: 'Each harmonic whole from one parent, seeded pick by weight' },
+  { group: 'Crossover', id: 'bands', label: 'Genetic per band', seeded: true, hint: 'Each third-octave band whole from one parent, seeded pick by weight' },
+  { group: 'Time', id: 'splice', label: 'Splice', seeded: true, hint: `${SPLICE_SEGMENTS} seeded time segments, each from one parent, crossfaded` },
 ] as const;
 
 export type BreedOpId = (typeof BREED_OPS)[number]['id'];
@@ -64,9 +68,6 @@ export interface BreedParams {
   seed: number;
 }
 
-/** Splice: number of time segments and crossfade width (samples, raised cosine). */
-export const SPLICE_SEGMENTS = 8;
-export const SPLICE_FADE = 64;
 /** Envelope: Gaussian smoothing width (harmonics) and floor relative to the envelope peak. */
 const ENV_SIGMA = 2;
 const ENV_FLOOR = 1e-3;
@@ -394,35 +395,49 @@ export function parseWeights(s: unknown): number[] | undefined {
   return s.split(',').map(Number);
 }
 
+/** Number of children an Apply makes (1 for 'single'). */
+export const breedCount = (req: BreedRequest): number => (req.mode === 'single' ? 1 : Math.max(1, Math.round(req.count)));
+
+/** Bias of child i (0-based) of an Apply: B·(i+1)/N for a sweep, B otherwise. */
+export function breedBiasAt(req: BreedRequest, i: number): number {
+  return req.mode === 'sweep' ? (req.bias * (i + 1)) / breedCount(req) : req.bias;
+}
+
+/**
+ * Child i of an Apply, exactly as breedBatch() returns it (lets a preview compute the
+ * batch incrementally, shown child first). Parents in order, A first (>= 1).
+ */
+export function breedBatchTable(req: BreedRequest, parents: readonly WaveTable[], i: number): GeneratedTable {
+  const count = breedCount(req);
+  const seed = req.seed >>> 0;
+  const bias = breedBiasAt(req, i);
+  const weights = req.walk === 'weights' ? Array.from({ length: parents.length }, (_, p) => req.weights?.[p] ?? 1) : undefined;
+  const recipe: Recipe = {
+    op: 'breed',
+    params: {
+      breed: req.op,
+      bias,
+      batchBias: req.bias,
+      mode: req.mode,
+      walk: req.walk,
+      weights: weightsParam(req.walk, weights),
+      rate: req.rate,
+    },
+    seed,
+    parents: parents.map((p) => p.id),
+    batch: { index: i, count },
+  };
+  const s = req.mode === 'gen' ? childSeed(seed, i) : seed;
+  const data = breed(
+    parents.map((p) => p.data),
+    { op: req.op, bias, walk: req.walk, weights, rate: req.rate, seed: s },
+  );
+  return { data, recipe };
+}
+
 /** Generate the children for one Apply. Parents in order, A first (>= 1). */
 export function breedBatch(req: BreedRequest, parents: readonly WaveTable[]): GeneratedTable[] {
-  const count = req.mode === 'single' ? 1 : Math.max(1, Math.round(req.count));
-  const seed = req.seed >>> 0;
-  const data = parents.map((p) => p.data);
-  const ids: TableId[] = parents.map((p) => p.id);
-  const biases = req.mode === 'sweep' ? sweepBiases(count, req.bias) : new Array<number>(count).fill(req.bias);
-  const weights = req.walk === 'weights' ? Array.from({ length: parents.length }, (_, i) => req.weights?.[i] ?? 1) : undefined;
-  const out: GeneratedTable[] = [];
-  for (let i = 0; i < count; i++) {
-    const s = req.mode === 'gen' ? childSeed(seed, i) : seed;
-    const recipe: Recipe = {
-      op: 'breed',
-      params: {
-        breed: req.op,
-        bias: biases[i],
-        batchBias: req.bias,
-        mode: req.mode,
-        walk: req.walk,
-        weights: weightsParam(req.walk, weights),
-        rate: req.rate,
-      },
-      seed,
-      parents: ids,
-      batch: { index: i, count },
-    };
-    out.push({ data: breed(data, { op: req.op, bias: biases[i], walk: req.walk, weights, rate: req.rate, seed: s }), recipe });
-  }
-  return out;
+  return Array.from({ length: breedCount(req) }, (_, i) => breedBatchTable(req, parents, i));
 }
 
 /** Re-render a 'breed' recipe; `resolve` supplies parent data by id. */

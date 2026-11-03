@@ -20,8 +20,10 @@ src/
     mutateBatch.ts      a batch (lin, log, chain) → tables + recipes, or one table of
                         it (mutateBatchTable, for incremental previews); seeding
                         rules; renderMutateRecipe() re-renders from parent tables
-    breed.ts            multi-parent breed operators, bias walks → per-parent weights,
-                        breedBatch (single / sweep / gen), renderBreedRecipe()
+    breed.ts            multi-parent breed operators (group, hint, seeded flag), bias
+                        walks → per-parent weights, breedBatch (single / sweep / gen) or
+                        one child of it (breedBatchTable, for incremental previews),
+                        renderBreedRecipe()
     mipmap.ts           per-octave band-limited mip sets, packed in one Float32Array
     table.ts            WaveTable, Recipe, IdAllocator
     timeline.ts         appendWithEviction (oldest-first, pin-aware), index/window remap
@@ -59,8 +61,8 @@ src/
                         stored in localStorage); transport.ts the top bar;
                         generate.ts hosts the tabs: seed.ts (Seed tab), mutate.ts
                         (Mutate tab) and breed.ts (Breed tab); library.ts (the
-                        shared library list) and batch.ts (N stepper, voice
-                        targets, card strip) are used by Seed and Mutate; timeline.ts (strip,
+                        shared library list) and batch.ts (N stepper, card strip)
+                        are used by Seed, Mutate and Breed; timeline.ts (strip,
                         toggles Breed parents; drag source); wavetables.ts (compact
                         panel: chips, view, summary; Edit / Collapse); wavetableEditor.ts
                         (the expanded editor: list, views, header, write head settings,
@@ -108,8 +110,10 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   batchBias (B), mode: single|sweep|gen, walk: path|ring|weights, weights ('' or
   comma-separated per parent), rate }`, `seed` (the Apply's seed), `parents` (all
   parent ids, A first), `batch {index, count}`. Sweep table i uses bias `B·(i+1)/N`
-  and the seed; generation child j uses `childSeed(seed, j)` (child 0 = seed = the
-  preview). Weights come from `breedWeights(P, bias, walk, weights)`; bias 0 is
+  and the seed; generation child j uses `childSeed(seed, j)` (child 0 = seed). The UI
+  makes sweep / gen batches; "Add shown" adds one child of one, keeping its batch
+  position (so it re-renders exactly); `single` (one child at B) is older recipes' mode
+  and equals the last child of a sweep. Weights come from `breedWeights(P, bias, walk, weights)`; bias 0 is
   always `[1, 0, …]`, so every operator returns shape(A) there.
 - **Copy recipe** — Timeline "Copy to end" (`AppModel.copyToEnd`, a single add) gives
   the copy a new id and the same (shared, immutable) data; its recipe is the source's
@@ -277,8 +281,11 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   body scrolls if its content overflows. The Seed tab fills Generate (library column;
   formula row; wave + spectrum flex; batch row + strip), and so does Mutate (library
   column | source + parameters row; wave + spectrum flex; batch row + strip; the batch
-  row wraps when the column is narrower than ~700 px, via a container query); Breed
-  lays out in two columns and scrolls inside it. The shared Generate pieces use `gen-*`
+  row wraps when the column is narrower than ~700 px, via a container query), and so
+  does Breed (library column | parent chips row; operator line (title, hint, seed) and
+  controls line (bias, walk, mutation); wave + spectrum flex; batch row + strip; it fits
+  the panel at 1440×900 and 1180×820 without scrolling, the chip row scrolls sideways
+  when there are more parents than fit). The shared Generate pieces use `gen-*`
   classes (`.gen-tab`, `.gen-lib`, `.gen-strip`, …).
 - **Narrow shell (< 900 px)**: the same panels in the same order, one scrolling
   column, each collapsible (Wavetables starts collapsed); the transport bar is sticky.
@@ -372,9 +379,11 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   tables. Its library thumbnails (each mutation on the source at the current amount /
   seed) restart at most every 150 ms and are computed only for entries scrolled into
   view, within the same budget; old drawings stay until replaced. The Breed
-  preview follows the same rules as the old single-table Mutate preview (only while
-  showing and on screen, when its key changed, at most every 50 ms while dragging) (key: parent ids, operator, bias, walk, weights,
-  rate, seed); parent spectra are cached per table data array. The Seed preview is a
+  preview is a whole batch computed the same way (key: parent ids, operator, bias, walk,
+  weights, rate, seed, mode, N; restarted at most every 50 ms; ≤ 8 ms per frame, shown
+  child first) through `breedBatchTable()`, which Add reuses; its library thumbnails (each
+  operator on the parents at the current bias / walk / mutation / seed) follow Mutate's
+  rules (150 ms, in view, budgeted). Parent spectra are cached per table data array. The Seed preview is a
   whole batch: on a key change (entry, formula / params, seed, N; restarted at most every
   50 ms) it is recomputed incrementally, ≤ 8 ms of main-thread work per frame, shown
   table first, through the same `seedTable()` as Add (which reuses the preview tables

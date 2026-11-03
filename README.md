@@ -43,7 +43,7 @@ to `main` (or by hand: Actions → Deploy to GitHub Pages → Run workflow) and 
 On a laptop / tablet (≥ 900 px wide) everything is on one screen: the transport bar
 (play, BPM, undo, Session menu, MIDI, waveform count, sample rate, theme toggle), then Generate | Wavetables,
 the Timeline strip, and Voice | Sequence. Panels scroll internally when their content
-doesn't fit (e.g. the Breed tab). Narrower screens get one scrolling column
+doesn't fit. Narrower screens get one scrolling column
 of the same panels, each collapsible. Dark theme by default; the sun / moon button
 switches (the choice is remembered).
 
@@ -72,13 +72,24 @@ switches (the choice is remembered).
   last waveform added (likewise the next source; Undo restores the selection).
   The previews are exactly what gets added; a seeded mutation draws a new seed after
   each Add.
-- **Generate → Breed**: combine 2–8 parents. Shift-click (or ⌘-click) or
-  long-press waveforms in the Timeline, "Add selected", or "Use window" of a voice; reorder
-  or remove them on their cards. Pick an operator (crossfade, spectral mix, magnitude /
-  phase swaps, envelope transfer, harmonic split, genetic masks, time splice), a Bias
-  (0 = parent A) and how it walks the parents (path, ring, custom weights), and a
-  Mutation rate. Breed adds one child; Breed N sweeps the bias or makes a seeded
-  generation of N children.
+- **Generate → Breed**: combine 2–8 parents. The operator library (Blend: Crossfade,
+  Spectral mix; Swap: Magnitudes / Phases from A; Shape: Envelope transfer; Crossover:
+  Harmonic split, Genetic per harmonic / per band; Time: Splice) works like Mutate's
+  (search by name, group or hint; ▲/▼ or the arrow keys); each thumbnail is that operator
+  applied to the parents at the current bias (faint = parent A), `rnd` marks seeded
+  operators. Parents are chips (A, B, …: thumbnail + waveform number): Shift-click (or
+  ⌘-click) or long-press waveforms in the Timeline, "Add selected", or "Use window of Vn";
+  drag a chip (or focus it and press ←/→) to reorder, × or Delete removes, Clear removes
+  all. Then the operator's hint, Bias (0 = parent A), how the bias walks the parents
+  (Path, Ring, or Custom weights: a small slider on each chip), Mutation (seeded jitter,
+  strongest between parents) and the seed (Reroll; shown when the result uses it). The
+  large view shows one child (solid) over the parents (faint, in their chip colours) with
+  its spectrum (grey = A). Batch: Sweep (child i of N at bias `B·i/N`) or Generation (N
+  children at B, each with its own seed); the strip shows all N (click, or ←/→ when
+  focused), the last by default. "Add shown" / "Add +N" add exactly the previews and
+  select the last waveform added (undo restores the selection); Add +N refuses batches of
+  copies (a sweep at bias 0; a generation with nothing seeded or one parent holding all
+  the weight) and both need two parents.
 - **Timeline**: every waveform, in order (cap 4096), as one horizontally scrolling strip
   (a vertical mouse wheel scrolls it sideways). Click to select (the header names the
   selection); Shift-click / long-press toggles Breed parents (badged A, B, …). A waveform

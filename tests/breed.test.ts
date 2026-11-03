@@ -4,6 +4,7 @@ import { AppModel } from '../src/app/model';
 import {
   breed,
   breedBatch,
+  breedBatchTable,
   breedWeights,
   BREED_OPS,
   childSeed,
@@ -218,7 +219,7 @@ describe('breedBatch and recipes', () => {
       parents: [10, 11, 12],
       batch: { index: 0, count: 1 },
     });
-    expect(describeRecipe(t.recipe)).toBe('Genetic (harmonics) 40% of id 10×11×12');
+    expect(describeRecipe(t.recipe)).toBe('Genetic per harmonic 40% of id 10×11×12');
   });
 
   it('sweep: biases B·(i+1)/N with one seed, last equals the preview', () => {
@@ -251,6 +252,28 @@ describe('breedBatch and recipes', () => {
       }
     });
   }
+
+  it('breedBatchTable(i) equals child i of breedBatch (any order), and Add shown re-renders', () => {
+    for (const mode of ['sweep', 'gen'] as BreedMode[]) {
+      for (const op of ['spectral', 'genetic', 'splice'] as BreedOpId[]) {
+        const req = { op, bias: 0.6, walk: 'weights' as BiasWalk, weights: [1, 0.5, 2], rate: 0.08, seed: 99, mode, count: 5 };
+        const all = breedBatch(req, parents);
+        for (const i of [3, 0, 4]) {
+          const t = breedBatchTable(req, parents, i);
+          expect(same(t.data, all[i].data), `${mode} ${op} #${i}`).toBe(true);
+          expect(t.recipe).toEqual(all[i].recipe);
+          const { tables, resolve } = realize([t]);
+          expect(same(tables[0].data, renderRecipe(tables[0].recipe, { resolveTable: resolve }))).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('every operator has a group, a hint and a seeded flag', () => {
+    expect(new Set(BREED_OPS.map((o) => o.group))).toEqual(new Set(['Blend', 'Swap', 'Shape', 'Crossover', 'Time']));
+    for (const o of BREED_OPS) expect(o.hint.length).toBeGreaterThan(10);
+    expect(BREED_OPS.filter((o) => o.seeded).map((o) => o.id)).toEqual(['genetic', 'bands', 'splice']);
+  });
 
   it('custom weights are recorded per parent', () => {
     const [t] = breedBatch({ op: 'mix', bias: 1, walk: 'weights', weights: [0.25, 1], rate: 0, seed: 1, mode: 'single', count: 1 }, parents);

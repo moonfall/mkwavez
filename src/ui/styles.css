@@ -26,6 +26,15 @@
   --v5: #a9e34b;
   --v6: #da77f2;
   --v7: #c8946a;
+  /* Breed parents A…H */
+  --par-0: #3bc9db;
+  --par-1: #ff922b;
+  --par-2: #da77f2;
+  --par-3: #a9e34b;
+  --par-4: #ffd43b;
+  --par-5: #ff6b6b;
+  --par-6: #74c0fc;
+  --par-7: #e599f7;
   --radius: 8px;
   --gutter: 8px;
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -60,6 +69,14 @@
   --v5: #5c940d;
   --v6: #9c36b5;
   --v7: #8d5524;
+  --par-0: #0c8599;
+  --par-1: #d9480f;
+  --par-2: #9c36b5;
+  --par-3: #5c940d;
+  --par-4: #b08800;
+  --par-5: #c92a2a;
+  --par-6: #1971c2;
+  --par-7: #ae3ec9;
   color-scheme: light;
 }
 
@@ -811,17 +828,8 @@ button.icon-btn svg {
   }
 }
 
-/* Mutate / Breed: two columns on the wide shell (they scroll inside Generate) */
-.gen-col {
-  min-width: 0;
-}
+/* Wide shell: the Generate body is a flex column (each tab fills it). */
 @media (min-width: 900px) {
-  .gen-cols {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 0 16px;
-    align-items: start;
-  }
   #sec-generate .panel-body {
     display: flex;
     flex-direction: column;
@@ -1424,75 +1432,6 @@ button.active {
 button:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-/* ---- breed ---- */
-.parents {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
-  gap: 6px;
-  margin: 2px 0 8px;
-}
-.parents-empty {
-  grid-column: 1 / -1;
-  margin: 0;
-  padding: 10px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius);
-}
-.parent-card {
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: 4px;
-}
-.parent-card canvas {
-  border: 0;
-  border-radius: 0;
-}
-.pc-head {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0 0 2px;
-  font-size: 11px;
-}
-.pc-letter {
-  display: inline-block;
-  min-width: 16px;
-  padding: 0 3px;
-  border-radius: 4px;
-  background: var(--accent);
-  color: var(--surface);
-  font-weight: 700;
-  text-align: center;
-}
-.pc-id {
-  font-family: var(--font-mono);
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pc-weight-field {
-  display: none;
-}
-.parents.show-weights .pc-weight-field {
-  display: block;
-}
-.pc-weight-field .label {
-  font-size: 10px;
-  min-height: 16px;
-}
-.pc-btns {
-  display: flex;
-  gap: 3px;
-  margin-top: 3px;
-}
-.pc-btns button {
-  flex: 1 1 0;
-  padding: 0;
 }
 
 /* ---- seed ---- */
@@ -2721,4 +2660,293 @@ span.wte-full {
   border-radius: 4px;
   padding: 0 4px;
   font-size: 11px;
+}
+
+/* ---- breed (library, views, strip: the shared gen-* components; mut-* title / sliders) ---- */
+.br-parents {
+  display: flex;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+.br-parents-h {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.br-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  padding: 1px;
+}
+.br-chips.dragging {
+  cursor: grabbing;
+}
+.br-chip {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--pc);
+  border-radius: 6px;
+  background: var(--bg);
+  padding: 0 1px 0 0;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-y;
+}
+.br-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.br-chip.dragging {
+  border-color: var(--accent);
+  border-left-color: var(--pc);
+  background: var(--accent-bg);
+}
+.br-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding-left: 3px;
+}
+.br-letter {
+  flex: none;
+  min-width: 15px;
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--pc);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+canvas.br-chip-wave {
+  flex: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.br-chip-no {
+  flex: none;
+  min-width: 22px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+}
+button.br-x {
+  flex: none;
+  width: 18px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1;
+}
+button.br-x:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+input.br-chip-weight {
+  display: none;
+  /* No intrinsic width: the chip is as wide as its top row and the slider fills it. */
+  width: 0;
+  min-width: calc(100% - 6px);
+  height: 14px;
+  margin: 0 3px 3px;
+}
+.br-chips.show-weights input.br-chip-weight {
+  display: block;
+}
+.br-empty {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 28px;
+}
+.br-parent-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.br-parent-acts button,
+.br-parent-acts select {
+  height: 26px;
+  font-size: 12px;
+}
+button.br-clear {
+  flex: none;
+  align-self: center;
+  height: 22px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 12px;
+  text-decoration: underline;
+  padding: 0 4px;
+}
+button.br-clear:hover {
+  color: var(--text);
+  background: none;
+}
+.br-win {
+  display: flex;
+}
+.br-win button {
+  border-radius: 6px 0 0 6px;
+}
+.br-win select {
+  border-radius: 0 6px 6px 0;
+  border-left: 0;
+  padding: 0 4px;
+}
+.br-params {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.br-op-line,
+.br-ctl-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.br-op-line {
+  gap: 2px 8px;
+}
+.br-name {
+  flex: none;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.br-hint {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.br-bias {
+  flex: 1 1 160px;
+  min-width: 120px;
+}
+.br-rate {
+  flex: 1 1 150px;
+  min-width: 120px;
+}
+.br-walk button {
+  padding: 0 7px;
+}
+.breed .gen-seedbox {
+  flex: none;
+}
+.br-tags-left {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.br-weights {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.br-legend {
+  flex: none;
+}
+.br-key {
+  color: var(--pc);
+  font-weight: 600;
+}
+.br-key::before {
+  content: '';
+  width: 10px;
+  border-top: 2px solid var(--pc);
+  opacity: 0.7;
+}
+.breed .gen-batch-head > #breed-blocked {
+  flex: 1 1 0;
+}
+
+/* Wide shell: parents row; operator line (title, hint ellipsised with its full text in
+   the tooltip, seed); controls line. Compacted via container queries when narrow. */
+@media (min-width: 900px) {
+  .br-params,
+  .br-parents {
+    flex: none;
+  }
+  .br-op-line,
+  .br-ctl-line {
+    flex-wrap: nowrap;
+  }
+  .br-op-line {
+    height: 20px;
+  }
+  .br-op-line button.small {
+    height: 20px;
+  }
+  .breed .gen-main {
+    container: br-main / inline-size;
+    gap: 6px;
+  }
+}
+@container br-main (max-width: 700px) {
+  .br-ctl-line {
+    gap: 10px;
+  }
+  .breed .gen-seedbox > span:first-child,
+  .br-parents-h,
+  .br-weights {
+    display: none;
+  }
+}
+@container br-main (max-width: 480px) {
+  .breed .gen-batch-head {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+}
+/* Phone / narrow: chips wrap, everything stacks. */
+@media (max-width: 719px) {
+  .br-parents {
+    flex-wrap: wrap;
+  }
+  .br-chips {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .br-parent-acts {
+    flex-wrap: wrap;
+  }
+  .br-hint {
+    flex-basis: 100%;
+    white-space: normal;
+  }
+  .br-empty {
+    white-space: normal;
+    line-height: 1.4;
+  }
 }

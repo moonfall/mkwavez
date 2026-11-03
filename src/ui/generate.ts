@@ -1,5 +1,5 @@
 import type { FrameView, UiContext } from './context';
-import { h, panel, slider } from './dom';
+import { h, panel } from './dom';
 import { buildBreedPanel } from './breed';
 import { buildMutatePanel } from './mutate';
 import { MAX_BATCH } from './batch';
@@ -13,25 +13,9 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
     n = Math.max(1, Math.min(MAX_BATCH, Math.round(n)));
     if (n === count) return;
     count = n;
-    countSlider.set(n);
     for (const fn of countListeners) fn(count);
   };
   const onCount = (fn: (n: number) => void) => countListeners.push(fn);
-
-  // ---- Breed: batch size (Seed / Mutate have their own batch row) ----
-  const countSlider = slider({
-    label: 'Batch size (N)',
-    min: 1,
-    max: MAX_BATCH,
-    step: 1,
-    value: count,
-    onInput: (v) => setCount(v),
-  });
-  const shared = h(
-    'div',
-    { class: 'grid2', id: 'gen-shared' },
-    countSlider.el,
-  );
 
   // ---- tabs ----
   const tabNames = ['Seed', 'Mutate', 'Breed', 'Sample'] as const;
@@ -44,7 +28,6 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
     ctx.ui.setPref('generateTab', name);
     for (const [n, b] of tabButtons) b.setAttribute('aria-selected', String(n === name));
     for (const [n, p] of panels) p.hidden = n !== name;
-    shared.hidden = name !== 'Breed';
     sec.el.dataset.tab = name.toLowerCase();
     sec.body.scrollTop = 0;
   };
@@ -54,7 +37,6 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
     tabs.append(b);
   }
   sec.tools.append(tabs);
-  sec.body.append(shared);
 
   // ---- Seed panel ----
   const seed = buildSeedPanel(ctx, {
@@ -77,6 +59,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   // ---- Breed panel ----
   const breed = buildBreedPanel(ctx, {
     count: () => count,
+    setCount,
     onCount,
     active: () => sec.isOpen() && currentTab === 'Breed',
   });
