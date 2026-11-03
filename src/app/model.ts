@@ -8,46 +8,57 @@ import { MAX_STEPS, TIMELINE_CAP, UNDO_DEPTH } from '../core/constants';
 import { emptySteps, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
-import { DEFAULT_VOICE, followAppend, type VoiceParams } from '../core/voice';
+import { clampVoiceWindow, DEFAULT_VOICE, followEdit, fullWindow, voiceWindow, type VoiceParams } from '../core/voice';
 import {
-  allWavetable,
-  ALL_WAVETABLE_ID,
-  clampWindow,
+  builtinWavetables,
+  cellAt,
+  composeMaps,
   pinnedIds,
-  wavetableLength,
+  removeTables,
+  TIMELINE_WAVETABLE_ID,
+  writeTables,
+  type Interp,
   type Wavetable,
   type WavetableId,
 } from '../core/wavetable';
+import { windowIds } from '../core/wavetablePlayback';
 
 /**
+ * 'wavetables' = wavetable contents or settings changed (always emitted with 'timeline'
+ * on adds / undo, so the bridge sends tables, wavetables and voices in one batch);
  * 'undo' = undo depth changed (any snapshot or undo);
  * 'parents' = the Breed parent list changed (including tables dropping out of the timeline).
  */
 export type Topic =
   | 'timeline'
+  | 'wavetables'
   | 'selection'
   | 'voices'
   | 'sequences'
   | 'transport'
   | 'undo'
-  | 'batchTargets'
   | 'parents';
 
 export const MAX_VOICES = 8;
 
+type Windows = Pick<VoiceParams, 'wavetableId' | 'windowStart' | 'windowEnd' | 'windowStartY' | 'windowEndY'>;
+const WINDOW_KEYS = ['windowStart', 'windowEnd', 'windowStartY', 'windowEndY'] as const;
+
 interface Snapshot {
   timeline: readonly WaveTable[];
+  /** Wavetable contents (built-ins update on every add, so undo of an add reverts them too). */
+  wavetables: readonly Wavetable[];
   selectedId: TableId | null;
-  windows: Map<number, [number, number]>;
+  windows: Map<number, Windows>;
   steps: Map<number, readonly number[]>;
 }
 
 export class AppModel {
   timeline: readonly WaveTable[] = [];
-  wavetables: readonly Wavetable[] = [allWavetable([])];
+  /** Built-ins first (Timeline, Last batch, Batches, Grid), then user wavetables (phase 2). */
+  wavetables: readonly Wavetable[] = builtinWavetables();
   voices: readonly VoiceParams[] = [];
   sequences: readonly SequenceData[] = [];
-  batchTargets: ReadonlySet<number> = new Set();
   selectedId: TableId | null = null;
   /** Breed parents in order (A first), at most MAX_PARENTS; always tables in the timeline. */
   breedParents: readonly TableId[] = [];
@@ -96,12 +107,26 @@ export class AppModel {
     return this.wavetables.find((w) => w.id === id);
   }
 
-  /** Resolve a wavetable position to a table. */
-  tableAt(wtId: WavetableId, index: number): WaveTable | undefined {
+  /** The table in a wavetable slot (x along the row, y = row). */
+  tableAt(wtId: WavetableId, x: number, y = 0): WaveTable | undefined {
     const wt = this.wavetable(wtId);
     if (!wt) return undefined;
-    const id = wt.ids[index];
-    return id === null || id === undefined ? undefined : this.byId.get(id);
+    const id = cellAt(wt, x, y);
+    return id === null ? undefined : this.byId.get(id);
+  }
+
+  /** Tables inside a voice's window (slot order, each once). */
+  windowTables(v: VoiceParams): WaveTable[] {
+    const wt = this.wavetable(v.wavetableId);
+    if (!wt) return [];
+    return windowIds(wt, voiceWindow(v))
+      .map((id) => this.byId.get(id))
+      .filter((t): t is WaveTable => !!t);
+  }
+
+  /** Voices playing a wavetable. */
+  voicesOn(wtId: WavetableId): VoiceParams[] {
+    return this.voices.filter((v) => v.wavetableId === wtId);
   }
 
   voice(id: number): VoiceParams | undefined {
@@ -119,30 +144,35 @@ export class AppModel {
   // ---- tables ----
 
   /**
-   * Append generated tables to the timeline. 'single' extends following windows;
-   * 'batch' sets the windows of batch-target voices to the batch.
+   * Append generated tables to the timeline, as one batch (a single add is a batch of
+   * one): every live wavetable writes them at its write head (Timeline appends, Last batch
+   * is replaced, Batches gets a new row, Grid fills on), then the timeline evicts its
+   * oldest unpinned tables, which drop out of the wavetables that mirror it. Voice windows
+   * follow (see followEdit). One undo step reverts all of it.
    */
-  addTables(gen: readonly GeneratedTable[], mode: 'single' | 'batch', selectNew = true): WaveTable[] {
+  addTables(gen: readonly GeneratedTable[], selectNew = true): WaveTable[] {
     if (!gen.length) return [];
     this.snapshot();
     const added = gen.map((g) => makeTable(this.tableIds.take(), g));
-    const oldLen = this.timeline.length;
-    const pinned = pinnedIds(this.wavetables);
+    const ids = added.map((t) => t.id);
+    const before = this.wavetables;
+    const written = before.map((w) => writeTables(w, ids));
+    // Pins after the writes: the new tables are referenced (Last batch), overwritten Grid cells are not.
+    const pinned = pinnedIds(written.map((e) => e.wt));
     const r = appendWithEviction(this.timeline, added, this.cap, (id) => pinned.has(id));
+    const gone = new Set(r.evicted.map((t) => t.id));
+    let voices = this.voices;
+    this.wavetables = written.map((e, i) => {
+      const rem = gone.size ? removeTables(e.wt, gone) : null;
+      const edit = rem ? { wt: rem.wt, map: composeMaps(e.map, rem.map), reset: e.reset } : e;
+      voices = followEdit(voices, before[i], edit);
+      return edit.wt;
+    });
+    this.voices = voices;
     const parentsChanged = this.setTimeline(r.list);
-    this.voices = followAppend(
-      this.voices,
-      ALL_WAVETABLE_ID,
-      oldLen,
-      r.list.length,
-      r.evictedIndices,
-      mode === 'single'
-        ? { kind: 'single' }
-        : { kind: 'batch', count: Math.min(added.length, r.list.length), targets: this.batchTargets },
-    );
     if (selectNew) this.selectedId = added[added.length - 1].id;
     else if (this.selectedId !== null && !this.byId.has(this.selectedId)) this.selectedId = r.list[0]?.id ?? null;
-    this.emit('timeline', 'voices', 'selection', 'undo', ...(parentsChanged ? (['parents'] as Topic[]) : []));
+    this.emit('timeline', 'wavetables', 'voices', 'selection', 'undo', ...(parentsChanged ? (['parents'] as Topic[]) : []));
     return added;
   }
 
@@ -153,15 +183,13 @@ export class AppModel {
   copyToEnd(id: TableId | null): WaveTable | null {
     const t = this.table(id);
     if (!t) return null;
-    return this.addTables([{ data: t.data, recipe: copyRecipe(t.id, t.recipe) }], 'single')[0];
+    return this.addTables([{ data: t.data, recipe: copyRecipe(t.id, t.recipe) }])[0];
   }
 
   /** Replace the timeline; returns true if Breed parents had to be dropped (evicted / undone). */
   private setTimeline(list: readonly WaveTable[]): boolean {
     this.timeline = list;
     this.byId = new Map(list.map((t) => [t.id, t]));
-    // Pinned tables live in the timeline, so user wavetables never dangle.
-    this.wavetables = this.wavetables.map((w) => (w.auto === 'all' ? allWavetable(list.map((t) => t.id)) : w));
     const kept = this.breedParents.filter((id) => this.byId.has(id));
     if (kept.length === this.breedParents.length) return false;
     this.breedParents = kept;
@@ -208,18 +236,20 @@ export class AppModel {
 
   // ---- voices ----
 
+  /** Add a voice (on the Timeline unless `patch` says otherwise; window = whole wavetable). */
   addVoice(patch: Partial<VoiceParams> = {}): VoiceParams | null {
     if (this.voices.length >= MAX_VOICES) return null;
     const id = this.nextVoiceId++;
-    const len = wavetableLength(this.wavetable(ALL_WAVETABLE_ID)!);
-    const v: VoiceParams = {
+    const wt = this.wavetable(patch.wavetableId ?? TIMELINE_WAVETABLE_ID) ?? this.wavetables[0];
+    let v: VoiceParams = {
       ...DEFAULT_VOICE,
-      windowStart: 0,
-      windowEnd: Math.max(0, len - 1),
+      ...fullWindow(wt),
       ...patch,
+      wavetableId: wt.id,
       id,
       name: patch.name ?? `V${id}`,
     };
+    v = clampVoiceWindow(v, wt);
     this.voices = [...this.voices, v];
     this.emit('voices');
     return v;
@@ -228,9 +258,10 @@ export class AppModel {
   /**
    * Update voice params. Window edits are undoable (undo restores windows, so they must
    * be snapshotted too); a drag is one step until endGesture() or another action.
+   * Switching wavetable (without an explicit window) selects the whole new wavetable.
    */
   updateVoice(id: number, patch: Partial<VoiceParams>): void {
-    const windowEdit = 'windowStart' in patch || 'windowEnd' in patch;
+    const windowEdit = WINDOW_KEYS.some((k) => k in patch);
     if (windowEdit && this.gestureKey !== `window:${id}`) {
       this.snapshot();
       this.gestureKey = `window:${id}`;
@@ -238,19 +269,20 @@ export class AppModel {
     let changed = false;
     this.voices = this.voices.map((v) => {
       if (v.id !== id) return v;
-      const next = { ...v, ...patch, id };
+      let next: VoiceParams = { ...v, ...patch, id };
       const wt = this.wavetable(next.wavetableId);
-      const max = Math.max(0, (wt ? wavetableLength(wt) : 0) - 1);
-      const c = (x: number) => Math.max(0, Math.min(max, Math.round(x)));
-      let s = c(next.windowStart);
-      let e = c(next.windowEnd);
-      // Keep start <= end by pushing the other handle, not the one being dragged.
-      if (s > e) {
-        if ('windowEnd' in patch && !('windowStart' in patch)) s = e;
-        else e = s;
-      }
+      if (!wt) return v;
+      if (next.wavetableId !== v.wavetableId && !windowEdit) next = { ...next, ...fullWindow(wt) };
+      const ordered = (a: 'windowStart' | 'windowStartY', b: 'windowEnd' | 'windowEndY') => {
+        // Keep start <= end by pushing the other handle, not the one being dragged.
+        if (next[a] > next[b]) next = b in patch && !(a in patch) ? { ...next, [a]: next[b] } : { ...next, [b]: next[a] };
+      };
+      next = { ...next, windowStart: Math.round(next.windowStart), windowEnd: Math.round(next.windowEnd), windowStartY: Math.round(next.windowStartY), windowEndY: Math.round(next.windowEndY) };
+      next = clampOnly(next, wt);
+      ordered('windowStart', 'windowEnd');
+      ordered('windowStartY', 'windowEndY');
       changed = true;
-      return { ...next, windowStart: s, windowEnd: e };
+      return next;
     });
     if (changed) this.emit('voices', ...(windowEdit ? (['undo'] as Topic[]) : []));
   }
@@ -264,20 +296,20 @@ export class AppModel {
     if (!this.voice(id)) return;
     this.voices = this.voices.filter((v) => v.id !== id);
     this.sequences = this.sequences.filter((s) => s.voiceId !== id);
-    if (this.batchTargets.has(id)) {
-      const s = new Set(this.batchTargets);
-      s.delete(id);
-      this.batchTargets = s;
-    }
-    this.emit('voices', 'sequences', 'batchTargets');
+    this.emit('voices', 'sequences');
   }
 
-  setBatchTarget(voiceId: number, on: boolean): void {
-    const s = new Set(this.batchTargets);
-    if (on) s.add(voiceId);
-    else s.delete(voiceId);
-    this.batchTargets = s;
-    this.emit('batchTargets');
+  // ---- wavetables ----
+
+  /**
+   * Interpolation of a wavetable (Blend / Step). Allowed on built-ins too: it is a
+   * playback setting, not content (phase 1 has no user wavetables to choose Step on).
+   */
+  setWavetableInterp(id: WavetableId, interp: Interp): void {
+    const wt = this.wavetable(id);
+    if (!wt || wt.interp === interp) return;
+    this.wavetables = this.wavetables.map((w) => (w.id === id ? { ...w, interp } : w));
+    this.emit('wavetables');
   }
 
   // ---- sequences ----
@@ -331,7 +363,8 @@ export class AppModel {
     this.undoStack.push({
       timeline: this.timeline,
       selectedId: this.selectedId,
-      windows: new Map(this.voices.map((v) => [v.id, [v.windowStart, v.windowEnd]])),
+      wavetables: this.wavetables,
+      windows: new Map(this.voices.map((v) => [v.id, windowsOf(v)])),
       steps: new Map(this.sequences.map((s) => [s.id, s.steps])),
     });
     if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift();
@@ -343,21 +376,46 @@ export class AppModel {
     if (!s) return;
     const parentsChanged = this.setTimeline(s.timeline);
     this.selectedId = s.selectedId !== null && this.byId.has(s.selectedId) ? s.selectedId : (s.timeline.at(-1)?.id ?? null);
-    const len = this.timeline.length;
+    // Contents come back; settings changed since (interpolation) are kept.
+    const now = new Map(this.wavetables.map((w) => [w.id, w]));
+    this.wavetables = s.wavetables.map((w) => {
+      const cur = now.get(w.id);
+      return cur && cur.interp !== w.interp ? { ...w, interp: cur.interp } : w;
+    });
     this.voices = this.voices.map((v) => {
       const w = s.windows.get(v.id);
-      const [a, b] = clampWindow(w ? w[0] : v.windowStart, w ? w[1] : v.windowEnd, len);
-      return { ...v, windowStart: a, windowEnd: b };
+      // A voice that has switched wavetable since keeps its window.
+      const next = w && w.wavetableId === v.wavetableId ? { ...v, ...w } : v;
+      const wt = this.wavetable(next.wavetableId);
+      return wt ? clampVoiceWindow(next, wt) : next;
     });
     this.sequences = this.sequences.map((q) => {
       const st = s.steps.get(q.id);
       return st ? { ...q, steps: st } : q;
     });
-    this.emit('timeline', 'voices', 'sequences', 'selection', 'undo', ...(parentsChanged ? (['parents'] as Topic[]) : []));
+    this.emit('timeline', 'wavetables', 'voices', 'sequences', 'selection', 'undo', ...(parentsChanged ? (['parents'] as Topic[]) : []));
   }
 
   clearUndo(): void {
     this.undoStack = [];
     this.emit('undo');
   }
+}
+
+function windowsOf(v: VoiceParams): Windows {
+  return { wavetableId: v.wavetableId, windowStart: v.windowStart, windowEnd: v.windowEnd, windowStartY: v.windowStartY, windowEndY: v.windowEndY };
+}
+
+/** Clamp each window handle into the wavetable (ordering is done by the caller). */
+function clampOnly(v: VoiceParams, wt: Wavetable): VoiceParams {
+  const xLen = wt.shape === 'rows' ? 1 : Math.max(1, wt.rows[0]?.length ?? 0);
+  const yLen = wt.shape === '1d' ? 1 : Math.max(1, wt.rows.length);
+  const c = (x: number, len: number) => Math.max(0, Math.min(len - 1, x));
+  return {
+    ...v,
+    windowStart: c(v.windowStart, xLen),
+    windowEnd: c(v.windowEnd, xLen),
+    windowStartY: c(v.windowStartY, yLen),
+    windowEndY: c(v.windowEndY, yLen),
+  };
 }

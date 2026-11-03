@@ -39,7 +39,7 @@ class EngineProcessor extends AudioWorkletProcessor {
         e.removeTables(m.ids);
         break;
       case 'wavetable/set':
-        e.setWavetable(m.id, m.ids);
+        e.setWavetable(m.id, m.wavetable);
         break;
       case 'wavetable/remove':
         e.removeWavetable(m.id);

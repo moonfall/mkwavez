@@ -3,6 +3,7 @@ import type { EngineStatus } from '../core/engine/engine';
 import type { MidiVoiceEvent } from '../core/midi';
 import type { SequenceData } from '../core/sequence';
 import type { VoiceParams } from '../core/voice';
+import type { PackedWavetable } from '../core/wavetablePlayback';
 
 export const PROCESSOR_NAME = 'mkwavez-engine';
 
@@ -10,7 +11,8 @@ export type ToWorklet =
   /** Packed mip sets (buffers are transferred). */
   | { type: 'tables/add'; items: { id: number; mips: Float32Array }[] }
   | { type: 'tables/remove'; ids: number[] }
-  | { type: 'wavetable/set'; id: number; ids: Int32Array }
+  /** Wavetable structure: row offsets + slot ids (-1 = empty), interpolation. */
+  | { type: 'wavetable/set'; id: number; wavetable: PackedWavetable }
   | { type: 'wavetable/remove'; id: number }
   | { type: 'voice/set'; voice: VoiceParams }
   | { type: 'voice/remove'; id: number }

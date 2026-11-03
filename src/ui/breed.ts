@@ -208,14 +208,12 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const useWindow = () => {
     const v = windowVoiceId === null ? undefined : model.voice(windowVoiceId);
     if (!v) return;
-    const len = v.windowEnd - v.windowStart + 1;
+    // Every table in the window (any wavetable shape), in slot order.
+    const win = model.windowTables(v);
+    const len = win.length;
     const n = Math.min(len, MAX_PARENTS);
     const ids: TableId[] = [];
-    for (let i = 0; i < n; i++) {
-      const idx = v.windowStart + (n > 1 ? Math.round((i * (len - 1)) / (n - 1)) : 0);
-      const t = model.tableAt(v.wavetableId, idx);
-      if (t) ids.push(t.id);
-    }
+    for (let i = 0; i < n; i++) ids.push(win[n > 1 ? Math.round((i * (len - 1)) / (n - 1)) : 0].id);
     model.setBreedParents(ids);
   };
 
@@ -224,7 +222,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const renderVoices = () => {
     const vs = model.voices;
     if (windowVoiceId === null || !vs.some((v) => v.id === windowVoiceId)) {
-      windowVoiceId = vs.find((v) => model.batchTargets.has(v.id))?.id ?? vs[0]?.id ?? null;
+      windowVoiceId = vs[0]?.id ?? null;
     }
     const sig = vs.map((v) => `${v.id}:${v.name}`).join('|');
     if (sig !== voiceSig) {
@@ -371,20 +369,19 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const applySingle = () => {
     if (!ready()) return;
     const gen = pv && pvKey === currentKey() ? pv : breedBatch(request('single', 1), parents())[0];
-    model.addTables([gen], 'single', true);
+    model.addTables([gen], true);
     newSeed();
   };
 
   const applyBatch = () => {
     if (!ready() || batchBlocked()) return;
-    model.addTables(breedBatch(request(mode, opts.count()), parents()), 'batch', false);
+    model.addTables(breedBatch(request(mode, opts.count()), parents()), false);
     newSeed();
   };
 
   // ---- subscriptions ----
   model.on('parents', renderCards);
   model.on('voices', renderVoices);
-  model.on('batchTargets', renderVoices);
   model.on('selection', syncButtons);
   model.on('timeline', () => (dirtyThumbs = dirty = true));
   onThemeChange(() => (dirtyThumbs = dirty = true));

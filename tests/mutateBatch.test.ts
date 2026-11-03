@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LAST_BATCH_WAVETABLE_ID } from '../src/core/wavetable';
 import { AppModel } from '../src/app/model';
 import { DEFAULT_PERLIN, generateBasic, generatePerlin, renderRecipe } from '../src/core/generators';
 import { chainStepSeed, mutateBatch, mutateBatchTable, pickMateIndex, type MutateMode } from '../src/core/mutateBatch';
@@ -117,27 +118,28 @@ describe('mutateBatch', () => {
 describe('AppModel with mutation batches', () => {
   function model() {
     const m = new AppModel(16);
-    for (const w of ['sine', 'tri', 'saw'] as const) m.addTables([generateBasic(w, 0)], 'single');
+    for (const w of ['sine', 'tri', 'saw'] as const) m.addTables([generateBasic(w, 0)]);
     const follow = m.addVoice({ windowStart: 0, windowEnd: 2 })!;
-    const target = m.addVoice({ windowStart: 0, windowEnd: 1 })!;
-    m.setBatchTarget(target.id, true);
+    const target = m.addVoice({ wavetableId: LAST_BATCH_WAVETABLE_ID })!;
     m.clearUndo();
     return { m, follow, target };
   }
 
-  it('single Apply follows windows; Apply N sets target windows; undo reverts both', () => {
+  it('single Apply follows windows; Apply N becomes the Last batch; undo reverts both', () => {
     const { m, follow, target } = model();
     const source = m.timeline[1];
-    m.addTables(mutateBatch({ mutation: 'fold', amount: 0.5, seed: 1, mode: 'single', count: 1 }, source), 'single');
+    m.addTables(mutateBatch({ mutation: 'fold', amount: 0.5, seed: 1, mode: 'single', count: 1 }, source));
     expect(m.voice(follow.id)!.windowEnd).toBe(3);
     expect(m.timeline[3].recipe.parents).toEqual([source.id]);
-    m.addTables(mutateBatch({ mutation: 'fold', amount: 0.5, seed: 2, mode: 'chain', count: 4 }, source), 'batch', false);
+    m.addTables(mutateBatch({ mutation: 'fold', amount: 0.5, seed: 2, mode: 'chain', count: 4 }, source), false);
     expect(m.timeline.length).toBe(8);
-    expect([m.voice(target.id)!.windowStart, m.voice(target.id)!.windowEnd]).toEqual([4, 7]);
+    expect([m.voice(target.id)!.windowStart, m.voice(target.id)!.windowEnd]).toEqual([0, 3]);
+    expect(m.windowTables(m.voice(target.id)!)[0]).toBe(m.timeline[4]);
+    expect(m.voice(follow.id)!.windowEnd).toBe(7);
     expect(m.selectedId).toBe(m.timeline[3].id);
     m.undo();
     expect(m.timeline.length).toBe(4);
-    expect([m.voice(target.id)!.windowStart, m.voice(target.id)!.windowEnd]).toEqual([0, 1]);
+    expect([m.voice(target.id)!.windowStart, m.voice(target.id)!.windowEnd]).toEqual([0, 0]);
     m.undo();
     expect(m.timeline.length).toBe(3);
     expect(m.voice(follow.id)!.windowEnd).toBe(2);
@@ -145,7 +147,7 @@ describe('AppModel with mutation batches', () => {
 
   it('timeline tables re-render from their recipes via the model', () => {
     const { m } = model();
-    m.addTables(mutateBatch({ mutation: 'nwarp', amount: 0.7, seed: 42, mode: 'log', count: 5 }, m.timeline[2]), 'batch');
+    m.addTables(mutateBatch({ mutation: 'nwarp', amount: 0.7, seed: 42, mode: 'log', count: 5 }, m.timeline[2]));
     for (const t of m.timeline.slice(3)) {
       expect(same(t.data, renderRecipe(t.recipe, { resolveTable: (id) => m.table(id)?.data }))).toBe(true);
     }

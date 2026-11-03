@@ -9,7 +9,8 @@ import type { MidiVoiceEvent } from '../core/midi';
 import { buildMipSet } from '../core/mipmap';
 import type { TableId, WaveTable } from '../core/table';
 import type { VoiceParams } from '../core/voice';
-import { playbackIds } from '../core/wavetable';
+import type { Wavetable } from '../core/wavetable';
+import { packWavetable } from '../core/wavetablePlayback';
 import { PROCESSOR_NAME, type FromWorklet, type ToWorklet } from './protocol';
 import workletUrl from './worklet.ts?worker&url';
 
@@ -40,7 +41,8 @@ export class AudioBridge {
   private pumpScheduled = false;
   private sentVoices = new Set<number>();
   private sentSequences = new Set<number>();
-  private sentWavetables = new Set<number>();
+  /** Wavetables as last sent (by object identity: they are immutable). */
+  private sentWavetables = new Map<number, Wavetable>();
   private model: AppModel;
   private outbox: ToWorklet[] = [];
   private transfers: Transferable[] = [];
@@ -49,6 +51,7 @@ export class AudioBridge {
   constructor(model: AppModel) {
     this.model = model;
     model.on('timeline', () => this.syncTables());
+    model.on('wavetables', () => this.syncWavetables());
     model.on('voices', () => this.syncVoices());
     model.on('sequences', () => this.syncSequences());
     model.on('transport', () => this.syncTransport());
@@ -136,6 +139,7 @@ export class AudioBridge {
 
   private syncAll(): void {
     this.syncTables();
+    this.syncWavetables();
     this.syncVoices();
     this.syncSequences();
     this.syncTransport();
@@ -161,11 +165,22 @@ export class AudioBridge {
     // Tables first, then the wavetable that references them (same batch).
     if (this.pending.length) this.sendChunk(Math.min(SYNC_MIPS, fresh.length || MIP_CHUNK));
     this.pump();
+  }
+
+  /**
+   * Changed wavetables, packed (row offsets + ids). The model emits 'wavetables' right
+   * after 'timeline' and before 'voices', so fresh tables, the wavetables referencing
+   * them and the voices' new windows land in the same batch, in that order.
+   */
+  private syncWavetables(): void {
+    if (!this.node) return;
     for (const wt of this.model.wavetables) {
-      this.sentWavetables.add(wt.id);
-      this.post({ type: 'wavetable/set', id: wt.id, ids: Int32Array.from(playbackIds(wt)) });
+      if (this.sentWavetables.get(wt.id) === wt) continue;
+      this.sentWavetables.set(wt.id, wt);
+      const packed = packWavetable(wt);
+      this.post({ type: 'wavetable/set', id: wt.id, wavetable: packed }, [packed.rowStart.buffer as ArrayBuffer, packed.ids.buffer as ArrayBuffer]);
     }
-    for (const id of [...this.sentWavetables]) {
+    for (const id of [...this.sentWavetables.keys()]) {
       if (!this.model.wavetable(id)) {
         this.sentWavetables.delete(id);
         this.post({ type: 'wavetable/remove', id });

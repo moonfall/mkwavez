@@ -14,7 +14,7 @@ import { randomSeed } from '../core/prng';
 import type { GeneratedTable } from '../core/table';
 import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS, voiceTargets } from './batch';
+import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { h, selectField, slider } from './dom';
 import { buildLibrary } from './library';
 
@@ -338,7 +338,6 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       h('span', { class: 'gen-h' }, 'Batch'),
       stepper.el,
       seedBox,
-      voiceTargets(model),
       status,
       h('div', { class: 'gen-adds' }, addShownBtn, addBatchBtn),
     ),
@@ -455,7 +454,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const j = currentJob();
     const shown = strip.shown();
     if (!j || !computeOne(j, shown)) return updateStatus();
-    model.addTables([finalTable(j, shown)!], 'single', true);
+    model.addTables([finalTable(j, shown)!], true);
     flash(`Added #${shown + 1} to the Timeline`);
   };
 
@@ -470,11 +469,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         flash(`Batch not added: ${failed.length} of ${j.req.count} tables failed (first #${failed[0] + 1}). Fix the formula, or Add shown for single tables.`, true);
       return;
     }
-    model.addTables(
-      j.tables.map((_, i) => finalTable(j, i)!),
-      'batch',
-      true,
-    );
+    model.addTables(j.tables.map((_, i) => finalTable(j, i)!), true);
     const n = j.req.count;
     if (seedUsesRandomness(j.req.entry, j.req.expr)) {
       newSeed();

@@ -2,11 +2,10 @@ import type { FrameView, UiContext } from './context';
 import { h, panel, slider } from './dom';
 import { buildBreedPanel } from './breed';
 import { buildMutatePanel } from './mutate';
-import { MAX_BATCH, voiceTargetChecks } from './batch';
+import { MAX_BATCH } from './batch';
 import { buildSeedPanel } from './seed';
 
 export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameView } {
-  const { model } = ctx;
   const sec = panel('sec-generate', 'Generate');
   let count = 8;
   const countListeners: ((n: number) => void)[] = [];
@@ -19,7 +18,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   };
   const onCount = (fn: (n: number) => void) => countListeners.push(fn);
 
-  // ---- Breed: batch size + batch window targets (Seed / Mutate have their own batch row) ----
+  // ---- Breed: batch size (Seed / Mutate have their own batch row) ----
   const countSlider = slider({
     label: 'Batch size (N)',
     min: 1,
@@ -32,7 +31,6 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
     'div',
     { class: 'grid2', id: 'gen-shared' },
     countSlider.el,
-    h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Batch sets window of')), voiceTargetChecks(model)),
   );
 
   // ---- tabs ----

@@ -2,7 +2,7 @@ import { batchAmountAt, mutateBatchTable, type MutateRequest } from '../core/mut
 import { LOG_SWEEP_RANGE, mutate, MUTATION_CHOICES, mutationUsesSeed, type MutationId, type SweepMode } from '../core/mutations';
 import { randomSeed } from '../core/prng';
 import { describeRecipe, type GeneratedTable, type WaveTable } from '../core/table';
-import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS, voiceTargets } from './batch';
+import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h } from './dom';
@@ -203,8 +203,6 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
       syncShownLabel();
     },
   });
-  const targets = voiceTargets(model);
-  targets.title = 'Add +N sets the window of the ticked voices to the new tables';
   const batchBox = h(
     'div',
     { class: 'gen-box gen-batch' },
@@ -214,7 +212,6 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
       h('span', { class: 'gen-h' }, 'Batch'),
       h('div', { class: 'seg', role: 'group', 'aria-label': 'Batch mode' }, ...modeButtons),
       stepper.el,
-      targets,
       status,
       h('div', { class: 'gen-adds' }, addShownBtn, addBatchBtn),
     ),
@@ -300,7 +297,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     const j = currentJob();
     if (!j) return;
     const i = strip.shown();
-    model.addTables([finalTable(j, i)], 'single', true);
+    model.addTables([finalTable(j, i)], true);
     afterAdd(`Added #${i + 1} to the Timeline (now the source)`);
   };
 
@@ -309,7 +306,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     if (!j) return;
     const tables = Array.from({ length: j.req.count }, (_, i) => finalTable(j, i));
     // Select the last added table (the end of the batch): it becomes the next source.
-    model.addTables(tables, 'batch', true);
+    model.addTables(tables, true);
     afterAdd(`Added ${tables.length} table${tables.length > 1 ? 's' : ''} to the Timeline (the last is now the source)`);
   };
 

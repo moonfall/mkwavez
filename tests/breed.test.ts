@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LAST_BATCH_WAVETABLE_ID } from '../src/core/wavetable';
 import { AppModel } from '../src/app/model';
 import {
   breed,
@@ -266,9 +267,9 @@ describe('breedBatch and recipes', () => {
 describe('AppModel breed parents', () => {
   function model(cap = 16) {
     const m = new AppModel(cap);
-    for (const w of ['sine', 'tri', 'saw', 'square'] as const) m.addTables([generateBasic(w, 0)], 'single');
-    const target = m.addVoice({ windowStart: 0, windowEnd: 1 })!;
-    m.setBatchTarget(target.id, true);
+    for (const w of ['sine', 'tri', 'saw', 'square'] as const) m.addTables([generateBasic(w, 0)]);
+    // Follows batches: plays the built-in Last batch.
+    const target = m.addVoice({ wavetableId: LAST_BATCH_WAVETABLE_ID })!;
     m.clearUndo();
     return { m, target };
   }
@@ -289,19 +290,19 @@ describe('AppModel breed parents', () => {
     m.setBreedParents([ids[1], ids[1], 9999, ids[3]]);
     expect(m.breedParents).toEqual([ids[1], ids[3]]);
     expect(events).toBe(5);
-    for (let i = 0; i < 10; i++) m.addTables([generateBasic('saw', 0)], 'single');
+    for (let i = 0; i < 10; i++) m.addTables([generateBasic('saw', 0)]);
     m.setBreedParents(m.timeline.map((t) => t.id));
     expect(m.breedParents.length).toBe(MAX_PARENTS);
     expect(m.toggleBreedParent(m.timeline.at(-1)!.id)).toBe(false);
   });
 
   it('evicted or undone parents drop out of the list', () => {
-    const { m } = model(6);
+    const { m } = model(70); // > 64: the Grid pins the latest 64 tables
     const first = m.timeline[0].id;
     m.setBreedParents([first, m.timeline[1].id]);
     let events = 0;
     m.on('parents', () => events++);
-    m.addTables([generateBasic('saw', 0), generateBasic('saw', 0), generateBasic('saw', 0)], 'batch');
+    m.addTables(Array.from({ length: 67 }, () => generateBasic('saw', 0)));
     expect(m.table(first)).toBeUndefined();
     expect(m.breedParents).toEqual([m.timeline[0].id]);
     expect(events).toBe(1);
@@ -311,18 +312,19 @@ describe('AppModel breed parents', () => {
     expect(m.breedParents).not.toContain(newest);
   });
 
-  it('Breed N sets target windows and records parents; undo reverts', () => {
+  it('Breed N becomes the Last batch (a voice on it plays it) and records parents; undo reverts', () => {
     const { m, target } = model();
     const ps = [m.timeline[0], m.timeline[3]];
-    m.addTables(breedBatch({ op: 'spectral', bias: 1, walk: 'path', rate: 0, seed: 3, mode: 'sweep', count: 4 }, ps), 'batch', false);
+    m.addTables(breedBatch({ op: 'spectral', bias: 1, walk: 'path', rate: 0, seed: 3, mode: 'sweep', count: 4 }, ps), false);
     expect(m.timeline.length).toBe(8);
-    expect([m.voice(target.id)!.windowStart, m.voice(target.id)!.windowEnd]).toEqual([4, 7]);
+    expect([m.voice(target.id)!.windowStart, m.voice(target.id)!.windowEnd]).toEqual([0, 3]);
+    expect(m.windowTables(m.voice(target.id)!).map((t) => t.id)).toEqual(m.timeline.slice(4).map((t) => t.id));
     expect(m.timeline.slice(4).every((t) => t.recipe.parents.join() === ps.map((p) => p.id).join())).toBe(true);
     for (const t of m.timeline.slice(4)) {
       expect(same(t.data, renderRecipe(t.recipe, { resolveTable: (id) => m.table(id)?.data }))).toBe(true);
     }
     m.undo();
     expect(m.timeline.length).toBe(4);
-    expect([m.voice(target.id)!.windowStart, m.voice(target.id)!.windowEnd]).toEqual([0, 1]);
+    expect([m.voice(target.id)!.windowStart, m.voice(target.id)!.windowEnd]).toEqual([0, 0]);
   });
 });

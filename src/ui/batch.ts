@@ -1,35 +1,10 @@
-import type { AppModel } from '../app/model';
 import { cssColor, drawSpectrum, drawWave, fitFixed } from './canvas';
-import { h, voiceColorVar } from './dom';
+import { h } from './dom';
 
-/** Shared Generate batch controls (Seed, Mutate): N stepper, voice targets, card strip, status. */
+/** Shared Generate batch controls (Seed, Mutate): N stepper, card strip, status. */
 
 /** Largest batch (N) any Generate tab makes. */
 export const MAX_BATCH = 64;
-
-/** "Sets window of" checkboxes, one per voice, in voice colours. */
-export function voiceTargetChecks(model: AppModel): HTMLElement {
-  const checks = h('div', { class: 'checks' });
-  const render = () => {
-    checks.replaceChildren(
-      ...model.voices.map((v) => {
-        const cb = h('input', { type: 'checkbox', checked: model.batchTargets.has(v.id) });
-        cb.addEventListener('change', () => model.setBatchTarget(v.id, cb.checked));
-        return h('label', { class: 'check', style: `color:var(${voiceColorVar(v.id - 1)})` }, cb, v.name);
-      }),
-    );
-    if (!model.voices.length) checks.append(h('span', { class: 'hint' }, 'No voices'));
-  };
-  model.on('voices', render);
-  model.on('batchTargets', render);
-  render();
-  return checks;
-}
-
-/** "Sets window of" label + checkboxes. */
-export function voiceTargets(model: AppModel): HTMLElement {
-  return h('div', { class: 'gen-targets' }, h('span', {}, 'Sets window of'), voiceTargetChecks(model));
-}
 
 /** − N + stepper over the shared batch size; ids `${p}-n`, `${p}-n-dec`, `${p}-n-inc`. */
 export function buildStepper(
