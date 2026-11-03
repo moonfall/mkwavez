@@ -73,6 +73,9 @@ export class AppModel {
   private undoStack: Snapshot[] = [];
   /** Coalesces a continuous gesture (e.g. a window-slider drag) into one undo step. */
   private gestureKey: string | null = null;
+  /** Events emitted so far; a Timeline move coalesces only if nothing else happened since. */
+  private emits = 0;
+  private moveMark = -1;
   private listeners = new Map<Topic, Set<() => void>>();
 
   constructor(cap = TIMELINE_CAP) {
@@ -89,6 +92,7 @@ export class AppModel {
   }
 
   private emit(...topics: Topic[]): void {
+    this.emits++;
     for (const t of new Set(topics)) for (const fn of this.listeners.get(t) ?? []) fn();
   }
 
@@ -184,6 +188,36 @@ export class AppModel {
     const t = this.table(id);
     if (!t) return null;
     return this.addTables([{ data: t.data, recipe: copyRecipe(t.id, t.recipe) }])[0];
+  }
+
+  /**
+   * Move waveform `id` one place earlier (`delta` -1) or later (+1) in the Timeline: it
+   * swaps with its neighbour, and the Timeline built-in wavetable follows the new order.
+   * Voice windows are index ranges, so they stay put and play whatever the new order puts
+   * inside them (the engine crossfades by table id). Other wavetables reference ids and
+   * are unaffected. The moved waveform is selected. Consecutive moves of the same
+   * waveform (nothing else in between) are one undo step. No-op at the ends.
+   */
+  moveTable(id: TableId | null, delta: -1 | 1): boolean {
+    const i = this.indexOf(id);
+    const j = i + delta;
+    if (id === null || i < 0 || j < 0 || j >= this.timeline.length) return false;
+    const key = `move:${id}`;
+    if (this.gestureKey !== key || this.moveMark !== this.emits) {
+      this.snapshot();
+      this.gestureKey = key;
+    }
+    const list = this.timeline.slice();
+    const other = list[j];
+    list[j] = list[i];
+    list[i] = other;
+    this.timeline = list;
+    this.wavetables = this.wavetables.map((w) => (w.builtin === 'timeline' ? swapSlots(w, id, other.id) : w));
+    const selChanged = this.selectedId !== id;
+    this.selectedId = id;
+    this.emit('timeline', 'wavetables', 'undo', ...(selChanged ? (['selection'] as Topic[]) : []));
+    this.moveMark = this.emits;
+    return true;
   }
 
   /** Replace the timeline; returns true if Breed parents had to be dropped (evicted / undone). */
@@ -404,6 +438,18 @@ export class AppModel {
 
 function windowsOf(v: VoiceParams): Windows {
   return { wavetableId: v.wavetableId, windowStart: v.windowStart, windowEnd: v.windowEnd, windowStartY: v.windowStartY, windowEndY: v.windowEndY };
+}
+
+/** Swap two ids' slots in a 1D wavetable (unchanged if either is missing). */
+function swapSlots(wt: Wavetable, a: TableId, b: TableId): Wavetable {
+  const row = wt.rows[0] ?? [];
+  const ia = row.indexOf(a);
+  const ib = row.indexOf(b);
+  if (ia < 0 || ib < 0) return wt;
+  const next = row.slice();
+  next[ia] = b;
+  next[ib] = a;
+  return { ...wt, rows: [next, ...wt.rows.slice(1)] };
 }
 
 /** Clamp each window handle into the wavetable (ordering is done by the caller). */
