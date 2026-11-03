@@ -613,7 +613,8 @@ const canvasInk = (page, sel) =>
  * Generate → Mutate (while playing): library (search incl. mapping hints, ▲/▼, arrow keys,
  * thumbnails of every mutation on the source that follow amount / seed), source chip,
  * amount → preview + thumbnails, seed / Reroll only for seeded mutations, the batch strip
- * (←/→, default = last card), Linear / Log / Chain, Add shown / Add +N recipes (Add uses
+ * (←/→, default = last card), Linear / Log / Chain, Add shown / Add +N recipes (each
+ * selects the last table added; undo restores the selection; Add uses
  * the preview tables), no Evolve; fits the Generate panel at 1440×900 and 1180×820; the
  * phone column has the compact library row and no overflow. Ends on the Seed tab at 390 px.
  */
@@ -711,7 +712,8 @@ async function mutateChecks(page, tlCount, label) {
   await page.click('#mutate-strip .gen-card:nth-child(6)');
   assert((await shownTxt()).startsWith('#6 of 8'), 'clicking a card shows it');
 
-  // Each batch mode: Add +N adds exactly the batch (source stays selected).
+  let chainSrc = null;
+  // Each batch mode: Add +N adds exactly the batch and selects its last table (the next source).
   for (const mode of ['lin', 'log', 'chain']) {
     await page.click(`#mutate-mode-${mode}`);
     assert(
@@ -723,6 +725,7 @@ async function mutateChecks(page, tlCount, label) {
     await page.waitForTimeout(100);
     const sel = await M(() => window.mkwavez.model.selectedId);
     const n = await tlCount();
+    await M(() => (document.querySelector('#timeline-scroll').scrollLeft = 0));
     await page.click('#mutate-add-batch');
     assert((await tlCount()) === n + 8, `${mode}: Add +8 adds 8`);
     const r = await M(() => {
@@ -738,6 +741,7 @@ async function mutateChecks(page, tlCount, label) {
         win: [v.windowStart, v.windowEnd],
         len: m.timeline.length,
         sel: m.selectedId,
+        lastId: b[7].id,
       };
     });
     const exp = { lin: [0.075, 0.6], log: [0.6 / 64, 0.6], chain: [0.6, 0.6] }[mode];
@@ -745,20 +749,40 @@ async function mutateChecks(page, tlCount, label) {
       r.modes.join() === mode && r.muts.join() === 'fold' && r.idx === '0,1,2,3,4,5,6,7' && Math.abs(r.amounts[0] - exp[0]) < 1e-9 && Math.abs(r.amounts[7] - exp[1]) < 1e-9,
       `${mode}: recipes (amounts ${r.amounts[0].toFixed(4)} … ${r.amounts[7]}, indices 0…7)`,
     );
-    assert(r.parents.length === 1 && r.parents[0] === sel && r.sel === sel, `${mode}: one source, which stays selected`);
+    assert(r.parents.length === 1 && r.parents[0] === sel, `${mode}: one source (the selection)`);
+    assert(r.sel === r.lastId, `${mode}: Add +8 selects the last table added`);
     assert(r.win[0] === r.len - 8 && r.win[1] === r.len - 1, `${mode}: batch sets the targeted voice window`);
+    await page.waitForFunction((t) => document.querySelector('#mutate-src-no').textContent === t, `#${r.len}`, { timeout: 3000 });
+    assert(true, `${mode}: source chip follows to the end of the batch`);
+    await page.waitForFunction(
+      () => {
+        const m = window.mkwavez.model;
+        const s = document.querySelector('#timeline-scroll');
+        const left = m.indexOf(m.selectedId) * 63;
+        return left >= s.scrollLeft && left + 62 <= s.scrollLeft + s.clientWidth;
+      },
+      null,
+      { timeout: 3000 },
+    );
+    assert(true, `${mode}: the new selection is scrolled into view in the Timeline`);
+    chainSrc = sel;
   }
   assert((await shownTxt()) === '#6 of 8 · amount 60% × 6', `chain header (${await shownTxt()})`);
+  const chainB6 = await M(() => Array.from(window.mkwavez.model.timeline.at(-3).data));
 
-  // Add shown: the shown card's very preview table (same object as the batch just added).
+  // Undo restores the selection to the source of the undone batch.
+  await page.click('#undo');
+  assert((await M(() => window.mkwavez.model.selectedId)) === chainSrc, 'undo of Add +8 restores the previous selection');
+
+  // Add shown: the shown card's preview table (same data as that card of the batch).
   let n = await tlCount();
   const srcBefore = await M(() => window.mkwavez.model.selectedId);
   await page.click('#mutate-add-shown');
-  let r = await M(() => {
+  let r = await M((b6) => {
     const m = window.mkwavez.model;
     const t = m.timeline.at(-1);
-    return { ...t.recipe, id: t.id, sel: m.selectedId, same: t.data === m.timeline.at(-4).data, idx: m.indexOf(t.id) };
-  });
+    return { ...t.recipe, id: t.id, sel: m.selectedId, same: t.data.length === b6.length && t.data.every((v, i) => v === b6[i]), idx: m.indexOf(t.id) };
+  }, chainB6);
   assert((await tlCount()) === n + 1, 'Add shown adds one table');
   assert(
     r.op === 'mutate' && r.params.mode === 'chain' && r.batch.index === 5 && r.batch.count === 8 && r.parents[0] === srcBefore && r.same,
@@ -767,6 +791,10 @@ async function mutateChecks(page, tlCount, label) {
   assert(r.sel === r.id, 'Add shown selects the new table (it becomes the source)');
   await page.waitForFunction((t) => document.querySelector('#mutate-src-no').textContent === t, `#${r.idx + 1}`, { timeout: 3000 });
   assert(true, 'source chip follows the selection');
+  await page.click('#undo');
+  assert((await M(() => window.mkwavez.model.selectedId)) === srcBefore && (await tlCount()) === n, 'undo of Add shown restores the previous selection');
+  await page.click('#mutate-add-shown');
+  assert((await M(() => window.mkwavez.model.selectedId)) === (await M(() => window.mkwavez.model.timeline.at(-1).id)), 'Add shown again selects it');
 
   // Seeded mutation: Reroll changes the seed, preview and its thumbnail; Add draws a new seed.
   await page.click('#mutate-mode-lin');
@@ -783,12 +811,14 @@ async function mutateChecks(page, tlCount, label) {
   await waitChange('#mutate-list .gen-entry[data-id="jitter"] canvas', jt.sum);
   assert(true, 'Reroll updates the preview and the seeded thumbnail');
   n = await tlCount();
+  const selSeeded = await M(() => window.mkwavez.model.selectedId);
   await page.click('#mutate-add-batch');
   r = await M(() => window.mkwavez.model.timeline.slice(-8).map((t) => t.recipe.seed));
   assert((await tlCount()) === n + 8 && r.every((s) => s === parseInt(s1, 16)), 'Add +8 uses the shown seed');
+  assert((await M(() => window.mkwavez.model.selectedId === window.mkwavez.model.timeline.at(-1).id)), 'Add +8 selects the last table added');
   assert((await seedHex()) !== s1, 'new seed after Add (seeded mutation)');
   await page.click('#undo');
-  assert((await tlCount()) === n, 'undo removes the batch');
+  assert((await tlCount()) === n && (await M(() => window.mkwavez.model.selectedId)) === selSeeded, 'undo removes the batch and restores the selection');
 
   // N stepper: fewer cards, the last stays shown.
   await page.click('#mutate-n-dec');
