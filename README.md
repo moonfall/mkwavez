@@ -104,7 +104,36 @@ switches (the choice is remembered).
   click a slot to select its waveform. The summary line gives the shape, the interpolation
   (**Blend** / **Step**, switchable here; it applies to every voice on that wavetable),
   Live / Frozen and which voices use it. Waveforms in the Grid or Last batch are never evicted.
-  Creating / editing wavetables (the Edit button) is phase 2. Collapsed by default on a phone.
+  **+** makes a new 1D wavetable and opens the editor. Collapsed by default on a phone.
+- **Wavetables editor** (**Edit** in the Wavetables header; **Collapse** returns): it
+  takes over the whole Generate row (Generate is hidden meanwhile) and the Timeline stays
+  below as the source for drags. Left: the list (built-ins with a lock, yours below; green
+  dot = Live) and **+ 1D** (variable, empty), **+ 2D** (8×8, empty; set X × Y in the
+  header) and **+ Rows** (empty). New wavetables start Frozen. Centre: the header (name —
+  pencil or double-click a list entry to rename; shape; size: 1D Variable / Fixed + slot
+  count, 2D X × Y, asking before slots with waveforms would be dropped; Strip / Stack for
+  1D; Blend / Step; **Duplicate** — the way to edit a built-in: it makes an editable,
+  frozen copy; **Delete**, asking first: voices on it switch to the Timeline), then the
+  view with voice windows, the write head (green, “W”) and green numbers where the next
+  writes land, then the selected slot's actions. Right: Live / Frozen and the write head
+  settings (direction, at the edge, on wrap, replace / insert, each new batch; options a
+  shape can't use are disabled; built-ins are read-only). A Live wavetable gets every new
+  waveform (Seed / Mutate / Breed adds, Copy to end) at its write head.
+  - **Drag** a waveform from the Timeline (mouse: press and move; touch: move up out of
+    the strip — sideways still scrolls it, holding still is still the Breed long-press) or
+    from a slot (touch: hold first): onto a slot **replaces** it, between slots
+    **inserts** (1D and Rows; a fixed 1D shifts its slots into the next empty one),
+    between rows or below the last adds a **row** (Rows). Within a wavetable a drag moves
+    the slot (onto another slot: swaps; hold Alt / Ctrl / ⌘ to copy). Hovering a list
+    entry while dragging opens it; dropping on it adds the waveform there. Esc cancels.
+    The ghost says what a drop will do.
+  - Click a slot to select it (and its waveform in the Timeline); ←/→ (↑/↓ on 2D / Rows)
+    move the selection, **Delete** empties the slot, **Shift+Delete** removes it (the line
+    closes up). The slot actions do the same, plus “Replace with selected” / “Insert
+    selected” (the Timeline selection; handy on touch) and “Write head here” (or Alt-click
+    a slot). Every edit is undoable.
+  - Waveforms in your wavetables are never evicted from the Timeline; once no wavetable
+    holds them they can be again. A wavetable holds at most 4096 slots.
 - **Voice**: one tab per voice (V1, V2 · muted, …, + adds one, × removes the selected
   one). The selected voice's wavetable (any wavetable; switching selects all of it) and
   its interpolation (read-only), octave, window, position, LFO, level, mute, plus a "now
@@ -135,7 +164,9 @@ switches (the choice is remembered).
   only start audio on a gesture). Unsupported browsers / denied permission show a short
   status; the rest of the app is unaffected.
 - **Undo** (transport bar) covers waveform adds (including Mutate / Breed adds, Copy to end),
-  Timeline moves, window edits and note edits.
+  Timeline moves, window edits, note edits and wavetable edits (create, duplicate, rename,
+  delete, resize, slot edits). Wavetable settings (Live / Frozen, write head, interpolation)
+  are kept across undo.
 
 ## Keyboard shortcuts
 
@@ -152,4 +183,7 @@ when other modifier keys are held. Controls show theirs in tooltips (and `aria-k
 | ← / → | Batch strips (Seed, Mutate): show the previous / next waveform; Home / End: first / last |
 | ↑ / ↓ | Seed / Mutate libraries: previous / next entry (↓ from the search moves into the list; Enter picks the first match, Esc clears) |
 | ← / → | Voice tabs (when a tab has focus): previous / next voice |
-| Esc | MIDI popover: cancel Learn |
+| ← / → (↑ / ↓) | Wavetables editor view (when it has focus): select the previous / next slot (row) |
+| Delete / Shift+Delete | Wavetables editor: empty / remove the selected slot |
+| Alt / Ctrl / ⌘ (while dragging) | Copy instead of move within a wavetable |
+| Esc | MIDI popover: cancel Learn; while dragging a waveform: cancel the drag |

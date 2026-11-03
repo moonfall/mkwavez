@@ -147,13 +147,32 @@ Deviations / known gaps:
 - Window following: a batch now also extends Timeline windows that end on the newest
   table (previously only single adds did).
 
-## Wavetables — phase 2
+## Wavetables — phase 2 (done)
 
-- Expanded editor over the Generate row (see the mocks): wavetable list (built-in /
-  yours), strip / stack / grid / rows views, write-head settings, next-write markers.
-- User wavetables: + 1D / 2D / Rows, Duplicate (a built-in → an editable copy), rename,
-  Live / Frozen, interpolation, write-head settings; drag from the Timeline onto a slot
-  (replace) or between slots (insert); remove / reorder slots. These pin their tables.
+- Expanded editor over the Generate row (Edit / Collapse; Generate hidden, the Timeline
+  below is the drag source): wavetable list (built-in / yours, + 1D / 2D / Rows), 1D strip /
+  stack, 2D grid, Rows views with voice windows, write head and next-write markers
+  (`previewWrites`, the real write head on a copy), header (rename, size, Blend / Step,
+  Duplicate, Delete), Live / Frozen + write-head settings (inapplicable options disabled;
+  built-ins read-only), head moves (Alt-click / “Write head here”).
+- User wavetables: create, duplicate (built-ins into editable copies), rename, delete
+  (voices fall back to the Timeline), 1D fixed / variable + length and 2D X × Y resize
+  (confirm before dropping waveforms); pointer-event drags from the Timeline or slots:
+  replace, insert, new row, move / swap / copy, plus clear / remove; hovering a list
+  entry opens it, dropping on it adds there. Live user wavetables write every add. All
+  content edits undoable; pins follow every edit (unit-tested), smoke-tested end to end.
+
+Deviations / known gaps:
+- New wavetables and duplicates start Frozen (a duplicate is a snapshot; a live copy of
+  the Timeline would pin and grow without bound). Growth stops at 4096 slots.
+- Interpolation stays switchable on built-ins (the mock disables it) so voices on the
+  Timeline etc. can still use Step. Write-head settings can be changed while Frozen (to
+  prepare before going Live); next-write markers show only when Live.
+- The Stack view takes no drops (switch to Strip); confirmations use the browser's
+  `confirm()`; no context menu: the selected slot's actions (and Delete / Shift+Delete)
+  cover it, also on touch. On a phone the editor sits above the Timeline: dragging up
+  auto-scrolls the page.
+- The view marks the next 4 writes (as one batch).
 
 ## M5 — Save/load
 

@@ -20,6 +20,11 @@
 // doesn't overflow; the CC map has Position Y. Keyboard shortcuts: Space (also with a button
 // focused; types in text fields), [ / ], M, Shift+←/→ moves in the Timeline (ends no-op,
 // one undo step, ignored in text fields); no UI text says "table" (only "wavetable").
+// Wavetables editor: expand / collapse over the
+// Generate row (fits 1440×900 / 1180×820, 390px no overflow), + 1D / 2D / Rows, 2D resize,
+// duplicate a built-in, rename, a Live wavetable receives Seed adds, Timeline drags (mouse
+// replace / insert, touch insert via synthetic pointer events), slot reorder, Delete, undo,
+// built-ins refuse drops, delete moves its voice to the Timeline.
 //
 // Usage: npm run smoke            (builds, then tests `vite preview` and `vite dev`)
 //        CHROME=/path/to/chrome   (default /usr/bin/google-chrome)

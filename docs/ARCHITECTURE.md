@@ -26,7 +26,10 @@ src/
     table.ts            WaveTable, Recipe, IdAllocator
     timeline.ts         appendWithEviction (oldest-first, pin-aware), index/window remap
     wavetable.ts        Wavetable (1D / 2D / Rows slots), built-ins, write head
-                        (writeTables), eviction (removeTables), pinnedIds()
+                        (writeTables, previewWrites), eviction (removeTables),
+                        pinnedIds(), hand edits (placeTable, moveSlot, clearSlot,
+                        removeSlot, resize1D / resize2D, setWrite, setHead),
+                        newWavetable / duplicateWavetable
     wavetablePlayback.ts  packed wavetable (engine form), position → tables + weights
                         (resolveMix: Blend / bilinear / row-aligned, Step, empty slots)
     voice.ts            VoiceParams (X / Y window, position, LFOs), followEdit()
@@ -52,8 +55,11 @@ src/
                         (Mutate tab) and breed.ts (Breed tab); library.ts (the
                         shared library list) and batch.ts (N stepper, voice
                         targets, card strip) are used by Seed and Mutate; timeline.ts (strip,
-                        toggles Breed parents); wavetables.ts (compact panel: chips,
-                        view, summary; editor in phase 2); voicePad.ts (X/Y pad of
+                        toggles Breed parents; drag source); wavetables.ts (compact
+                        panel: chips, view, summary; Edit / Collapse); wavetableEditor.ts
+                        (the expanded editor: list, views, header, write head settings,
+                        drop zones); waveDrag.ts (pointer-event waveform drags: ghost,
+                        drop zones, auto-scroll); voicePad.ts (X/Y pad of
                         a 2D / Rows voice); playing.ts (what a voice plays, as the
                         engine resolves it); midi.ts (transport MIDI picker,
                         LED, popover with routing and CC map); shortcuts.ts
@@ -117,8 +123,27 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   1D = one row (fixed or variable size); 2D = a fixed X×Y grid; Rows = rows of differing
   lengths. Plain, serializable data (persistence is M5). Built-ins (ids 0–3): Timeline
   (1D, mirrors the timeline, doesn't pin), Last batch (1D, pins), Batches (Rows, one row
-  per batch, doesn't pin), Grid (2D 8×8, pins); user wavetables (phase 2) start at id 16
-  and pin.
+  per batch, doesn't pin), Grid (2D 8×8, pins); user wavetables start at id 16 (next id =
+  highest + 1, so it is derived from the list; no extra counter to persist), pin, and
+  start Frozen (`newWavetable`; `duplicateWavetable` copies slots, settings and head of any
+  wavetable). Growing writes / inserts stop at `MAX_SLOTS` (4096) slots per user wavetable
+  (a live growing wavetable pins everything it holds).
+- **Hand edits** (pure functions in `core/wavetable.ts`, each a `WavetableEdit` with the
+  follow-axis map, so voice windows follow like on adds): a `SlotTarget` is a slot
+  (replace), a gap before slot x of row y (insert; x = length appends) or a new row at y
+  (Rows). `canTarget` validates (built-ins read-only; 2D replace only; a fixed 1D inserts
+  only before an existing slot, shifting slots towards the end into the first empty slot
+  at or after it, else the last drops out). `moveSlot`: onto a slot swaps, into a gap
+  reorders (a fixed line keeps its size), as a row moves to a new row; Rows rows emptied
+  by a move / remove are dropped. `clearSlot` empties; `removeSlot` closes up (fixed 1D
+  appends an empty slot; 2D empties). `resize2D` keeps cells by (x, y), drops the rest
+  (`droppedBy2DResize` counts filled ones for the confirm) and clamps the head; `resize1D`
+  switches fixed / variable and pads / truncates. Every edit keeps the head on the slot /
+  row it pointed at; `setWrite` / `resize1D` restart a head that can no longer write.
+- **Write preview** (`previewWrites(wt, n)`): runs the real write head on a copy whose
+  slots are encoded with their original coordinates, giving each of the next n writes
+  (one batch) as replace (x, y) / insert before (x, y) / append to row y, so the markers
+  always match `writeTables`.
 - **Write head** (`writeTables`, live wavetables; every add is a batch, a single add a
   batch of one): settings `dir ±x/±y`, `edge wrap|stop|grow`, `onWrap next|same`, `mode
   replace|insert`, `batch continue|newRow`, coerced per shape by `normalizeWrite` (1D:
@@ -141,8 +166,13 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 - **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate.
 - **Undo** — snapshots of the timeline array and wavetables (references), selection,
   voice windows (X and Y, restored only if the voice is still on that wavetable) and
-  sequence steps; 40 deep. Interpolation changes are kept across undo. Covers adds, note edits and window edits (a slider
-  drag is one step); other slider moves are not undoable.
+  sequence steps; 40 deep. Covers adds, note edits, window edits (a slider drag is one
+  step) and wavetable content edits (create, duplicate, rename, delete, resize, slot
+  edits; `AppModel.editWavetable`); other slider moves are not undoable. Wavetable
+  settings (interpolation, Live / Frozen, write settings, head moves) are not undo steps
+  and are kept across undo (write settings re-normalized for the restored size). Deleting
+  a wavetable moves its voices to the Timeline; that snapshot restores them
+  (`restoreVoiceWavetables`).
 
 ## UI layout
 
@@ -158,6 +188,22 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   classes (`.gen-tab`, `.gen-lib`, `.gen-strip`, …).
 - **Narrow shell (< 900 px)**: the same panels in the same order, one scrolling
   column, each collapsible (Wavetables starts collapsed); the transport bar is sticky.
+- **Wavetables editor**: `.shell.wt-editing` hides Generate and gives Wavetables the
+  whole first row (`grid-area: 1 / 1 / 2 / 4`); the panel body becomes a 200 px list |
+  view | 244 px write-head grid (one column on the narrow shell: the list a scrolling
+  row, the view 240 px tall). The view is a virtualized canvas like the Timeline (a
+  sticky stage in a scroller sized to the content; only visible slots drawn; redrawn when
+  dirty or playing), with hit boxes from the same layout used for clicks and drop
+  targets (within 14 px of a slot edge = the gap, between Rows rows = a new row).
+- **Drags** (`ui/waveDrag.ts`): sources call `beginDrag` once a press becomes a drag
+  (Timeline: mouse > 5 px, touch: a vertical move > 10 px — `touch-action: pan-x` on the
+  strip while the editor is open, so sideways still scrolls and a still press is the
+  Breed long-press; editor slots: mouse > 5 px, touch: a 350 ms hold, then touchmove is
+  cancelled so the page doesn't scroll). The module captures the pointer, moves a ghost,
+  asks every active drop zone each frame (so zones auto-scroll near their edges; the page
+  auto-scrolls on the narrow shell) and drops on release; Esc cancels; the click after a
+  drop is swallowed. Zones: the editor view and its list (hover 600 ms opens an entry,
+  dropping adds to it).
 - Voice tabs: `UiState.voiceId` (kept valid as voices come and go: a removed voice's
   neighbour is selected). The Voice panel shows only that voice's controls; the
   Sequence panel shows its sequence(s).
