@@ -81,6 +81,24 @@ describe('mutations (core port)', () => {
     }
   });
 
+  it('time: repeat, half swap, reverse, slew', () => {
+    const saw = generateBasic('saw', 0).data;
+    const mags = (x: Float32Array) => harmonicMagnitudes(x, 72);
+    // Window & repeat at a = 1: the first 1/8 eight times → only multiples of 8.
+    const rp = mags(mutate('repeat', src, 1, 0));
+    expect(rp[3] + rp[5] + rp[7]).toBeLessThan(1e-6);
+    expect(rp[8]).toBeGreaterThan(1e-3);
+    // Half-cycle swap at a = 1: same magnitudes; at ½ the even harmonics cancel.
+    const hs = mags(mutate('halfSwap', saw, 0.5, 0));
+    expect(hs[2] / hs[1]).toBeLessThan(1e-6);
+    const rv = mags(mutate('reverse', src, 1, 0));
+    const s0 = mags(src);
+    for (const k of [1, 2, 3, 7]) expect(rv[k] / rv[1]).toBeCloseTo(s0[k] / s0[1], 4);
+    // Slew limit at a = 1 removes the saw's jump: much less high-harmonic energy.
+    const sl = mags(mutate('slew', saw, 1, 0));
+    expect(sl[20] / sl[1]).toBeLessThan(0.5 * (1 / 20));
+  });
+
   it('sweep amounts', () => {
     expect(sweepAmounts(4, 1, 'lin')).toEqual([0.25, 0.5, 0.75, 1]);
     const log = sweepAmounts(3, 0.64, 'log');

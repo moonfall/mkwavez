@@ -32,6 +32,13 @@ export const MUTATIONS = [
   { group: 'Waveshape', id: 'crush', label: 'Crush', hint: 'Quantise to 2 + 62·(1−a)³ levels' },
   { group: 'Waveshape', id: 'warp', label: 'Phase warp', hint: 'Read offset by 0.12·a·N·sin(p)' },
   { group: 'Waveshape', id: 'nwarp', label: 'Noise warp', hint: 'Read offset by 0.25·a·N·seeded noise', seeded: true },
+  { group: 'Time', id: 'palindrome', label: 'Palindrome', hint: 'Blend toward the cycle at double speed, then reversed' },
+  { group: 'Time', id: 'reverse', label: 'Reverse', hint: 'Blend (1−a)·x + a·x reversed' },
+  { group: 'Time', id: 'halfSwap', label: 'Half-cycle swap', hint: 'Blend toward −x(t+½): halves swapped and inverted (even harmonics flip)' },
+  { group: 'Time', id: 'repeat', label: 'Window & repeat', hint: 'First 1/n repeated n times, n = 1 + 7a (blended between whole n)' },
+  { group: 'Time', id: 'slew', label: 'Slew limit', hint: 'Step per sample limited to 2·0.0015^a' },
+  { group: 'Time', id: 'decimate', label: 'Decimate', hint: 'Sample-and-hold to 2048 / 2^(7a) steps, then band-limited' },
+  { group: 'Time', id: 'window', label: 'Window impose', hint: 'Cycle squeezed into W = 1 − 0.9a (silence after), Hann-shaped by a' },
   { group: 'Spectral', id: 'smooth', label: 'Smooth', hint: 'Gaussian low-pass at harmonic 2 / a^1.5' },
   { group: 'Spectral', id: 'spread', label: 'Spread up', hint: 'Harmonic k gains a·(k−1)/k of harmonic k−1' },
   { group: 'Spectral', id: 'stretch', label: 'Stretch', hint: 'Harmonic k moves to round(k·(1 + 0.6a))' },
@@ -209,6 +216,25 @@ function phaseToward(x: Float32Array, a: number, target: (k: number, K: number) 
   });
 }
 
+/** Table i of `x` repeated: its first 1/n played n times (n ≥ 1, may be fractional length). */
+function repeatAt(x: Float32Array, n: number, i: number): number {
+  return lerpAt(x, i % (N / n));
+}
+
+/** Slew-limited cycle: runs three cycles so the limiter's state wraps consistently. */
+function slewLimit(x: Float32Array, maxStep: number): Float32Array {
+  let y = x[N - 1];
+  const out = new Float64Array(N);
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < N; i++) {
+      const d = x[i] - y;
+      y += d > maxStep ? maxStep : d < -maxStep ? -maxStep : d;
+      out[i] = y;
+    }
+  }
+  return shape(out);
+}
+
 export function mutate(
   op: MutationId,
   x: Float32Array,
@@ -261,6 +287,31 @@ export function mutate(
     case 'nwarp': {
       const w = noiseCycle(noiseField(rand.int(2 ** 32)), 1.5, 0, 3, 0.5);
       return shapeFrom((i) => lerpAt(x, i + a * N * 0.25 * w[i]));
+    }
+    case 'palindrome':
+      return shapeFrom((i) => (1 - a) * x[i] + a * (i < N / 2 ? x[2 * i] : x[2 * (N - 1 - i) + 1]));
+    case 'reverse':
+      return shapeFrom((i) => (1 - a) * x[i] + a * x[(N - i) % N]);
+    case 'halfSwap':
+      return shapeFrom((i) => (1 - a) * x[i] - a * x[(i + N / 2) % N]);
+    case 'repeat': {
+      const nf = 1 + 7 * a;
+      const n0 = Math.floor(nf);
+      const f = nf - n0;
+      return shapeFrom((i) => (1 - f) * repeatAt(x, n0, i) + (f > 0 ? f * repeatAt(x, n0 + 1, i) : 0));
+    }
+    case 'slew':
+      return a <= 0.001 ? shape(x) : slewLimit(x, 2 * Math.pow(0.0015, a));
+    case 'decimate': {
+      const hold = Math.pow(2, 7 * a);
+      return shapeFrom((i) => x[Math.min(N - 1, Math.floor(Math.floor(i / hold) * hold))]);
+    }
+    case 'window': {
+      const w = 1 - 0.9 * a;
+      return shapeFrom((i) => {
+        const t = i / N / w;
+        return t >= 1 ? 0 : lerpAt(x, t * N) * (1 - a + a * (0.5 - 0.5 * Math.cos(2 * Math.PI * t)));
+      });
     }
     case 'smooth':
       return smoothBy(x, a);
