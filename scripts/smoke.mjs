@@ -2223,6 +2223,29 @@ async function wavetableEditorChecks(page, tlCount) {
   await page.click('#undo');
   row = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
   assert(row[1] !== null, 'undo restores the slot');
+  // Shift+→ in the focused view moves the slot (not the waveform in the Timeline).
+  const order = () => M(() => window.mkwavez.model.timeline.map((t) => t.id).join());
+  const ord0 = await order();
+  await page.mouse.click(slotX(g, 1), g.vy);
+  await page.keyboard.press('Shift+ArrowRight');
+  const row2 = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(row2[2] === row[1] && row2[1] === row[2] && (await order()) === ord0, 'Shift+→ in the editor moves the selected slot; the Timeline is unchanged');
+  // During a drag no shortcut acts; Esc cancels it.
+  g = await geo();
+  await page.mouse.move(g.tx + 31, g.ty);
+  await page.mouse.down();
+  await page.mouse.move(g.tx + 31, g.ty - 12, { steps: 2 });
+  await page.mouse.move(slotX(g, 0), g.vy, { steps: 4 });
+  const playing0 = await M(() => window.mkwavez.model.playing);
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.keyboard.press('Space');
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  const row3 = await M((id) => window.mkwavez.model.wavetable(id).rows[0], a);
+  assert(
+    (await order()) === ord0 && (await M(() => window.mkwavez.model.playing)) === playing0 && row3.join() === row2.join() && !(await page.$('#wave-drag-ghost')),
+    'during a drag Shift+→ / Space do nothing; Esc cancels the drop',
+  );
   // Built-ins refuse drops.
   await page.click('#wte-item-1');
   g = await geo();

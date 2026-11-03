@@ -87,6 +87,8 @@ export function installShortcuts(ctx: UiContext, actions: ShortcutActions, targe
     if (e.shiftKey) {
       if (e.ctrlKey || e.metaKey || e.altKey) return false;
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return false;
+      // Elements that move their own selection with Shift+←/→ (the wavetable editor's view).
+      if (e.target instanceof Element && e.target.closest('[data-shift-arrows]')) return false;
       model.moveTable(model.selectedId, e.key === 'ArrowLeft' ? -1 : 1);
       return true;
     }

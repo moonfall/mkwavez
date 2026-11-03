@@ -348,6 +348,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
       class: 'wte-scroll',
       id: 'wte-scroll',
       tabindex: 0,
+      'data-shift-arrows': '',
       role: 'grid',
       'aria-label': 'Wavetable slots: click to select, Alt-click moves the write head, Delete empties the selected slot; drag waveforms here from the Timeline',
     },
@@ -1228,7 +1229,23 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
       syncFoot();
       touch();
     };
-    if (e.key === 'ArrowLeft') move(-1, 0);
+    // Shift+←/→ moves the selected slot along its line (the global Shift+←/→ moves in the
+    // Timeline; this view opts out with data-shift-arrows).
+    const shiftSlot = (d: number) => {
+      if (!sel || wt.builtin) return;
+      const s = sel;
+      const len = wt.rows[s.y]?.length ?? 0;
+      const to = s.x + d;
+      if (to < 0 || to >= len) return;
+      const t: SlotTarget = wt.shape === '2d' ? { kind: 'slot', x: to, y: s.y } : { kind: 'gap', x: d < 0 ? to : to + 1, y: s.y };
+      if (model.moveInWavetable(wt.id, s, t)) {
+        sel = { x: to, y: s.y };
+        syncFoot();
+        touch();
+      }
+    };
+    if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) shiftSlot(e.key === 'ArrowLeft' ? -1 : 1);
+    else if (e.key === 'ArrowLeft') move(-1, 0);
     else if (e.key === 'ArrowRight') move(1, 0);
     else if (e.key === 'ArrowUp' && wt.shape !== '1d') move(0, -1);
     else if (e.key === 'ArrowDown' && wt.shape !== '1d') move(0, 1);

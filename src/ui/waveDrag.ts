@@ -157,6 +157,10 @@ function onKey(e: KeyboardEvent): void {
     end(false);
     return;
   }
+  // No other key acts while dragging (shortcuts such as Shift+←/→, Space, Delete, the
+  // editor's arrows): this listener runs first (window, capture phase).
+  e.preventDefault();
+  e.stopPropagation();
   // Modifier changes (Alt / Ctrl / ⌘ = copy) update the label at once.
   drag.p = point(e, drag.p);
   update();

@@ -184,6 +184,7 @@ when other modifier keys are held. Controls show theirs in tooltips (and `aria-k
 | ↑ / ↓ | Seed / Mutate libraries: previous / next entry (↓ from the search moves into the list; Enter picks the first match, Esc clears) |
 | ← / → | Voice tabs (when a tab has focus): previous / next voice |
 | ← / → (↑ / ↓) | Wavetables editor view (when it has focus): select the previous / next slot (row) |
+| Shift+← / Shift+→ | Wavetables editor view (when it has focus): move the selected slot (instead of the Timeline move) |
 | Delete / Shift+Delete | Wavetables editor: empty / remove the selected slot |
 | Alt / Ctrl / ⌘ (while dragging) | Copy instead of move within a wavetable |
-| Esc | MIDI popover: cancel Learn; while dragging a waveform: cancel the drag |
+| Esc | MIDI popover: cancel Learn; while dragging a waveform: cancel the drag (no other shortcut acts during a drag) |
