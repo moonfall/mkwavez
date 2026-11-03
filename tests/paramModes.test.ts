@@ -11,6 +11,7 @@ import {
   sequenceValues,
   type SequenceParams,
   PARAM_MODES,
+  RESERVED_OPS,
   renderRecipe,
   seedBatch,
   seedEntry,
@@ -84,7 +85,7 @@ describe('parameter modes', () => {
     const f = amps({ slope: 0, g1: 4, f1: 10, w1: 1 });
     expect(f[10]).toBeCloseTo(5);
     // The formant moves an octave up by the end of the batch.
-    const moved = amps({ slope: 0, g1: 4, f1: 10, w1: 1, shift: 1 }, 2, 3);
+    const moved = amps({ slope: 0, slopeEnd: 0, g1: 4, f1: 10, w1: 1, shift: 1 }, 2, 3);
     expect(moved[20]).toBeCloseTo(5);
     const phase = (ph: number, seed: number) => seedTable(req('additive-designer', { phase: ph }, 1, seed), 0).data;
     expect(same(phase(2, 1), phase(2, 2))).toBe(false);
@@ -114,5 +115,22 @@ describe('parameter modes', () => {
     expect(Array.from(viaCheckpoint)).toEqual(Array.from(fresh));
     const t = (seed: number) => seedTable(req('reaction-diffusion', {}, 2, seed), 1).data;
     expect(same(t(1), t(2))).toBe(false);
+  });
+
+  it('registry: modes never reuse another op; old recipes missing a param use its default', () => {
+    const modes = PARAM_MODES.map((m) => m.mode);
+    expect(new Set(modes).size).toBe(modes.length);
+    for (const m of modes) expect(RESERVED_OPS.includes(m), m).toBe(false);
+    const t = seedTable(req('karplus-strong', {}, 3), 1);
+    const { position: _drop, ...older } = t.recipe.params;
+    expect(same(renderRecipe({ ...t.recipe, params: older }), t.data)).toBe(true);
+  });
+
+  it('no silent tables: late Karplus-Strong snapshots, a sine map settling on a fixed point', () => {
+    const peak = (x: Float32Array) => x.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    const late = seedTable(req('karplus-strong', { damping: 1, passes: 64, start: 256 }, 64), 63).data;
+    expect(peak(late)).toBeCloseTo(1, 5);
+    const sine = seedTable(req('dynamical-systems', { map: 1, control: 0, controlEnd: 0, iterations: 64 }, 1), 0).data;
+    expect(peak(sine)).toBeCloseTo(1, 5);
   });
 });

@@ -10,13 +10,13 @@ import { basicWave, pulse, type BasicWave } from './basic';
 import { CA_RULES, caGenerations } from './ca';
 import { formulaTable, type FormulaFn } from './formula';
 import { FORMULA_PRESETS } from './formulaPresets';
-import { PARAM_MODES, paramMode, type SeedParam } from './paramModes';
+import { PARAM_MODES, paramMode, type ParamModeId, type SeedParam } from './paramModes';
 import { batchU, DEFAULT_PERLIN, perlinTable, type PerlinParams } from './perlin';
 
 export type { SeedParam } from './paramModes';
 
 /** Built-in modes, or a PARAM_MODES mode (e.g. 'dynamical'). */
-export type SeedMode = 'basic' | 'pulse' | 'formula' | 'perlin' | 'ca' | (string & {});
+export type SeedMode = 'basic' | 'pulse' | 'formula' | 'perlin' | 'ca' | ParamModeId;
 
 export interface SeedEntry {
   /** Stable id, recorded in recipes as `params.preset`. */

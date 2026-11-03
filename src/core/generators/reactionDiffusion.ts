@@ -19,8 +19,8 @@ export const RD_PRESETS: readonly { label: string; feed: number; kill: number }[
 export const RD_CUSTOM = RD_PRESETS.length;
 
 export interface RdParams {
-  /** Index into RD_PRESETS, or RD_CUSTOM for feed / kill. */
-  preset: number;
+  /** Index into RD_PRESETS, or RD_CUSTOM for feed / kill. ('preset' is taken: recipes use it for the library entry.) */
+  system: number;
   feed: number;
   kill: number;
   /** Ring size, 16..256. */
@@ -33,7 +33,7 @@ export interface RdParams {
   spots: number;
 }
 
-export const DEFAULT_RD: RdParams = { preset: 0, feed: 0.04, kill: 0.055, cells: 128, steps: 400, start: 200, spots: 3 };
+export const DEFAULT_RD: RdParams = { system: 0, feed: 0.04, kill: 0.055, cells: 128, steps: 400, start: 200, spots: 3 };
 
 const DU = 0.16;
 const DV = 0.08;
@@ -84,7 +84,7 @@ const clone = (s: RdState): RdState => ({ u: s.u.slice(), v: s.v.slice() });
 
 /** The ring's V after `step` steps (for tests / previews). */
 export function rdState(p: RdParams, seed: number, step: number): Float64Array {
-  const preset = RD_PRESETS[Math.round(p.preset)];
+  const preset = RD_PRESETS[Math.round(p.system)];
   const F = preset ? preset.feed : clamp(p.feed, 0, 0.1);
   const k = preset ? preset.kill : clamp(p.kill, 0, 0.1);
   const cells = clamp(Math.round(p.cells), 16, 256);
@@ -102,5 +102,6 @@ export function rdState(p: RdParams, seed: number, step: number): Float64Array {
 /** Table `index` of a batch: V after start + index·steps steps. */
 export function rdTable(p: RdParams, seed: number, index: number): Float32Array {
   const steps = clamp(Math.round(p.steps), 1, 1000);
-  return shape(resamplePeriodic(rdState(p, seed, Math.max(0, Math.round(p.start)) + index * steps)));
+  // A pattern that died out (V uniform to 1e-6) is silence, not amplified residue.
+  return shape(resamplePeriodic(rdState(p, seed, Math.max(0, Math.round(p.start)) + index * steps), 1e-6));
 }

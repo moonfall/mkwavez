@@ -54,7 +54,7 @@ export const FORMULA_PRESETS: readonly FormulaPreset[] = [
   {
     group: 'Spectral',
     name: 'Rounded bell partials',
-    expr: '[1,2.76,5.4,8.93].reduce((s,f,i)=>s+sin(round(f*(1+u))*p)/(i+1),0)',
+    expr: '[1,2.76,5.4,8.93].reduce((s,f,i)=>s+sin((i?round(f*(1+u)):1)*p)/(i+1),0)',
   },
   {
     group: 'Fractal',
@@ -99,7 +99,7 @@ export const FORMULA_PRESETS: readonly FormulaPreset[] = [
   {
     group: 'Sequence',
     name: 'Euclidean pulses',
-    expr: '(floor(floor(t*16)*(5+n)/16)-floor((floor(t*16)-1)*(5+n)/16))*2-1',
+    expr: '(floor(floor(t*16)*(1+(4+n)%15)/16)-floor((floor(t*16)-1)*(1+(4+n)%15)/16))*2-1',
   },
   { group: 'Sequence', name: 'Digits of π', expr: '[3,1,4,1,5,9,2,6,5,3,5,8,9,7,9,3][(floor(t*16)+n)%16]/4.5-1' },
 ];

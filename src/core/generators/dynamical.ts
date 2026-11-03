@@ -97,17 +97,28 @@ function iterate(map: DynMap, k: number, iters: number, spread: number, ph: numb
   }
 }
 
-/** Table `index` of a batch: the control sweeps control → controlEnd across it. */
+/**
+ * Table `index` of a batch: the control sweeps control → controlEnd across it. Where the
+ * map settles on a fixed point (e.g. low r with many iterations) the cycle would be a
+ * constant, i.e. silence after shaping: the iterations are halved until the transient
+ * toward the fixed point still varies (≥ 1e-6), so every table is audible.
+ */
 export function dynamicalTable(p: DynParams, index: number, count: number): Float32Array {
   const m = Math.round(p.map);
   const map = DYN_MAPS[m] ?? 'logistic';
   const k = dynControl(m, p.control + (p.controlEnd - p.control) * batchU(index, count));
-  const iters = clamp(Math.round(p.iterations), 1, 64);
   const spread = clamp(p.spread, 0.01, 1);
   const x = new Float64Array(TABLE_SIZE);
-  for (let i = 0; i < TABLE_SIZE; i++) {
-    const v = iterate(map, k, iters, spread, (2 * Math.PI * i) / TABLE_SIZE);
-    x[i] = p.output >= 0.5 ? Math.tanh(3 * v) : v;
+  for (let iters = clamp(Math.round(p.iterations), 1, 64); ; iters = Math.floor(iters / 2)) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < TABLE_SIZE; i++) {
+      const v = iterate(map, k, iters, spread, (2 * Math.PI * i) / TABLE_SIZE);
+      x[i] = p.output >= 0.5 ? Math.tanh(3 * v) : v;
+      lo = Math.min(lo, x[i]);
+      hi = Math.max(hi, x[i]);
+    }
+    if (hi - lo >= 1e-6 || iters <= 1) break;
   }
   return shape(x);
 }

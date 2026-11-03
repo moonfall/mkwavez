@@ -36,7 +36,7 @@ export const MUTATIONS = [
   { group: 'Time', id: 'reverse', label: 'Reverse', hint: 'Blend (1−a)·x + a·x reversed' },
   { group: 'Time', id: 'halfSwap', label: 'Half-cycle swap', hint: 'Blend toward −x(t+½): halves swapped and inverted (even harmonics flip)' },
   { group: 'Time', id: 'repeat', label: 'Window & repeat', hint: 'First 1/n repeated n times, n = 1 + 7a (blended between whole n)' },
-  { group: 'Time', id: 'slew', label: 'Slew limit', hint: 'Step per sample limited to 2·0.0015^a' },
+  { group: 'Time', id: 'slew', label: 'Slew limit', hint: 'Step per sample limited to 2·0.0005^√a' },
   { group: 'Time', id: 'decimate', label: 'Decimate', hint: 'Sample-and-hold to 2048 / 2^(7a) steps, then band-limited' },
   { group: 'Time', id: 'window', label: 'Window impose', hint: 'Cycle squeezed into W = 1 − 0.9a (silence after), Hann-shaped by a' },
   { group: 'Nonlinear', id: 'logisticShape', label: 'Logistic shaper', hint: 'Blend by a toward 3 logistic-map steps on (x+1)/2, r = 3.5 + 0.5a' },
@@ -137,12 +137,31 @@ function smoothBy(x: Float32Array, a: number): Float32Array {
   return a <= 0.001 ? shape(x) : shape(x, { lowpassHarmonic: 2 / Math.pow(a, 1.5) });
 }
 
-/** Run fn on the positive-frequency bins, mirror, inverse, shape. */
+/** Bins below this fraction of the source's strongest harmonic are float residue: dropped. */
+const RESIDUE = 1e-6;
+/** A result whose strongest harmonic is below this fraction of the source's is silence. */
+const SILENT = 1e-3;
+
+/**
+ * Run fn on the positive-frequency bins, mirror, inverse, shape. Levels are judged
+ * relative to the source: residue bins are dropped and a result that kept (almost)
+ * nothing is silence, so shape()'s normalisation never blows float residue up into
+ * full-scale noise or a phantom tone (e.g. a sieve on a source without kept harmonics).
+ */
 function viaSpec(x: Float32Array, fn: (re: Float64Array, im: Float64Array) => void): Float32Array {
   const re = Float64Array.from(x);
   const im = new Float64Array(N);
   fft(re, im, false);
+  let inMax = 0;
+  for (let k = 1; k < N / 2; k++) inMax = Math.max(inMax, Math.hypot(re[k], im[k]));
   fn(re, im);
+  let outMax = 0;
+  for (let k = 1; k < N / 2; k++) {
+    const m = Math.hypot(re[k], im[k]);
+    if (m < inMax * RESIDUE) re[k] = im[k] = 0;
+    else outMax = Math.max(outMax, m);
+  }
+  if (outMax < inMax * SILENT) return new Float32Array(N);
   for (let k = 1; k < N / 2; k++) {
     re[N - k] = re[k];
     im[N - k] = -im[k];
@@ -315,7 +334,7 @@ export function mutate(
       return shapeFrom((i) => (1 - f) * repeatAt(x, n0, i) + (f > 0 ? f * repeatAt(x, n0 + 1, i) : 0));
     }
     case 'slew':
-      return a <= 0.001 ? shape(x) : slewLimit(x, 2 * Math.pow(0.0015, a));
+      return a <= 0 ? shape(x) : slewLimit(x, 2 * Math.pow(0.0005, Math.sqrt(a)));
     case 'decimate': {
       const hold = Math.pow(2, 7 * a);
       return shapeFrom((i) => x[Math.min(N - 1, Math.floor(Math.floor(i / hold) * hold))]);

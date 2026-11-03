@@ -53,7 +53,7 @@ function nums<T extends object>(p: ModeParams, defaults: T): T {
 
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
-export const PARAM_MODES: readonly ParamModeDef[] = [
+export const PARAM_MODES = [
   {
     mode: 'dynamical',
     id: 'dynamical-systems',
@@ -172,12 +172,12 @@ export const PARAM_MODES: readonly ParamModeDef[] = [
       'Waveform i is the ring after start + i × steps, so a batch watches the pattern evolve. Feed / kill apply to Custom.',
     params: [
       {
-        key: 'preset',
+        key: 'system',
         label: 'Feed / kill',
         min: 0,
         max: RD_CUSTOM,
         step: 1,
-        value: RD.preset,
+        value: RD.system,
         options: [...RD_PRESETS.map((p, i) => [i, `${p.label} (${p.feed} / ${p.kill})`] as const), [RD_CUSTOM, 'Custom']],
       },
       { key: 'feed', label: 'Feed (custom)', min: 0.005, max: 0.08, step: 0.001, value: RD.feed },
@@ -190,8 +190,40 @@ export const PARAM_MODES: readonly ParamModeDef[] = [
     seeded: () => true,
     render: (p, seed, index) => rdTable(nums<RdParams>(p, RD), seed, index),
   },
-];
+] as const satisfies readonly ParamModeDef[];
+
+/** A parameter mode's recipe op / SeedEntry mode. */
+export type ParamModeId = (typeof PARAM_MODES)[number]['mode'];
+
+/** Recipe param keys a mode's params may not use (seedTable sets them). */
+export const RESERVED_PARAM_KEYS: readonly string[] = ['preset', 'name'];
+
+/** Recipe ops that are not parameter modes (a mode may not reuse one). */
+export const RESERVED_OPS: readonly string[] = ['basic', 'pulse', 'formula', 'perlin', 'ca', 'mutate', 'breed'];
+
+{
+  const seen = new Set<string>(RESERVED_OPS);
+  for (const m of PARAM_MODES) {
+    if (seen.has(m.mode)) throw new Error(`PARAM_MODES: mode '${m.mode}' collides with another op`);
+    seen.add(m.mode);
+    for (const p of m.params as readonly SeedParam[])
+      if (RESERVED_PARAM_KEYS.includes(p.key)) throw new Error(`PARAM_MODES: ${m.mode} param '${p.key}' is reserved`);
+  }
+}
 
 export function paramMode(mode: string): ParamModeDef | undefined {
-  return PARAM_MODES.find((m) => m.mode === mode);
+  return (PARAM_MODES as readonly ParamModeDef[]).find((m) => m.mode === mode);
+}
+
+/** The mode's default params. */
+export function paramDefaults(pm: ParamModeDef): Record<string, number> {
+  return Object.fromEntries(pm.params.map((p) => [p.key, p.value]));
+}
+
+/**
+ * Render with the mode's defaults under `p`, so a recipe saved before a param existed
+ * re-renders with that param's default instead of NaN.
+ */
+export function renderParamMode(pm: ParamModeDef, p: ModeParams, seed: number, index: number, count: number): Float32Array {
+  return pm.render({ ...paramDefaults(pm), ...p }, seed, index, count);
 }

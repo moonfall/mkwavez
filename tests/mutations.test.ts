@@ -110,6 +110,18 @@ describe('mutations (core port)', () => {
     expect(top).toBeLessThanOrEqual(8);
   });
 
+  it('a sieve that keeps nothing gives silence, not amplified float residue', () => {
+    const h2 = generateBasic('sine', 0).data.map((_, i, a) => a[(2 * i) % a.length]); // sin(2p)
+    const out = mutate('multiples', h2, 1, 0); // m is 2–5: h2 survives only for m = 2
+    const peak = out.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    expect(peak === 0 || peak > 0.99).toBe(true);
+    const odd = mutate('odd', h2, 1, 0);
+    expect(odd.every((v) => v === 0)).toBe(true);
+    const h4h6 = h2.map((_, i) => Math.sin((2 * Math.PI * 4 * i) / h2.length) + Math.sin((2 * Math.PI * 6 * i) / h2.length));
+    expect(mutate('primes', h4h6, 1, 0).every((v) => v === 0)).toBe(true);
+    expect(mutate('primes', h4h6, 0.9999, 0).every((v) => v === 0)).toBe(true);
+  });
+
   it('sweep amounts', () => {
     expect(sweepAmounts(4, 1, 'lin')).toEqual([0.25, 0.5, 0.75, 1]);
     const log = sweepAmounts(3, 0.64, 'log');

@@ -4,8 +4,8 @@ import type { Recipe, TableId } from '../table';
 import { basicWave, pulse, type BasicWave } from './basic';
 import { caGenerations } from './ca';
 import { formulaTable, type FormulaCompiler } from './formula';
-import { paramMode } from './paramModes';
-import { perlinTable, type PerlinParams } from './perlin';
+import { paramMode, renderParamMode } from './paramModes';
+import { DEFAULT_PERLIN, perlinTable } from './perlin';
 import { pulseWidth } from './seed';
 
 export * from './additive';
@@ -40,7 +40,18 @@ export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
     case 'pulse':
       return pulse(pulseWidth(Number(p.width), Number(p.widthEnd), index, count));
     case 'perlin':
-      return perlinTable(p as unknown as PerlinParams, r.seed, index, count);
+      return perlinTable(
+        {
+          freq: Number(p.freq ?? DEFAULT_PERLIN.freq),
+          z: Number(p.z ?? DEFAULT_PERLIN.z),
+          zDrift: Number(p.zDrift ?? DEFAULT_PERLIN.zDrift),
+          octaves: Number(p.octaves ?? DEFAULT_PERLIN.octaves),
+          persistence: Number(p.persistence ?? DEFAULT_PERLIN.persistence),
+        },
+        r.seed,
+        index,
+        count,
+      );
     case 'ca':
       return caGenerations(
         { rule: Number(p.rule), cells: Number(p.cells) },
@@ -63,7 +74,7 @@ export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
     default: {
       const pm = paramMode(r.op);
       if (!pm) throw new Error(`renderRecipe: unknown op ${r.op}`);
-      return pm.render(p, r.seed, index, count);
+      return renderParamMode(pm, p, r.seed, index, count);
     }
   }
 }
