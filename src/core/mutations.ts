@@ -52,6 +52,15 @@ export const MUTATIONS = [
     hint: 'Harmonics not a multiple of m (2–5, seeded; h1 kept) scaled by (1−a)²',
     seeded: true,
   },
+  { group: 'Phase', id: 'zeroPhase', label: 'Zero phase', hint: 'Phases moved by a toward 0 (a = 1: symmetric)' },
+  { group: 'Phase', id: 'schroeder', label: 'Schroeder phase', hint: 'Phases moved by a toward −πk(k−1)/K (low crest factor)' },
+  {
+    group: 'Phase',
+    id: 'phaseRandom',
+    label: 'Phase randomize',
+    hint: 'Phases moved by a toward seeded random ones (a = 1: fully random)',
+    seeded: true,
+  },
   { group: 'Random', id: 'jitter', label: 'Jitter', hint: 'Seeded magnitude + phase noise, scaled by a', seeded: true },
   { group: 'Random', id: 'scramble', label: 'Scramble', hint: 'Seeded phase offsets up to ±a·π', seeded: true },
   // Legacy (M2): superseded by the Breed tab (core/breed.ts); kept so older recipes
@@ -181,6 +190,22 @@ function contrast(x: Float32Array, gamma: number): Float32Array {
       const r = M[k] / max;
       setPolar(re, im, k, r > 1e-6 ? max * Math.pow(r, gamma) : 0, P[k]);
     }
+  });
+}
+
+/** Wrap an angle into (−π, π]. */
+function wrapPi(v: number): number {
+  const w = v - 2 * Math.PI * Math.round(v / (2 * Math.PI));
+  return w <= -Math.PI ? w + 2 * Math.PI : w;
+}
+
+/** Move every harmonic's phase by a (shortest way) toward target(k, K); K = highest present harmonic. */
+function phaseToward(x: Float32Array, a: number, target: (k: number, K: number) => number): Float32Array {
+  return viaSpec(x, (re, im) => {
+    const { M, P, max } = harmonics(re, im);
+    let K = 1;
+    for (let k = 1; k <= KMAX; k++) if (M[k] > max * 1e-6) K = k;
+    for (let k = 1; k <= KMAX; k++) setPolar(re, im, k, M[k], P[k] + a * wrapPi(target(k, K) - P[k]));
   });
 }
 
@@ -329,6 +354,14 @@ export function mutate(
     case 'multiples': {
       const m = 2 + rand.int(4);
       return sieve(x, q, (k) => k % m === 0);
+    }
+    case 'zeroPhase':
+      return phaseToward(x, a, () => 0);
+    case 'schroeder':
+      return phaseToward(x, a, (k, K) => (-Math.PI * k * (k - 1)) / Math.max(1, K));
+    case 'phaseRandom': {
+      const ph = Array.from({ length: KMAX + 1 }, () => Math.PI * R());
+      return phaseToward(x, a, (k) => ph[k]);
     }
     case 'jitter':
       return viaSpec(x, (re, im) =>

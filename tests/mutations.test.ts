@@ -58,6 +58,29 @@ describe('mutations (core port)', () => {
     expect(fib[8]).toBeGreaterThan(1e-3);
   });
 
+  it('phase: zero phase is symmetric; Schroeder lowers the crest factor; magnitudes kept', () => {
+    const saw = generateBasic('saw', 0).data;
+    const z = mutate('zeroPhase', saw, 1, 0);
+    // Symmetric about some point: the autocorrelation of z with its reverse peaks at 1.
+    const n = z.length;
+    let best = 0;
+    for (let s = 0; s < n; s++) {
+      let c = 0;
+      for (let i = 0; i < n; i++) c += z[i] * z[(s - i + n) % n];
+      best = Math.max(best, c);
+    }
+    const energy = z.reduce((e, v) => e + v * v, 0);
+    expect(best / energy).toBeCloseTo(1, 3);
+    const crest = (x: Float32Array) => 1 / Math.sqrt(x.reduce((e, v) => e + v * v, 0) / x.length);
+    const flat = generateBasic('saw', 0).data;
+    expect(crest(mutate('schroeder', mutate('flatten', flat, 1, 0), 1, 0))).toBeLessThan(crest(mutate('zeroPhase', mutate('flatten', flat, 1, 0), 1, 0)));
+    for (const id of ['zeroPhase', 'schroeder', 'phaseRandom'] as const) {
+      const m = harmonicMagnitudes(mutate(id, saw, 0.8, 3), 72);
+      const s0 = harmonicMagnitudes(saw, 72);
+      for (const k of [2, 5, 9]) expect(m[k] / m[1], id).toBeCloseTo(s0[k] / s0[1], 3);
+    }
+  });
+
   it('sweep amounts', () => {
     expect(sweepAmounts(4, 1, 'lin')).toEqual([0.25, 0.5, 0.75, 1]);
     const log = sweepAmounts(3, 0.64, 'log');
