@@ -9,6 +9,7 @@ import type { ParamValue } from '../table';
 import { additiveTable, DEFAULT_ADDITIVE as AD, type AdditiveParams } from './additive';
 import { DEFAULT_DYN, DYN_MAP_LABELS, dynamicalTable } from './dynamical';
 import { DEFAULT_KS, karplusTable } from './karplus';
+import { DEFAULT_RD as RD, RD_CUSTOM, RD_PRESETS, rdTable, type RdParams } from './reactionDiffusion';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 
 export interface SeedParam {
@@ -160,6 +161,34 @@ export const PARAM_MODES: readonly ParamModeDef[] = [
     ],
     seeded: () => false,
     render: (p, _seed, index) => sequenceTable(nums<SequenceParams>(p, SQ), index),
+  },
+  {
+    mode: 'rd',
+    id: 'reaction-diffusion',
+    cat: 'Simulations',
+    name: 'Reaction-diffusion ring',
+    about:
+      'Gray-Scott chemistry on a ring of cells from seeded spots; the waveform is the V concentration around the ring. ' +
+      'Waveform i is the ring after start + i × steps, so a batch watches the pattern evolve. Feed / kill apply to Custom.',
+    params: [
+      {
+        key: 'preset',
+        label: 'Feed / kill',
+        min: 0,
+        max: RD_CUSTOM,
+        step: 1,
+        value: RD.preset,
+        options: [...RD_PRESETS.map((p, i) => [i, `${p.label} (${p.feed} / ${p.kill})`] as const), [RD_CUSTOM, 'Custom']],
+      },
+      { key: 'feed', label: 'Feed (custom)', min: 0.005, max: 0.08, step: 0.001, value: RD.feed },
+      { key: 'kill', label: 'Kill (custom)', min: 0.03, max: 0.075, step: 0.001, value: RD.kill },
+      { key: 'cells', label: 'Cells', min: 16, max: 256, step: 8, value: RD.cells },
+      { key: 'steps', label: 'Steps per waveform', min: 1, max: 1000, step: 1, value: RD.steps },
+      { key: 'start', label: 'Start step', min: 0, max: 5000, step: 10, value: RD.start },
+      { key: 'spots', label: 'Initial spots', min: 1, max: 8, step: 1, value: RD.spots },
+    ],
+    seeded: () => true,
+    render: (p, seed, index) => rdTable(nums<RdParams>(p, RD), seed, index),
   },
 ];
 

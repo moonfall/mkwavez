@@ -5,9 +5,9 @@
  * attack → mellow tail. The buffer (length L) is resampled to the table band-limited
  * (exact DFT of its harmonics), so short strings stay clean.
  */
-import { KMAX, TABLE_SIZE } from '../constants';
 import { Prng } from '../prng';
 import { shape } from '../shape';
+import { resamplePeriodic } from './resample';
 
 export interface KsParams {
   /** 0 = seeded noise burst, 1 = triangle pluck. */
@@ -56,33 +56,11 @@ function run(buf: Float64Array, b: number, n: number): void {
   }
 }
 
-/** Band-limited resample of a periodic buffer to TABLE_SIZE (harmonics ≤ KMAX and < L/2). */
-function resample(buf: Float64Array): Float64Array {
-  const L = buf.length;
-  const K = Math.min(KMAX, Math.floor((L - 1) / 2));
-  const out = new Float64Array(TABLE_SIZE);
-  for (let k = 1; k <= K; k++) {
-    let re = 0;
-    let im = 0;
-    for (let i = 0; i < L; i++) {
-      const a = (2 * Math.PI * k * i) / L;
-      re += buf[i] * Math.cos(a);
-      im -= buf[i] * Math.sin(a);
-    }
-    if (Math.hypot(re, im) < 1e-12) continue;
-    for (let i = 0; i < TABLE_SIZE; i++) {
-      const a = (2 * Math.PI * k * i) / TABLE_SIZE;
-      out[i] += re * Math.cos(a) - im * Math.sin(a);
-    }
-  }
-  return out;
-}
-
 /** Table `index` of a batch: the buffer after start + index·passes round trips. */
 export function karplusTable(p: KsParams, seed: number, index: number): Float32Array {
   const L = clamp(Math.round(p.length), 16, 512);
   const buf = excite(p, L, seed >>> 0);
   const passes = clamp(Math.round(p.passes), 1, 64);
   run(buf, clamp(p.damping, 0, 1), Math.max(0, Math.round(p.start)) + index * passes);
-  return shape(resample(buf));
+  return shape(resamplePeriodic(buf));
 }

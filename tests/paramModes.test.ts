@@ -3,7 +3,9 @@ import { TABLE_SIZE } from '../src/core/constants';
 import {
   additiveAmps,
   DEFAULT_ADDITIVE,
+  DEFAULT_RD,
   DEFAULT_SEQUENCE,
+  rdState,
   DYN_MAPS,
   euclid,
   sequenceValues,
@@ -100,5 +102,17 @@ describe('parameter modes', () => {
     expect(v({ source: 4, steps: 8, pulses: 3 }).reduce((s, x) => s + x, 0)).toBe(3);
     expect(v({ source: 4, steps: 8, pulses: 3 }, 2).reduce((s, x) => s + x, 0)).toBe(5);
     expect(euclid(5, 16).reduce((s, x) => s + x, 0)).toBe(5);
+  });
+
+  it('reaction-diffusion: checkpointed stepping equals stepping from scratch; seeded', () => {
+    const p = { ...DEFAULT_RD, cells: 64 };
+    rdState({ ...p, spots: 2 }, 3, 0); // a different simulation: the cache starts afresh
+    rdState(p, 3, 300);
+    const viaCheckpoint = rdState(p, 3, 700).slice(); // continues from step 300
+    rdState({ ...p, spots: 2 }, 3, 0);
+    const fresh = rdState(p, 3, 700); // from step 0
+    expect(Array.from(viaCheckpoint)).toEqual(Array.from(fresh));
+    const t = (seed: number) => seedTable(req('reaction-diffusion', {}, 2, seed), 1).data;
+    expect(same(t(1), t(2))).toBe(false);
   });
 });

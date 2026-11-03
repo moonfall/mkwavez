@@ -17,6 +17,8 @@ export * from './paramModes';
 export * from './formula';
 export * from './formulaPresets';
 export * from './perlin';
+export * from './reactionDiffusion';
+export * from './resample';
 export * from './seed';
 export * from './sequences';
 
