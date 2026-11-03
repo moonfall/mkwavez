@@ -579,10 +579,12 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   fade in / out over 10 ms (weights towards 1/√n). The pitch reference is a virtual centre
   copy per oscillator (ratio 1, its own phase): its wraps drive Step-mode table switches
   and hard sync (B's centre restarts A's copies at the fraction of the sample past its
-  wrap; A isn't advanced again that sample), and B's centre is the FM source.
+  wrap; A isn't advanced again that sample), and B's centre is the FM source. With one copy
+  audible the centre phase is locked to it.
   Tempo-synced LFOs that don't retrigger steer into lock with the transport position
   (cycles from beat 0) while it plays, at up to ±½ of their own speed — so Play never makes
-  them jump; LFO-rate modulation multiplies their speed (unlocked while it is non-zero,
+  them jump (a slow division can take up to about a cycle to lock; only forward wraps start
+  a new S&H cycle); LFO-rate modulation multiplies their speed (unlocked while it is non-zero,
   then they glide back into lock). Denormal-range filter / pink state is flushed per block.
 - CPU guard: per control block the engine counts the unison copies of Synth voices holding
   a note (release tails don't count); over `UNISON_BUDGET` (32) it limits — each voice's

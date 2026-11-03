@@ -261,3 +261,43 @@ describe('5–7', () => {
     for (let i = 0; i < L.length; i++) expect(Number.isFinite(L[i]) && Math.abs(L[i]) <= 0.45 && Math.abs(R[i]) <= 0.45).toBe(true);
   });
 });
+
+describe('follow-up 2', () => {
+  it('back to one unison copy: the centre phase locks to the audible copy (Step switches on its cycle start)', () => {
+    const e = new SynthEngine(SR);
+    (['sine', 'saw', 'square', 'tri'] as const).forEach((w, i) => e.addTable(i + 1, buildMipSet(generateBasic(w, 0).data)));
+    e.setWavetable(0, packIds([1, 2, 3, 4], 'step'));
+    const v = sv(1, { aUnison: 4, aDetune: 30, bUnison: 3, bLevel: 0.5 });
+    e.setVoice(v);
+    e.applyMidi({ type: 'noteOn', voiceId: 1, note: 50, velocity: 127 });
+    render(e, SR / 4);
+    e.setVoice({ ...v, synth: { ...v.synth, aUnison: 1, bUnison: 1 } });
+    render(e, SR / 4);
+    const syn = (e as unknown as { voices: { syn: { phA: Float64Array; phB: Float64Array; phCA: number; phCB: number; uA: number; uB: number } }[] }).voices[0].syn;
+    expect([syn.uA, syn.uB]).toEqual([1, 1]);
+    // Locked at every block start, so at most a block's drift apart while the place glides home.
+    expect(Math.abs(syn.phCA - syn.phA[0])).toBeLessThan(1e-3);
+    expect(Math.abs(syn.phCB - syn.phB[0])).toBeLessThan(1e-3);
+    render(e, SR / 2);
+    expect(Math.abs(syn.phCA - syn.phA[0])).toBeLessThan(1e-9);
+  });
+
+  it('an LFO steered back across 0 does not start a new S&H cycle', () => {
+    const c: SynthControl = { bend: 0, blockLen: 64, tables: new Map(), wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1, beat: 0 };
+    const p = sv(1, { lfos: [{ ...DEFAULT_LFO, shape: 'sh', sync: true, div: '1/4' }, DEFAULT_LFO, DEFAULT_LFO] });
+    const s = new SynthVoice(SR, 1, 64);
+    // Locked phase just behind the LFO's: it is steered back; values only change on forward wraps.
+    let beat = 0.999;
+    let wraps = 0;
+    let last = s.lfoPhase[0];
+    const seen = new Set<number>();
+    for (let k = 0; k < 4000; k++) {
+      s.control(p, { ...c, beat });
+      beat += (2 * 64) / SR;
+      if (s.lfoPhase[0] < last - 0.5) wraps++;
+      last = s.lfoPhase[0];
+      seen.add(s.lfoOut[0]);
+    }
+    expect(seen.size).toBeLessThanOrEqual(wraps + 1);
+  });
+});

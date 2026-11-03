@@ -428,11 +428,12 @@ export class SynthVoice {
         d -= Math.round(d);
         ph += Math.max(-0.5 * inc, Math.min(0.5 * inc, d));
       }
-      if (ph >= 1 || ph < 0) {
+      if (ph >= 1) {
+        // Only a forward wrap is a new cycle (S&H / smooth random draw their next value).
         ph -= Math.floor(ph);
         this.lfoPrev[i] = this.lfoCur[i];
         this.lfoCur[i] = this.modRng.bipolar();
-      }
+      } else if (ph < 0) ph -= Math.floor(ph); // steered back across 0: same cycle
 
       this.lfoPhase[i] = ph;
       const age = this.lfoAge[i];
@@ -544,6 +545,11 @@ export class SynthVoice {
     const nB = want(s.bUnison);
     this.uA = this.copies(nA, this.wA0, this.wA1, this.phA, this.phCA, this.plA, this.pnA);
     this.uB = this.copies(nB, this.wB0, this.wB1, this.phB, this.phCB, this.plB, this.pnB);
+    // One copy audible (the others faded out): the centre follows it exactly, so Step-mode
+    // switches and hard sync land on the audible copy's cycle start.
+    if (this.uA === 1) this.phCA = this.phA[0];
+    if (this.uB === 1) this.phCB = this.phB[0];
+
     this.maxRatA = this.place(this.uA, nA, s.aDetune, s.aSpread, this.plA, this.pnA, this.ratA, this.gAL, this.gAR);
     this.maxRatB = this.place(this.uB, nB, s.bDetune, s.bSpread, this.plB, this.pnB, this.ratB, this.gBL, this.gBR);
     const spread = (this.uA > 1 && s.aSpread > 0) || (this.uB > 1 && s.bSpread > 0);

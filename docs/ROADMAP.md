@@ -265,7 +265,8 @@ Known gaps:
 - The CPU guard reduces every limited voice's copies alike (budget / count), not by
   per-voice priority.
 - Tempo-synced, non-retriggering LFOs glide into lock with the transport (no jump at Play);
-  LFO-rate modulation unlocks them while it is non-zero.
+  LFO-rate modulation unlocks them while it is non-zero. Steering at ±½ speed, a slow
+  division can take up to about a cycle to lock (e.g. 8 bars).
 
 
 - Presets don't include the voice's sequence or the Simple-voice LFOs; "copy voice" copies
