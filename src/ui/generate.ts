@@ -13,8 +13,9 @@ import {
 } from '../core/generators';
 import { randomSeed } from '../core/prng';
 import type { GeneratedTable } from '../core/table';
-import type { UiContext } from './context';
+import type { FrameView, UiContext } from './context';
 import { h, section, selectField, slider, voiceColorVar } from './dom';
+import { buildMutatePanel } from './mutate';
 
 const BASIC_LABELS: Record<BasicWave, string> = {
   sine: 'Sine',
@@ -28,10 +29,11 @@ const BASIC_LABELS: Record<BasicWave, string> = {
 
 const MAX_BATCH = 64;
 
-export function buildGenerate(ctx: UiContext): HTMLElement {
+export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model } = ctx;
   const sec = section('sec-generate', 'Generate');
   let count = 8;
+  const countListeners: ((n: number) => void)[] = [];
 
   // ---- shared: batch size + batch window targets ----
   const countSlider = slider({
@@ -43,6 +45,7 @@ export function buildGenerate(ctx: UiContext): HTMLElement {
     onInput: (v) => {
       count = v;
       for (const b of nButtons) b.textContent = `+${count}`;
+      for (const fn of countListeners) fn(count);
     },
   });
   const checks = h('div', { class: 'checks' });
@@ -84,7 +87,9 @@ export function buildGenerate(ctx: UiContext): HTMLElement {
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
   const panels = new Map<string, HTMLElement>();
   const tabButtons = new Map<string, HTMLButtonElement>();
+  let currentTab = 'Seed';
   const setTab = (name: string) => {
+    currentTab = name;
     for (const [n, b] of tabButtons) b.setAttribute('aria-selected', String(n === name));
     for (const [n, p] of panels) p.hidden = n !== name;
   };
@@ -244,13 +249,20 @@ export function buildGenerate(ctx: UiContext): HTMLElement {
     ),
   );
 
+  // ---- Mutate panel ----
+  const mutate = buildMutatePanel(ctx, {
+    count: () => count,
+    onCount: (fn) => countListeners.push(fn),
+    active: () => sec.el.open && currentTab === 'Mutate',
+  });
+  panels.set('Mutate', mutate.el);
+
   // ---- placeholders ----
   const soon: Record<string, string> = {
-    Mutate: 'Mutate the selected table: morph, waveshape, spectral and random mutations with preview and sweeps.',
     Breed: 'Combine two or more parents: crossfades, spectral and per-harmonic genetic crossover.',
     Sample: 'Extract single cycles from the microphone or an audio file.',
   };
-  for (const name of ['Mutate', 'Breed', 'Sample']) {
+  for (const name of ['Breed', 'Sample']) {
     const p = h(
       'div',
       { role: 'tabpanel', id: `panel-${name.toLowerCase()}`, class: 'placeholder' },
@@ -261,5 +273,5 @@ export function buildGenerate(ctx: UiContext): HTMLElement {
   }
   sec.body.append(...panels.values());
   setTab('Seed');
-  return sec.el;
+  return { el: sec.el, view: mutate.view };
 }

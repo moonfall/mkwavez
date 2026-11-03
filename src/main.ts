@@ -39,6 +39,7 @@ model.select(model.timeline[0].id);
 model.clearUndo();
 
 // ---- UI ----
+const generate = buildGenerate(ctx);
 const timeline = buildTimeline(ctx);
 const wavetables = buildWavetables(ctx);
 const voices = buildVoices(ctx);
@@ -50,7 +51,7 @@ root.replaceChildren(
     'main',
     {},
     h('h1', { class: 'sr-only' }, 'mkwavez — evolving wavetable synth'),
-    buildGenerate(ctx),
+    generate.el,
     timeline.el,
     wavetables.el,
     voices.el,
@@ -59,7 +60,7 @@ root.replaceChildren(
 );
 
 // ---- frame loop: views draw only when dirty (or animating while playing), ~25 fps cap while playing ----
-const views: FrameView[] = [timeline.view, wavetables.view, voices.view, sequences.view];
+const views: FrameView[] = [generate.view, timeline.view, wavetables.view, voices.view, sequences.view];
 const limiter = throttle(40);
 const loop = (now: number) => {
   if (!model.playing || limiter(now)) for (const v of views) v.frame(now);

@@ -6,7 +6,7 @@ const src = generatePerlin(DEFAULT_PERLIN, 4242, 1)[0].data;
 const pool = [generateBasic('saw', 0).data, generateBasic('square', 0).data];
 const maxDiff = (a: Float32Array, b: Float32Array) => a.reduce((m, v, i) => Math.max(m, Math.abs(v - b[i])), 0);
 
-describe('mutations (core port; UI in M2)', () => {
+describe('mutations (core port)', () => {
   for (const m of MUTATIONS) {
     it(`${m.id}: amount 0 is identity, nonzero changes, seeded`, () => {
       const z = mutate(m.id, src, 0, 1, { breedPool: pool });

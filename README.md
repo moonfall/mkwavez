@@ -30,8 +30,14 @@ The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to overr
   expression in `p`, `t`, `n`, `u`, `pnoise()`), Perlin noise or cellular-automaton
   tables, one at a time (`+1`) or as a batch of N (`+N`). A batch sets the window of
   every voice ticked under "Batch sets window of".
+- **Generate → Mutate**: mutate the table selected in the Timeline (source and live
+  preview side by side). Pick a mutation and Amount; the shown seed is used by the
+  preview, Apply and every table of Apply N (Linear / Log sweep or Chain). Reroll
+  draws a new seed; one is drawn after each Apply. Evolve keeps mutating the newest
+  table on a timer. Breed pulls magnitudes toward a mate picked from a voice's window.
 - **Timeline**: every table, in order (cap 4096). Click to select and inspect.
 - **Wavetables**: the auto "All" wavetable as an amplitude heat map with voice windows.
 - **Voices**: window, position, LFO, Blend/Step, octave, level, ADSR per voice.
 - **Sequences**: 8-row pentatonic step grids, one per voice by default; shared tempo.
-- **Undo** (transport bar) covers table adds and note edits.
+- **Undo** (transport bar) covers table adds (including Apply / Apply N), window
+  edits and note edits.

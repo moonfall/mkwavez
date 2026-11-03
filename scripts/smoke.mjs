@@ -1,5 +1,6 @@
 // Headless-Chrome smoke test: page loads without console errors, sections collapse and
-// expand, Seed adds tables to the timeline, the worklet loads and the transport runs.
+// expand, Seed adds tables to the timeline, the worklet loads and the transport runs,
+// Mutate previews / applies / sweeps / chains / rerolls / evolves while playing.
 //
 // Usage: npm run smoke            (builds, then tests `vite preview` and `vite dev`)
 //        CHROME=/path/to/chrome   (default /usr/bin/google-chrome)
@@ -41,8 +42,8 @@ async function run(label, url, browser) {
   }
 
   // Tabs.
-  await page.click('#tab-mutate');
-  assert(await page.isVisible('#panel-mutate'), 'Mutate tab shows placeholder');
+  await page.click('#tab-breed');
+  assert(await page.isVisible('#panel-breed'), 'Breed tab shows placeholder');
   await page.click('#tab-seed');
   assert(await page.isVisible('#panel-seed'), 'Seed tab visible again');
 
@@ -98,6 +99,7 @@ async function run(label, url, browser) {
     { timeout: 5000 },
   );
   assert(true, 'worklet holds every timeline table');
+  await mutateChecks(page, tlCount);
   await page.click('#add-voice');
   assert((await page.evaluate(() => window.mkwavez.model.voices.length)) === 4, 'voice added');
   await page.click('#voice-4 .card-head button[aria-label^="Remove"]');
@@ -131,6 +133,133 @@ async function run(label, url, browser) {
   assert(!overflow, 'no horizontal page overflow');
   assert(errors.length === 0, `no console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
   await page.close();
+}
+
+/** Count of drawn (non-transparent) pixels and a cheap checksum of a canvas. */
+const canvasInk = (page, sel) =>
+  page.$eval(sel, (c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3]) n++;
+      sum = (sum * 31 + d[i] + d[i + 1] * 7 + d[i + 3] * 13) % 1000000007;
+    }
+    return { n, sum };
+  });
+
+async function mutateChecks(page, tlCount) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const seedText = async () => (await page.textContent('#mutate-seed')).replace('seed ', '').trim();
+  await page.click('#tab-mutate');
+  assert(await page.isVisible('#panel-mutate'), 'Mutate tab visible');
+  await page.waitForFunction(() => {
+    const c = document.querySelector('#mutate-pv-wave');
+    return c && c.width > 1 && c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 === 3 && v);
+  }, null, { timeout: 5000 });
+  assert(true, 'preview renders');
+  const srcId = await M(() => window.mkwavez.model.selectedId);
+  assert((await page.textContent('#mutate-src-label')).includes(`id ${srcId}`), 'source label names the selected table');
+  assert((await canvasInk(page, '#mutate-src-wave')).n > 0, 'source canvas renders');
+
+  // Live preview: changing mutation / amount redraws.
+  const before = await canvasInk(page, '#mutate-pv-wave');
+  await page.selectOption('#mutate-op', 'fold');
+  await page.fill('#mutate-amount', '0.5');
+  await page.waitForFunction(
+    (b) => {
+      const c = document.querySelector('#mutate-pv-wave');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 4) sum = (sum * 31 + d[i] + d[i + 1] * 7 + d[i + 3] * 13) % 1000000007;
+      return sum !== b;
+    },
+    before.sum,
+    { timeout: 5000 },
+  );
+  assert(true, 'preview updates when mutation and amount change');
+
+  // Reroll.
+  const s0 = await seedText();
+  assert(/^[0-9a-f]{8}$/.test(s0), `seed shown (${s0})`);
+  await page.click('#mutate-reroll');
+  const s1 = await seedText();
+  assert(s1 !== s0, 'Reroll draws a new seed');
+
+  // Apply single.
+  let n = await tlCount();
+  await page.click('#mutate-apply1');
+  assert((await tlCount()) === n + 1, 'Apply adds one table');
+  let r = await M(() => {
+    const m = window.mkwavez.model;
+    const t = m.timeline.at(-1);
+    return { ...t.recipe, id: t.id, sel: m.selectedId };
+  });
+  assert(
+    r.op === 'mutate' && r.params.mutation === 'fold' && r.params.amount === 0.5 && r.parents[0] === srcId && r.seed === parseInt(s1, 16),
+    'Apply recipe records mutation, amount, seed and parent',
+  );
+  assert(r.sel === r.id, 'Apply selects the new table (next Apply mutates it)');
+  assert((await seedText()) !== s1, 'new seed after Apply');
+
+  // Apply N in each batch mode (N = 8).
+  for (const mode of ['lin', 'log', 'chain']) {
+    await page.selectOption('#mutate-mode', mode);
+    const seed = parseInt(await seedText(), 16);
+    const sel = await M(() => window.mkwavez.model.selectedId);
+    n = await tlCount();
+    await page.click('#mutate-applyN');
+    assert((await tlCount()) === n + 8, `Apply N (${mode}) adds 8`);
+    r = await M(() => {
+      const m = window.mkwavez.model;
+      const b = m.timeline.slice(-8);
+      const v = m.voices[0];
+      return {
+        amounts: b.map((t) => t.recipe.params.amount),
+        modes: [...new Set(b.map((t) => t.recipe.params.mode))],
+        seeds: [...new Set(b.map((t) => t.recipe.seed))],
+        parents: [...new Set(b.map((t) => t.recipe.parents[0]))],
+        win: [v.windowStart, v.windowEnd],
+        len: m.timeline.length,
+        sel: m.selectedId,
+      };
+    });
+    const exp =
+      mode === 'lin'
+        ? [0.0625, 0.5]
+        : mode === 'log'
+          ? [0.5 / 64, 0.5]
+          : [0.5, 0.5];
+    assert(
+      r.modes.length === 1 && r.modes[0] === mode && Math.abs(r.amounts[0] - exp[0]) < 1e-9 && Math.abs(r.amounts[7] - exp[1]) < 1e-9,
+      `${mode} amounts ${r.amounts[0].toFixed(4)} … ${r.amounts[7]}`,
+    );
+    assert(r.seeds.length === 1 && r.seeds[0] === seed && r.parents.length === 1 && r.parents[0] === sel, `${mode}: one seed, one source`);
+    assert(r.win[0] === r.len - 8 && r.win[1] === r.len - 1, `${mode}: batch sets the targeted voice window`);
+    assert(r.sel === sel, `${mode}: source stays selected`);
+  }
+  n = await tlCount();
+  await page.click('#undo');
+  assert((await tlCount()) === n - 8, 'undo removes the chain batch');
+
+  // Breed records its mate.
+  assert(!(await page.isVisible('#mutate-mate-voice')), 'mate pool hidden for non-breed mutations');
+  await page.selectOption('#mutate-op', 'breed');
+  assert(await page.isVisible('#mutate-mate-voice'), 'breed shows the mate pool');
+  await page.click('#mutate-apply1');
+  r = await M(() => window.mkwavez.model.timeline.at(-1).recipe);
+  assert(r.params.mutation === 'breed' && r.parents.length === 2, 'breed recipe has two parents');
+
+  // Evolve.
+  await page.selectOption('#mutate-op', 'jitter');
+  n = await tlCount();
+  await page.click('#mutate-evolve');
+  await page.waitForFunction((k) => window.mkwavez.model.timeline.length >= k + 2, n, { timeout: 5000 });
+  await page.click('#mutate-evolve');
+  const n2 = await tlCount();
+  await page.waitForTimeout(900);
+  assert((await tlCount()) === n2, 'Evolve adds tables until stopped');
+  await page.click('#tab-seed');
 }
 
 const browser = await chromium.launch({

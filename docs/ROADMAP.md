@@ -1,22 +1,49 @@
 # Roadmap
 
-## M1 — Foundation (this milestone)
+## M1 — Foundation (done)
 
 TypeScript + Vite + AudioWorklet; portable `src/core`; shape() pipeline, seeded
 generators with recipes, per-octave mip sets, timeline (cap 4096, pin-aware
 eviction), wavetable model (1D/2D types, auto "All"), multi-voice engine with ADSR,
 step sequences on a shared transport, undo for adds and note edits, unit + smoke tests.
 
-## M2 — Mutate tab
+## M2 — Mutate tab (done)
 
-- UI for every prototype mutation (already ported and identity-tested in
-  `core/mutations.ts`): Morph, Waveshape, Spectral, Random groups.
-- Source = selected table; live preview (waveform + spectrum) with the same seed as
-  Apply; Reroll.
-- Apply / Apply N with Linear sweep, Log sweep (64:1) and Chain; seeded per batch;
-  recipes record `op: 'mutate'`, mutation id, amount, seed, parent id.
-- Evolve (timed auto-mutation of the newest table).
-- Breed-mutation pool from a chosen voice window.
+- Generate → Mutate: source = the Timeline selection, source and preview side by
+  side (waveform + spectrum; the preview waveform overlays the source faintly).
+- All prototype mutations, grouped Morph / Waveshape / Spectral / Random; Amount 0–1;
+  live preview while dragging (frame-loop, throttled to ≤ 20 recomputes/s, only when
+  visible).
+- One seed per Apply, shown in the tab; preview, Apply and every table of a sweep
+  share it; a new seed after each Apply, or on Reroll.
+- Apply (adds one table and selects it, so repeated Apply walks a lineage) and
+  Apply N (adds a batch from the same source, which stays selected) with Linear
+  sweep `A·i/N`, Log sweep `A·64^((i−N)/(N−1))` and Chain (each step mutates the
+  previous at A; step seeds derived from the Apply seed).
+- Evolve: toggle; every 0.7 s mutates the newest table with the current mutation at
+  `min(A, 30%)` and a fresh seed (single add, so following windows extend).
+- Recipes (`op: 'mutate'`) record mutation, amount, batch amount, mode, seed, batch
+  index/count and parent id(s); `renderRecipe` reproduces every mutation × mode
+  (unit-tested). Window following and batch targets behave as for seed batches;
+  undo covers Apply / Apply N / each Evolve step.
+- **Breed decision:** kept in Mutate as the prototype's magnitude pull, with the
+  second parent clearly defined: "Mate from window of" picks a voice; the mate is
+  one table from that voice's window chosen by the Apply's seed (one mate for the
+  whole batch, shown in the tab and recorded as `parents[1]`). The M3 Breed tab
+  supersedes it with explicit multi-parent selection.
+
+Deferred / known gaps from M2:
+- Each Evolve tick is an undo step, so a long Evolve run pushes older history out of
+  the 40-deep undo stack (as in the prototype).
+- Evolve keeps running with the Generate section collapsed or another tab showing;
+  only the button shows its state.
+- Breed of a table with few harmonics (e.g. a sine) borrows the source's
+  near-zero-magnitude phases, which are effectively noise — same as the prototype;
+  M3's spectral crossover should take phases from a parent explicitly.
+- Recipes have no code-version tag yet (M5); chain re-render cost grows with the
+  chain index (i+1 mutations).
+- No amount-curve preview per mutation (e.g. which mutations want Log sweep) beyond
+  the Steps readout.
 
 ## M3 — Breed tab
 

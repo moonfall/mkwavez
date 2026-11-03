@@ -1,5 +1,5 @@
 /**
- * Mutations ported from the prototype (UI arrives in M2). Each maps amount a in [0,1]
+ * Mutations ported from the prototype (UI: ui/mutate.ts). Each maps amount a in [0,1]
  * onto a source table; a = 0 returns the source unchanged (up to shape() rounding).
  * All randomness comes from `seed`.
  */

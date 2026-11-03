@@ -13,7 +13,10 @@ src/
     perlin.ts           improved Perlin noise, fBm, seeded NoiseField, loop-seamless pnoise
     generators/         basic, formula (FormulaFn interface only), Perlin, CA, presets,
                         renderRecipe() to re-render a table from its recipe
-    mutations.ts        prototype mutations + sweep amounts (UI lands in M2)
+                        (mutations need env.resolveTable for parent data)
+    mutations.ts        prototype mutations (identity at amount 0) + sweep amounts
+    mutateBatch.ts      Apply / Apply N (lin, log, chain) → tables + recipes; seeding
+                        rules; renderMutateRecipe() re-renders from parent tables
     mipmap.ts           per-octave band-limited mip sets, packed in one Float32Array
     table.ts            WaveTable, Recipe, IdAllocator
     timeline.ts         appendWithEviction (oldest-first, pin-aware), index/window remap
@@ -25,7 +28,8 @@ src/
   app/model.ts          AppModel: main-thread state, actions, undo, topic events
   audio/                protocol.ts (messages), worklet.ts (AudioWorkletProcessor adapter),
                         bridge.ts (AudioContext owner, state → messages, mip building)
-  ui/                   Plain DOM + canvas sections (no framework), styles.css tokens
+  ui/                   Plain DOM + canvas sections (no framework), styles.css tokens;
+                        generate.ts hosts the Seed tab and mutate.ts (Mutate tab)
   main.ts               initial state, section assembly, frame loop
 tests/                  vitest unit tests (core + AppModel)
 scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
@@ -36,7 +40,16 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 - **WaveTable** `{ id, data: Float32Array(2048), recipe }` — immutable, always shaped.
   `id` is a monotonic integer, never reused.
 - **Recipe** `{ op, params, seed, parents[], batch?{index,count} }` — plain data,
-  enough to re-render deterministically (`renderRecipe`; tested for every generator).
+  enough to re-render deterministically (`renderRecipe`; tested for every generator
+  and every mutation × batch mode).
+- **Mutation recipe** — `op: 'mutate'`, `params { mutation, amount (this table's),
+  batchAmount (A), mode: single|lin|log|chain }`, `seed` (the Apply's seed),
+  `parents [sourceId]` (`[sourceId, mateId]` for Breed), `batch {index, count}`.
+  Single and sweep tables all use the Apply's seed; chain step j uses
+  `chainStepSeed(seed, j)` (step 0 = seed, so the first chain table equals the
+  preview). A chain table at index i re-renders as i+1 steps from the source, so it
+  needs only the source (and mate), not the intermediate tables. Re-rendering needs
+  the parents to still exist (or be re-renderable themselves).
 - **Timeline** — ordered `WaveTable[]`, cap 4096. Eviction is oldest-first and skips
   tables referenced by any non-auto wavetable (`pinnedIds`). If everything is pinned
   the timeline may exceed the cap.
@@ -83,7 +96,10 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
 - UI: one rAF loop, ≤ 25 fps while playing. Sections redraw only when open, on screen
   (IntersectionObserver) and dirty or animating. The timeline is a virtualized grid on
   one sticky canvas (only visible rows drawn); the wavetable overview is a cached
-  heat-map bitmap with overlays.
+  heat-map bitmap with overlays. The Mutate preview is computed in the frame loop,
+  not in input handlers: only while the tab is showing and on screen, only when its
+  key (source id, mutation, amount, seed, mate id) changed, and at most every 50 ms
+  while a control is dragged. Apply reuses the preview table when the key matches.
 
 ## Playback semantics
 
