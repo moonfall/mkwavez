@@ -158,7 +158,7 @@ requestAnimationFrame(loop);
 if (midi.settings.input !== 'off') void webMidi.select(midi.settings.input);
 
 bridge.onStatus = (s) => {
-  document.body.dataset.step = String(s.step);
+  document.body.dataset.tick = String(s.tick);
 };
 
 // Debug handle for the console and smoke tests.

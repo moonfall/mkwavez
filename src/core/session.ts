@@ -18,7 +18,7 @@
  */
 import { MAX_STEPS, TABLE_SIZE, TIMELINE_CAP } from './constants';
 import { renderRecipe } from './generators';
-import { normalizeSteps, type SequenceData } from './sequence';
+import { DEFAULT_STEP_LENGTH, normalizeSteps, type SequenceData, stepLengthOf } from './sequence';
 import type { ParamValue, Recipe, TableId, WaveTable } from './table';
 import { DEFAULT_VOICE, clampVoiceWindow, fullWindow, type VoiceParams } from './voice';
 import {
@@ -38,9 +38,10 @@ import {
 
 /**
  * Current meta schema version. Bump it and add a migration when the shape changes.
- * 1: first schema. 2: `nextWavetableId` (user wavetables, monotonic ids).
+ * 1: first schema. 2: `nextWavetableId` (user wavetables, monotonic ids). 3: per-sequence
+ * `stepLength` (earlier sessions played eighth notes: they migrate to '1/8').
  */
-export const SESSION_VERSION = 2;
+export const SESSION_VERSION = 3;
 export const SESSION_FORMAT = 'mkwavez-session';
 /** Voices a session may hold (matches AppModel.MAX_VOICES). */
 const MAX_VOICES = 8;
@@ -239,6 +240,12 @@ export const MIGRATIONS: Readonly<Record<number, Migration>> = {
       FIRST_USER_WAVETABLE_ID,
       ...(Array.isArray(m.wavetables) ? m.wavetables : []).map((w: unknown) => (isObj(w) && isInt(w.id) ? w.id + 1 : 0)),
     ),
+  }),
+  // 2 → 3: per-sequence step length. Every earlier sequence stepped in eighth notes.
+  2: (m) => ({
+    ...m,
+    version: 3,
+    sequences: Array.isArray(m.sequences) ? m.sequences.map((s: unknown) => (isObj(s) ? { ...s, stepLength: DEFAULT_STEP_LENGTH } : s)) : m.sequences,
   }),
 };
 
@@ -563,6 +570,7 @@ function decodeSequence(raw: unknown, voices: ReadonlySet<number>): SequenceData
     length: isNum(raw.length) ? Math.max(1, Math.min(MAX_STEPS, Math.round(raw.length))) : 16,
     steps,
     gate: isNum(raw.gate) ? Math.max(0.05, Math.min(1, raw.gate)) : 0.5,
+    stepLength: stepLengthOf(raw),
   } as SequenceData;
 }
 

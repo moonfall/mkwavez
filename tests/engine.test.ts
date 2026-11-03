@@ -20,7 +20,7 @@ function setup(interp: Interp = 'blend') {
   const steps = emptySteps();
   steps[0] = 0;
   steps[4] = 3;
-  const seq: SequenceData = { id: 1, voiceId: 1, length: 8, steps, gate: 0.5 };
+  const seq: SequenceData = { id: 1, voiceId: 1, length: 8, steps, gate: 0.5, stepLength: '1/8' };
   e.setSequence(seq);
   return e;
 }
@@ -42,7 +42,7 @@ describe('SynthEngine', () => {
     expect(rms(out)).toBeGreaterThan(0.01);
     expect(out.every((v) => Number.isFinite(v) && Math.abs(v) <= 1)).toBe(true);
     const st = e.status(emptyStatus());
-    expect(st.step).toBeGreaterThanOrEqual(1);
+    expect(st.tick).toBeGreaterThanOrEqual(6);
     expect(st.voices[0].index).toBeGreaterThanOrEqual(0);
     expect(st.voices[0].index).toBeLessThanOrEqual(2);
   });

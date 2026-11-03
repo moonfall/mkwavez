@@ -387,7 +387,7 @@ describe('SynthEngine MIDI', () => {
     const e = engine({ sustain: 1 });
     const steps = emptySteps();
     for (let i = 0; i < 8; i++) steps[i] = 0; // a note on every step (110 Hz root)
-    e.setSequence({ id: 1, voiceId: 1, length: 8, steps, gate: 0.5 });
+    e.setSequence({ id: 1, voiceId: 1, length: 8, steps, gate: 0.5, stepLength: '1/8' });
     e.setTransport(true, 240); // step = 6000 samples
     render(e, 3000);
     e.midiNoteOn(1, 69, 127);

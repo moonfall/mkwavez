@@ -77,7 +77,7 @@ function richModel(): AppModel {
   m.addVoice({ wavetableId: LAST_BATCH_WAVETABLE_ID });
   m.addSequence(1, [0, 3, -1, 5], 12);
   m.addSequence(2, [7, -1, 2], 64);
-  m.updateSequence(2, { gate: 0.8 });
+  m.updateSequence(2, { gate: 0.8, stepLength: '1/16T' });
   m.removeVoice(5); // ids keep counting
   m.select(ids[6]);
   m.setBreedParents([ids[2], ids[0], ids[5]]);
@@ -247,6 +247,55 @@ describe('session migration', () => {
     };
     const m = migrateMeta({ ...version1().meta }, migrations, 4);
     expect([m.version, m.a, m.b, typeof m.nextWavetableId]).toEqual([4, 1, 2, 'number']);
+  });
+
+  it('migrates version 2 (eighth-note sequences) to step length 1/8', () => {
+    const m = richModel();
+    const st = m.exportState();
+    expect(st.sequences.map((s) => s.stepLength)).toEqual(['1/8', '1/16T']);
+    // A version-2 meta: sequences had no step length.
+    const meta: Record<string, unknown> = { ...JSON.parse(JSON.stringify(encodeMeta({ model: st, ui: {} }))), version: 2 };
+    meta.sequences = (meta.sequences as Record<string, unknown>[]).map(({ stepLength: _, ...s }) => s);
+    const up = migrateMeta(meta);
+    expect(up.version).toBe(3);
+    expect((up.sequences as Record<string, unknown>[]).map((s) => s.stepLength)).toEqual(['1/8', '1/8']);
+    // Everything else about the sequences is untouched.
+    expect((up.sequences as Record<string, unknown>[]).map(({ stepLength: _, ...s }) => s)).toEqual(meta.sequences);
+    expect(MIGRATIONS[2](meta).sequences).toEqual(up.sequences);
+    const recs = new Map(encodeWaveforms(st.timeline).map((r) => [r.id, r]));
+    const out = decodeSession(meta, recs).state.model;
+    expect(out.sequences).toEqual(st.sequences.map((s) => ({ ...s, stepLength: '1/8' })));
+    // Re-saved, it is a version-3 session that round-trips as is.
+    const again = JSON.parse(JSON.stringify(encodeMeta({ model: out, ui: {} }))) as SessionMeta;
+    expect(again.version).toBe(3);
+    expect(decodeSession(again, recs).state.model.sequences).toEqual(out.sequences);
+    // A version-1 session goes through both migrations.
+    const v1meta: Record<string, unknown> = { ...meta, version: 1 };
+    expect((migrateMeta(v1meta).sequences as Record<string, unknown>[]).every((s) => s.stepLength === '1/8')).toBe(true);
+    // Odd sequence arrays don't break the migration.
+    expect(MIGRATIONS[2]({ ...meta, sequences: [null, 3] }).sequences).toEqual([null, 3]);
+    expect(MIGRATIONS[2]({ ...meta, sequences: undefined }).sequences).toBeUndefined();
+  });
+
+  it('round-trips every step length; unknown ones decode to 1/8', () => {
+    const m = richModel();
+    const recs = encodeWaveforms(m.exportState().timeline);
+    for (const l of ['1/4', '1/8', '1/16', '1/8T', '1/16T'] as const) {
+      m.updateSequence(1, { stepLength: l });
+      const s: SessionState = { model: m.exportState(), ui: {} };
+      expect(roundTrip(s, recs).model.sequences.find((x) => x.id === 1)!.stepLength).toBe(l);
+    }
+    const meta = JSON.parse(JSON.stringify(encodeMeta({ model: m.exportState(), ui: {} }))) as Record<string, unknown>;
+    const seqs = meta.sequences as Record<string, unknown>[];
+    seqs[0].stepLength = '1/32';
+    seqs[1].stepLength = 8;
+    seqs.push({ ...seqs[1], id: 9 });
+    delete seqs[2].stepLength;
+    const out = decodeSession(meta, new Map(recs.map((r) => [r.id, r]))).state.model.sequences;
+    expect(out.map((s) => s.stepLength)).toEqual(['1/8', '1/8', '1/8']);
+    // The model ignores invalid values too.
+    m.updateSequence(1, { stepLength: 'x' as never });
+    expect(m.sequences[0].stepLength).toBe('1/16T');
   });
 
   it('rejects newer versions and missing / failing migrations', () => {
