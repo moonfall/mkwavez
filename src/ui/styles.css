@@ -2185,3 +2185,435 @@ button.gen-card.failed .gen-card-label::after {
     white-space: normal;
   }
 }
+
+/* ================= wavetables editor =================
+   Edit expands the Wavetables panel over the whole Generate row (Generate hidden); the
+   Timeline strip below stays visible as the drag source. Wide: list | view | write head.
+   Narrow: one column (list as a scrolling row). */
+@media (min-width: 900px) {
+  .shell.wt-editing #sec-wavetables {
+    grid-area: 1 / 1 / 2 / 4;
+  }
+}
+.shell.wt-editing #sec-generate {
+  display: none;
+}
+/* Vertical touch moves on the strip drag a waveform up into the editor (sideways still scrolls). */
+.shell.wt-editing #timeline-grid {
+  touch-action: pan-x;
+}
+#sec-wavetables.expanded .panel-body {
+  padding: 8px;
+}
+.wt-edit-hint {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+button.wt-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.wt-expand-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.wte {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) 244px;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+.wte-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+}
+.wte-items {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.wte-group {
+  padding: 6px 6px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.wte-none {
+  padding: 4px 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+button.wte-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: auto;
+  min-height: 30px;
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 4px;
+  text-align: left;
+}
+button.wte-item:hover {
+  background: var(--surface-2);
+}
+button.wte-item[aria-selected='true'] {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+button.wte-item.drop-over {
+  border: 1px dashed var(--new);
+}
+.wte-glyph {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+}
+.wte-item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.wte-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wte-item-meta {
+  font-size: 10px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+.wte-lock {
+  flex: none;
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 1.2;
+}
+.wte-new {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+.wte-new button {
+  flex: 1 1 0;
+}
+.wte-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+}
+.wte-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  flex: none;
+  min-width: 0;
+}
+.wte-name {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+input.wte-name-input {
+  width: 180px;
+  height: 26px;
+}
+.wte-pencil {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+}
+.wte-shape {
+  font-weight: 600;
+  color: var(--text-2);
+}
+.wte-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.wte-dim {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+input.wte-num {
+  width: 56px;
+  height: 24px;
+  padding: 0 4px;
+}
+.wte-dim-hint {
+  color: var(--muted);
+}
+.wte-seg button {
+  height: 22px;
+  padding: 0 8px;
+}
+.wte-seg button.seg-on:disabled {
+  background: var(--accent-bg);
+  color: var(--accent-text);
+  opacity: 0.6;
+}
+button.danger {
+  color: var(--danger);
+}
+.wte-view {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 110px;
+}
+.wte-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.wte-track {
+  position: relative;
+}
+.wte-stage {
+  position: sticky;
+  left: 0;
+  top: 0;
+}
+canvas#wte-canvas {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.wte-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  color: var(--text-2);
+  pointer-events: none;
+}
+.wte-legend {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  padding: 2px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+.wte-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.wte-key {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.wte-key.win {
+  background: color-mix(in srgb, var(--v0) 32%, transparent);
+  border: 1px solid var(--v0);
+}
+.wte-key.head {
+  border: 2px solid var(--new);
+}
+.wte-key.next {
+  width: 12px;
+  height: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--new);
+  color: var(--new);
+  font-size: 8px;
+}
+.wte-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-height: 24px;
+  min-width: 0;
+}
+.wte-slot-info {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.wte-foot button {
+  flex: none;
+}
+.wte-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+.wte-side-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wte-side-title {
+  font-weight: 600;
+  flex: 1 1 auto;
+}
+.wte-ctl {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wte-ctl-label {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.wte-ctl .seg {
+  width: 100%;
+}
+.wte-ctl .seg button {
+  flex: 1 1 0;
+  padding: 0 4px;
+}
+.wte-note {
+  margin-top: auto;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.4;
+}
+/* Drag ghost: the waveform under the pointer, with what a drop would do. */
+.wdrag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1000;
+  pointer-events: none;
+  width: 62px;
+  height: 58px;
+  border-radius: 4px;
+  border: 2px solid var(--border-strong);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.wdrag-ghost.ok {
+  border-color: var(--new);
+}
+.wdrag-ghost canvas {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.wdrag-label {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}
+.wdrag-ghost.ok .wdrag-label {
+  background: var(--new);
+  color: var(--on-accent);
+  border-color: var(--new);
+}
+body.wave-dragging,
+body.wave-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+@media (max-width: 899px) {
+  .wte {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .wte-items {
+    flex: none;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 4px;
+  }
+  .wte-group,
+  .wte-none {
+    display: none;
+  }
+  button.wte-item {
+    flex: none;
+    max-width: 170px;
+  }
+  .wte-view {
+    flex: none;
+    height: 240px;
+  }
+  .wte-foot {
+    flex-wrap: wrap;
+  }
+  .wte-slot-info {
+    flex-basis: 100%;
+    white-space: normal;
+  }
+  .wte-legend,
+  .wt-edit-hint {
+    display: none;
+  }
+}

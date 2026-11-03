@@ -7,6 +7,7 @@ import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './c
 import { h, icon, ICONS, isNarrowShell, panel, voiceColorVar } from './dom';
 import { dominantId, playingMix } from './playing';
 import { SHORTCUTS } from './shortcuts';
+import { beginDrag, consumeDragClick, DRAG_SLOP, dropTargetsActive, isDragging } from './waveDrag';
 
 /** Cell width and the gap between cells (px); one cell per table, in one row. */
 const CELL_W = 62;
@@ -363,6 +364,29 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     if (press) clearTimeout(press.timer);
     press = null;
   };
+  // While the wavetable editor is open, a table can be dragged into it: with the mouse
+  // after a small movement, on touch by moving up / down (sideways scrolls the strip;
+  // holding still is still the Breed long-press).
+  let pending: { x: number; y: number; id: number } | null = null;
+  grid.addEventListener('pointerdown', (e) => {
+    pending = null;
+    if (e.button === 0 && dropTargetsActive()) {
+      const t = cellAt(e.clientX);
+      if (t) pending = { x: e.clientX, y: e.clientY, id: t.id };
+    }
+  });
+  grid.addEventListener('pointermove', (e) => {
+    if (!pending || isDragging()) return;
+    const dx = e.clientX - pending.x;
+    const dy = e.clientY - pending.y;
+    const go = e.pointerType === 'mouse' ? Math.hypot(dx, dy) > DRAG_SLOP : Math.abs(dy) > LONG_PRESS_SLOP && Math.abs(dy) > Math.abs(dx);
+    if (!go) return;
+    const id = pending.id;
+    pending = null;
+    cancelPress();
+    beginDrag({ tableId: id }, e, model.table(id)?.data, grid);
+  });
+  for (const ev of ['pointerup', 'pointercancel'] as const) grid.addEventListener(ev, () => (pending = null));
   grid.addEventListener('pointerdown', (e) => {
     cancelPress();
     swallowClick = false;
@@ -390,6 +414,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     if (swallowClick || press) e.preventDefault();
   });
   grid.addEventListener('click', (e) => {
+    if (consumeDragClick()) return;
     if (swallowClick) {
       swallowClick = false;
       return;
