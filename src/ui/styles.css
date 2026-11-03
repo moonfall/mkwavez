@@ -1222,10 +1222,7 @@ canvas.seq-grid {
   }
 }
 
-/* ---- mutate ---- */
-.mutate-views canvas + canvas {
-  margin-top: 3px;
-}
+/* ---- labels ---- */
 .mono-label {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1329,32 +1326,32 @@ button:disabled {
 }
 
 /* ---- seed ---- */
-.seed {
+.gen-tab {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
-.seed-main {
+.gen-main {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
 }
-.seed-box,
+.gen-box,
 .gen-lib {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   min-width: 0;
 }
-.seed-box {
+.gen-box {
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.seed-box-head {
+.gen-box-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1407,6 +1404,10 @@ button.seed-link {
   font-weight: 600;
   font-size: 13px;
   flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .gen-lib-pos,
 .gen-cur-pos {
@@ -1771,7 +1772,7 @@ button.gen-card.failed .gen-card-label::after {
 
 /* phone: library collapses to ▲ · Category › Name (pos) · ▼; list opens inline */
 @media (max-width: 719px) {
-  .seed {
+  .gen-tab {
     grid-template-columns: minmax(0, 1fr);
   }
   .gen-lib {
@@ -1803,7 +1804,7 @@ button.gen-card.failed .gen-card-label::after {
   .seed-params {
     grid-template-columns: minmax(0, 1fr);
   }
-  .seed-box {
+  .gen-box {
     padding: 8px 10px;
   }
 }
@@ -1820,7 +1821,7 @@ button.gen-card.failed .gen-card-label::after {
    table (wave + spectrum, flexing), batch row + strip. The panel body scrolls only if
    the panel is shorter than the minimum. */
 @media (min-width: 900px) {
-  #sec-generate .panel-body > #panel-seed {
+  #sec-generate .panel-body > .gen-tab {
     flex: 1 0 250px;
     gap: 10px;
     grid-template-columns: clamp(170px, 15vw, 240px) minmax(0, 1fr);
@@ -1866,11 +1867,11 @@ button.gen-card.failed .gen-card-label::after {
     flex-basis: 34px;
     width: 34px;
   }
-  .seed-main {
+  .gen-main {
     min-height: 0;
     gap: 8px;
   }
-  .seed-box {
+  .gen-box {
     padding: 0;
     border: 0;
     background: none;
@@ -1882,7 +1883,7 @@ button.gen-card.failed .gen-card-label::after {
     align-items: flex-start;
     gap: 4px 10px;
   }
-  .seed-editor .seed-box-head {
+  .seed-editor .gen-box-head {
     flex: 0 1 auto;
     min-height: 28px;
   }
@@ -1917,7 +1918,7 @@ button.gen-card.failed .gen-card-label::after {
     font-size: 11px;
     line-height: 1.4;
   }
-  .seed-viewer {
+  .gen-viewer {
     flex: 1 1 0;
     min-height: 70px;
   }
@@ -1933,7 +1934,7 @@ button.gen-card.failed .gen-card-label::after {
   .gen-axis {
     font-size: 10px;
   }
-  .seed-batch {
+  .gen-batch {
     flex: none;
     gap: 6px;
   }
@@ -1983,5 +1984,152 @@ button.gen-card.failed .gen-card-label::after {
   .gen-strip {
     gap: 4px;
     padding: 0 0 2px;
+  }
+}
+
+/* ---- mutate (library, views, strip: the shared gen-* components above) ---- */
+.mut-params {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.mut-src {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: default;
+}
+.mut-src canvas {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.mut-src-no {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.mut-title {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mut-name,
+.mut-hint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mut-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.mut-hint {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.mut-amount {
+  flex: 1 1 180px;
+  min-width: 150px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.mut-amount input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.mut-amount-val {
+  flex: none;
+  width: 40px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.mut-legend {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.mut-legend > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mut-legend i {
+  width: 14px;
+  border-top: 2px solid var(--wave);
+}
+.mut-legend i.mut-key-src {
+  border-top: 2px dashed var(--muted);
+}
+.mutate .gen-seedbox {
+  flex: none;
+}
+
+/* Wide shell: params on one row (the title ellipsises; full text in its tooltip). */
+@media (min-width: 900px) {
+  .mut-params {
+    flex: none;
+    flex-wrap: nowrap;
+    gap: 10px;
+  }
+  .mut-title {
+    flex: 1 1 200px;
+  }
+  .mut-amount {
+    flex: 1 1 200px;
+    min-width: 170px;
+  }
+  .mut-src {
+    height: 28px;
+  }
+  /* Batch row: the voice checkboxes never clip; their label goes first, and when even
+     the checkboxes don't fit (tablet) the row wraps (targets + Add on a second line). */
+  .mutate .gen-main {
+    container: mut-main / inline-size;
+  }
+  .mutate .gen-targets .checks {
+    flex: none;
+  }
+}
+@container mut-main (max-width: 1000px) {
+  .mutate .gen-targets > span {
+    display: none;
+  }
+}
+@container mut-main (max-width: 760px) {
+  .mutate .gen-seedbox > span:first-child {
+    display: none;
+  }
+}
+@container mut-main (max-width: 700px) {
+  .mutate .gen-batch-head {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .mutate .gen-targets > span {
+    display: inline;
+  }
+  .mutate .gen-batch-head > .gen-targets {
+    overflow: visible;
+  }
+}
+@media (max-width: 899px) {
+  .mut-hint {
+    white-space: normal;
   }
 }

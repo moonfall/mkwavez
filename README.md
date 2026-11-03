@@ -29,7 +29,7 @@ The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to overr
 On a laptop / tablet (≥ 900 px wide) everything is on one screen: the transport bar
 (play, BPM, undo, MIDI, table count, sample rate, theme toggle), then Generate | Wavetables,
 the Timeline strip, and Voice | Sequence. Panels scroll internally when their content
-doesn't fit (e.g. the Mutate / Breed tabs). Narrower screens get one scrolling column
+doesn't fit (e.g. the Breed tab). Narrower screens get one scrolling column
 of the same panels, each collapsible. Dark theme by default; the sun / moon button
 switches (the choice is remembered).
 
@@ -44,11 +44,19 @@ switches (the choice is remembered).
   adds that one table, "Add batch (+N)" all N and sets the window of every voice ticked
   under "Sets window of". Modes that use randomness show the seed (Reroll); a new seed is
   drawn after each Add batch.
-- **Generate → Mutate**: mutate the table selected in the Timeline (source and live
-  preview side by side). Pick a mutation and Amount; the shown seed is used by the
-  preview, Apply and every table of Apply N (Linear / Log sweep or Chain). Reroll
-  draws a new seed; one is drawn after each Apply. Evolve keeps mutating the newest
-  table on a timer.
+- **Generate → Mutate**: mutate the table selected in the Timeline (the Source chip).
+  The library works like Seed's (search by name, group or amount mapping; ▲/▼ or the
+  arrow keys); each entry's thumbnail is that mutation applied to the source at the
+  current amount (faint = source), and `rnd` marks mutations that use the seed. The
+  header names the mutation and how Amount maps onto it ("0% = unchanged"); Seed /
+  Reroll appear only for seeded mutations. The large view shows one table of the batch
+  (solid) over the source (dashed) with both spectra (grey = source). Batch: Linear
+  (`A·i/N`), Log (`A·64^((i−N)/(N−1))`) or Chain (each table mutates the previous one
+  at A); the strip shows all N (click, or ←/→ when focused), the last one by default
+  (= a single mutation at A). "Add shown" adds that table and selects it (so it becomes
+  the next source); "Add +N" adds the batch and sets the window of the ticked voices.
+  The previews are exactly what gets added; a seeded mutation draws a new seed after
+  each Add.
 - **Generate → Breed**: combine 2–8 parents. Shift-click (or ⌘-click) or
   long-press tables in the Timeline, "Add selected", or "Use window" of a voice; reorder
   or remove them on their cards. Pick an operator (crossfade, spectral mix, magnitude /
@@ -91,5 +99,5 @@ switches (the choice is remembered).
   when you pick an input, or on your first click if the input was remembered (browsers
   only start audio on a gesture). Unsupported browsers / denied permission show a short
   status; the rest of the app is unaffected.
-- **Undo** (transport bar) covers table adds (including Apply / Apply N), window
+- **Undo** (transport bar) covers table adds (including Mutate / Breed adds), window
   edits and note edits.

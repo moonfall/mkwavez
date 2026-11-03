@@ -19,7 +19,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   };
   const onCount = (fn: (n: number) => void) => countListeners.push(fn);
 
-  // ---- shared by Mutate / Breed: batch size + batch window targets (Seed has its own row) ----
+  // ---- Breed: batch size + batch window targets (Seed / Mutate have their own batch row) ----
   const countSlider = slider({
     label: 'Batch size (N)',
     min: 1,
@@ -45,7 +45,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
     currentTab = name;
     for (const [n, b] of tabButtons) b.setAttribute('aria-selected', String(n === name));
     for (const [n, p] of panels) p.hidden = n !== name;
-    shared.hidden = name !== 'Mutate' && name !== 'Breed';
+    shared.hidden = name !== 'Breed';
     sec.el.dataset.tab = name.toLowerCase();
     sec.body.scrollTop = 0;
   };
@@ -69,6 +69,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   // ---- Mutate panel ----
   const mutate = buildMutatePanel(ctx, {
     count: () => count,
+    setCount,
     onCount,
     active: () => sec.isOpen() && currentTab === 'Mutate',
   });

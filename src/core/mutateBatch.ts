@@ -5,7 +5,8 @@
  * Seeding: one seed per Apply. A single Apply and every table of a Linear/Log sweep use
  * that seed, so the preview matches the result and a random sweep is one direction
  * growing gradually. Chain step j (0-based) uses chainStepSeed(seed, j); step 0 is the
- * seed itself, so the first chain table equals the preview.
+ * seed itself, so the first chain table equals a single Apply. The Mutate tab previews a
+ * whole batch via mutateBatchTable() and adds it (or one table of it) unchanged.
  *
  * Recipe (op 'mutate'):
  *   params  { mutation, amount (this table's), batchAmount (A), mode }

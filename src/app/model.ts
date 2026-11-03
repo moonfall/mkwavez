@@ -20,7 +20,7 @@ import {
 } from '../core/wavetable';
 
 /**
- * 'undo' = undo depth changed (any snapshot or undo); 'undone' = an undo was applied;
+ * 'undo' = undo depth changed (any snapshot or undo);
  * 'parents' = the Breed parent list changed (including tables dropping out of the timeline).
  */
 export type Topic =
@@ -30,7 +30,6 @@ export type Topic =
   | 'sequences'
   | 'transport'
   | 'undo'
-  | 'undone'
   | 'batchTargets'
   | 'parents';
 
@@ -344,7 +343,7 @@ export class AppModel {
       const st = s.steps.get(q.id);
       return st ? { ...q, steps: st } : q;
     });
-    this.emit('timeline', 'voices', 'sequences', 'selection', 'undo', 'undone', ...(parentsChanged ? (['parents'] as Topic[]) : []));
+    this.emit('timeline', 'voices', 'sequences', 'selection', 'undo', ...(parentsChanged ? (['parents'] as Topic[]) : []));
   }
 
   clearUndo(): void {

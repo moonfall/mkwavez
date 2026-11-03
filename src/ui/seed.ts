@@ -140,8 +140,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   let exprInput: HTMLInputElement | null = null;
   const editor = h(
     'div',
-    { class: 'seed-box seed-editor' },
-    h('div', { class: 'seed-box-head' }, edKind, edPath, editedBadge, revertBtn),
+    { class: 'gen-box seed-editor' },
+    h('div', { class: 'gen-box-head' }, edKind, edPath, editedBadge, revertBtn),
     edBody,
     errEl,
   );
@@ -300,7 +300,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const specBox = h('div', { class: 'gen-plot-box' }, specC);
   const viewer = h(
     'div',
-    { class: 'seed-viewer' },
+    { class: 'gen-viewer' },
     h(
       'div',
       { class: 'gen-views' },
@@ -331,7 +331,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   });
   const batchBox = h(
     'div',
-    { class: 'seed-box seed-batch' },
+    { class: 'gen-box gen-batch' },
     h(
       'div',
       { class: 'gen-batch-head' },
@@ -571,9 +571,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   // ---- assembly ----
   const el = h(
     'div',
-    { role: 'tabpanel', id: 'panel-seed', class: 'seed' },
+    { role: 'tabpanel', id: 'panel-seed', class: 'gen-tab' },
     lib.el,
-    h('div', { class: 'seed-main' }, editor, viewer, batchBox),
+    h('div', { class: 'gen-main' }, editor, viewer, batchBox),
   );
   watchVisibility(el);
 

@@ -1,270 +1,482 @@
-import { mutateBatch, type MutateRequest } from '../core/mutateBatch';
-import { MUTATION_CHOICES, sweepAmounts, type MutationId, type SweepMode } from '../core/mutations';
+import { batchAmountAt, mutateBatchTable, type MutateRequest } from '../core/mutateBatch';
+import { LOG_SWEEP_RANGE, mutate, MUTATION_CHOICES, mutationUsesSeed, type MutationId, type SweepMode } from '../core/mutations';
 import { randomSeed } from '../core/prng';
 import { describeRecipe, type GeneratedTable, type WaveTable } from '../core/table';
-import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
+import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS, voiceTargets } from './batch';
+import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
-import { h, selectField, slider } from './dom';
+import { h } from './dom';
+import { buildLibrary } from './library';
 
-const WAVE_H = 64;
-const SPEC_H = 30;
-/** Minimum interval between preview recomputes while a control is being dragged. */
+/** Minimum interval between preview restarts while a control is dragged. */
 const PREVIEW_MS = 50;
-const EVOLVE_MS = 700;
-const EVOLVE_MAX_AMOUNT = 0.3;
+/** Minimum interval between library thumbnail restarts (source / amount / seed changes). */
+const THUMBS_MS = 150;
+/** Main-thread time per frame spent computing preview tables and thumbnails. */
+const BUDGET_MS = 8;
+const THUMB_W = 44;
+const THUMB_H = 18;
+const SRC_W = 34;
+const SRC_H = 20;
+const DEFAULT_MUTATION: MutationId = 'fold';
 
-const MODES: [SweepMode, string][] = [
-  ['lin', 'Linear sweep'],
-  ['log', 'Log sweep (64:1)'],
-  ['chain', 'Chain'],
+const MODES: { mode: SweepMode; label: string; title: string }[] = [
+  { mode: 'lin', label: 'Linear', title: 'Linear sweep: table i of N uses amount A·i/N (the last is A)' },
+  {
+    mode: 'log',
+    label: 'Log',
+    title: `Log sweep: table i uses A·${LOG_SWEEP_RANGE}^((i−N)/(N−1)), ${LOG_SWEEP_RANGE}:1 down to A — fine steps at small amounts`,
+  },
+  { mode: 'chain', label: 'Chain', title: 'Chain: each table mutates the previous one at A (table i = i compounding steps)' },
 ];
 
 export interface MutatePanelOpts {
-  /** Shared batch size N from the Generate section. */
+  /** Shared batch size N (also used by Seed / Breed). */
   count(): number;
-  /** Subscribe to batch-size changes. */
+  setCount(n: number): void;
   onCount(fn: (n: number) => void): void;
   /** True while the Generate section is open and the Mutate tab is showing. */
   active(): boolean;
 }
 
 const hex = (s: number) => (s >>> 0).toString(16).padStart(8, '0');
-const pctLabel = (v: number) => {
+const pct = (v: number) => {
   const p = v * 100;
-  return p < 10 && p > 0 ? p.toFixed(1) : String(Math.round(p));
+  return `${p < 10 && p > 0 ? p.toFixed(1) : Math.round(p)}%`;
 };
 
+/** A preview batch being computed incrementally in the frame loop. */
+interface Job {
+  key: string;
+  req: MutateRequest;
+  source: WaveTable;
+  tables: (GeneratedTable | undefined)[];
+  /** Next table the background pass computes (a chain only ever computes in order). */
+  next: number;
+}
+
 /**
- * Generate → Mutate. Source is the timeline selection; the preview is computed in the
- * frame loop (throttled, only while visible) with the same seed Apply will use.
+ * Generate → Mutate: mutation library (search, ▲/▼, thumbnails of each mutation applied
+ * to the source), source + parameters, the shown table large over the source, and the
+ * batch strip. The source is the Timeline selection. Preview tables are computed in the
+ * frame loop (only while the tab is visible, restarted at most every PREVIEW_MS, BUDGET_MS
+ * per frame) through the same mutateBatchTable() as Add, with the same seed / amount /
+ * mode / N, so Add appends exactly what is shown.
  */
 export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: HTMLElement; view: FrameView } {
   const { model } = ctx;
-  let mutation: MutationId = 'toSaw';
+
+  // ---- state ----
+  let sel = Math.max(
+    0,
+    MUTATION_CHOICES.findIndex((m) => m.id === DEFAULT_MUTATION),
+  );
   let amount = 0.25;
   let mode: SweepMode = 'lin';
   let seed = randomSeed();
-  let evolveTimer: ReturnType<typeof setInterval> | null = null;
 
-  // ---- source / preview views ----
-  const srcLabel = h('span', { id: 'mutate-src-label', class: 'mono-label' });
-  const srcWave = h('canvas', { id: 'mutate-src-wave', 'aria-label': 'Source table waveform' });
-  const srcSpec = h('canvas', { id: 'mutate-src-spec', 'aria-label': 'Source table spectrum' });
-  const pvWave = h('canvas', { id: 'mutate-pv-wave', 'aria-label': 'Preview of the Apply result over the source' });
-  const pvSpec = h('canvas', { id: 'mutate-pv-spec', 'aria-label': 'Preview spectrum' });
-  const seedLabel = h('span', { id: 'mutate-seed', class: 'mono-label', title: 'Shared by the preview, Apply and every table of Apply N' });
-  const reroll = h('button', { id: 'mutate-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => newSeed() }, 'Reroll');
-  watchVisibility(pvWave);
+  const info = () => MUTATION_CHOICES[sel];
+  const seeded = () => mutationUsesSeed(info().id);
+  const source = (): WaveTable | undefined => model.table(model.selectedId);
+  const request = (): MutateRequest => ({ mutation: info().id, amount, seed, mode, count: opts.count() });
+  const keyOf = (src: WaveTable | undefined, r: MutateRequest) => `${src?.id ?? 'none'}|${r.mutation}|${r.amount}|${r.seed}|${r.mode}|${r.count}`;
 
-  const views = h(
+  // Dirty flags (drawn in the frame loop).
+  let mainDirty = true;
+  let cardsDirty = true;
+  let thumbsDirty = true;
+  let srcDirty = true;
+
+  // ---- library ----
+  const lib = buildLibrary({
+    idPrefix: 'mutate',
+    title: 'Mutations',
+    placeholder: 'Search name, group, mapping',
+    items: MUTATION_CHOICES.map((m) => ({
+      id: m.id,
+      group: m.group,
+      name: m.label,
+      tag: 'seeded' in m ? 'rnd' : undefined,
+      tagTitle: 'Uses the seed',
+      search: `${m.label}\n${m.group}\n${m.hint}`,
+    })),
+    initial: sel,
+    onChange: (i) => {
+      sel = i;
+      flash('');
+      syncParams();
+      strip.setShown(opts.count() - 1);
+      thumbsDirty = mainDirty = cardsDirty = true;
+    },
+    onThumbs: () => (thumbsDirty = true),
+  });
+
+  // ---- source + parameters ----
+  const srcThumb = h('canvas', { 'aria-hidden': 'true' });
+  const srcNo = h('span', { class: 'mut-src-no', id: 'mutate-src-no' });
+  const srcChip = h('div', { class: 'mut-src', id: 'mutate-src' }, srcThumb, h('span', {}, 'Source'), srcNo);
+  const title = h('span', { class: 'mut-name', id: 'mutate-title' });
+  const hint = h('span', { class: 'mut-hint', id: 'mutate-hint' });
+  const amountVal = h('span', { class: 'mut-amount-val', id: 'mutate-amount-val' });
+  const amountInput = h('input', { type: 'range', id: 'mutate-amount', min: 0, max: 1, step: 0.01, value: amount, 'aria-label': 'Amount' });
+  amountInput.addEventListener('input', () => {
+    amount = Number(amountInput.value);
+    syncAmount();
+  });
+  const seedLabel = h('span', { id: 'mutate-seed', class: 'mono-label', title: 'Shared by the preview, every card and Add' });
+  const seedBox = h(
     'div',
-    { class: 'grid2 mutate-views' },
-    h(
-      'div',
-      { class: 'field' },
-      h('div', { class: 'label' }, h('span', {}, 'Source'), h('span', { class: 'hint-inline' }, 'the Timeline selection')),
-      srcWave,
-      srcSpec,
-      h('div', { class: 'label' }, srcLabel),
-    ),
-    h(
-      'div',
-      { class: 'field' },
-      h('div', { class: 'label' }, h('span', {}, 'Preview'), reroll),
-      pvWave,
-      pvSpec,
-      h('div', { class: 'label' }, seedLabel, h('span', { class: 'hint-inline' }, 'faint = source')),
-    ),
+    { class: 'gen-seedbox', id: 'mutate-seedbox' },
+    h('span', {}, 'Seed'),
+    seedLabel,
+    h('button', { id: 'mutate-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => newSeed() }, 'Reroll'),
+  );
+  const params = h(
+    'div',
+    { class: 'mut-params' },
+    srcChip,
+    h('div', { class: 'mut-title' }, title, hint),
+    h('label', { class: 'mut-amount' }, h('span', {}, 'Amount'), amountInput, amountVal),
+    seedBox,
   );
 
-  // ---- controls ----
-  const opSel = h('select', { id: 'mutate-op', 'aria-label': 'Mutation' });
-  const groups = new Map<string, HTMLOptGroupElement>();
-  for (const m of MUTATION_CHOICES) {
-    let g = groups.get(m.group);
-    if (!g) {
-      g = h('optgroup', { label: m.group });
-      groups.set(m.group, g);
-      opSel.append(g);
-    }
-    g.append(h('option', { value: m.id }, m.label));
-  }
-  opSel.value = mutation;
-  opSel.addEventListener('change', () => {
-    mutation = opSel.value as MutationId;
-  });
-  const amountSlider = slider({
-    label: 'Amount',
-    min: 0,
-    max: 1,
-    step: 0.01,
-    value: amount,
-    format: (v) => `${Math.round(v * 100)}%`,
-    onInput: (v) => {
-      amount = v;
-      updateSteps();
-    },
-  });
-  amountSlider.input.id = 'mutate-amount';
-  const modeField = selectField('Batch mode', MODES, mode, (v) => {
-    mode = v as SweepMode;
-    updateSteps();
-  });
-  modeField.select.id = 'mutate-mode';
-  const stepsLabel = h('div', { id: 'mutate-steps', class: 'steps' });
+  const syncParams = () => {
+    const m = info();
+    title.textContent = `${m.group} › ${m.label}`;
+    hint.textContent = `${m.hint} · 0% = unchanged`;
+    hint.title = hint.textContent;
+    seedBox.hidden = !seeded();
+  };
 
-  const apply1 = h('button', { id: 'mutate-apply1', class: 'primary grow', onclick: () => applySingle() }, 'Apply');
-  const applyN = h('button', { id: 'mutate-applyN', class: 'primary grow', onclick: () => applyBatch() }, `Apply ${opts.count()}`);
-  const evolveBtn = h('button', { id: 'mutate-evolve', class: 'grow', 'aria-pressed': 'false', onclick: () => toggleEvolve() }, 'Evolve');
-  opts.onCount((n) => {
-    applyN.textContent = `Apply ${n}`;
-    updateSteps();
-  });
+  const syncAmount = () => {
+    amountVal.textContent = pct(amount);
+    relabelCards();
+    syncShownLabel();
+  };
 
-  const el = h(
+  // ---- result over source ----
+  const shownLabel = h('span', { class: 'mono-label', id: 'mutate-shown' });
+  const waveC = h('canvas', { id: 'mutate-wave', role: 'img', 'aria-label': 'Shown table (solid) over the source (dashed)' });
+  const specC = h('canvas', { id: 'mutate-spec', role: 'img', 'aria-label': 'Harmonic spectrum of the shown table over the source (grey)' });
+  const axis = (...labels: string[]) => h('div', { class: 'gen-axis' }, ...labels.map((l) => h('span', {}, l)));
+  const waveBox = h(
     'div',
-    { role: 'tabpanel', id: 'panel-mutate', class: 'gen-cols' },
-    h('div', { class: 'gen-col' }, views),
+    { class: 'gen-plot-box' },
+    waveC,
     h(
       'div',
-      { class: 'gen-col' },
-      h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Mutation')), opSel), amountSlider.el),
-      h('div', { class: 'grid2' }, modeField.el, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Steps')), stepsLabel)),
-      h('div', { class: 'row' }, apply1, applyN, evolveBtn),
+      { class: 'gen-plot-tags' },
+      shownLabel,
       h(
-        'p',
-        { class: 'hint' },
-        'Apply adds one table and selects it. Apply N adds a batch from the same source (sets the ticked voices’ windows). ' +
-          `Evolve mutates the newest table every ${EVOLVE_MS / 1000} s (amount capped at ${EVOLVE_MAX_AMOUNT * 100}%).`,
+        'span',
+        { class: 'mut-legend', 'aria-hidden': 'true' },
+        h('span', {}, h('i', { class: 'mut-key-src' }), 'source'),
+        h('span', {}, h('i', { class: 'mut-key-res' }), 'result'),
       ),
     ),
   );
+  const specBox = h('div', { class: 'gen-plot-box' }, specC);
+  const viewer = h(
+    'div',
+    { class: 'gen-viewer' },
+    h(
+      'div',
+      { class: 'gen-views' },
+      h('div', { class: 'gen-plot gen-plot-wave' }, waveBox, axis('0', 'π', '2π')),
+      h('div', { class: 'gen-plot gen-plot-spec' }, specBox, axis('h1', 'grey = source', `h${SPEC_BINS}`)),
+    ),
+  );
 
-  // ---- state helpers ----
-  const source = (): WaveTable | undefined => model.table(model.selectedId);
+  // ---- batch ----
+  const modeButtons = MODES.map((m) =>
+    h('button', { id: `mutate-mode-${m.mode}`, title: m.title, onclick: () => setMode(m.mode) }, m.label),
+  );
+  const stepper = buildStepper('mutate', opts);
+  const addShownBtn = h('button', { id: 'mutate-add-shown', onclick: () => addShown() }, 'Add shown');
+  const addBatchBtn = h('button', { id: 'mutate-add-batch', class: 'primary', onclick: () => addBatch() }, `Add +${opts.count()}`);
+  const status = h('div', { class: 'gen-status', id: 'mutate-status', role: 'status' });
+  const flash = flasher(status);
+  const strip = buildStrip('mutate-strip', {
+    onShow: () => {
+      mainDirty = true;
+      syncShownLabel();
+    },
+  });
+  const targets = voiceTargets(model);
+  targets.title = 'Add +N sets the window of the ticked voices to the new tables';
+  const batchBox = h(
+    'div',
+    { class: 'gen-box gen-batch' },
+    h(
+      'div',
+      { class: 'gen-batch-head' },
+      h('span', { class: 'gen-h' }, 'Batch'),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Batch mode' }, ...modeButtons),
+      stepper.el,
+      targets,
+      status,
+      h('div', { class: 'gen-adds' }, addShownBtn, addBatchBtn),
+    ),
+    strip.el,
+  );
 
-  const syncButtons = () => {
-    apply1.disabled = applyN.disabled = !source();
+  const setMode = (m: SweepMode) => {
+    mode = m;
+    MODES.forEach((x, i) => {
+      modeButtons[i].classList.toggle('seg-on', x.mode === m);
+      modeButtons[i].setAttribute('aria-pressed', String(x.mode === m));
+    });
+    flash('');
+    relabelCards();
+    syncShownLabel();
   };
 
-  const updateSteps = () => {
+  const cardLabel = (i: number) => (mode === 'chain' ? `step ${i + 1}` : `a ${pct(batchAmountAt(request(), i))}`);
+  const relabelCards = () => strip.resize(opts.count(), cardLabel);
+
+  const syncShownLabel = () => {
     const n = opts.count();
-    const s =
-      mode === 'chain'
-        ? `${n} × ${Math.round(amount * 100)}%, compounding`
-        : sweepAmounts(n, amount, mode).map(pctLabel).join(' ');
-    stepsLabel.textContent = s;
-    stepsLabel.title = s;
+    const i = strip.shown();
+    shownLabel.textContent =
+      mode === 'chain' ? `#${i + 1} of ${n} · amount ${pct(amount)} × ${i + 1}` : `#${i + 1} of ${n} · amount ${pct(batchAmountAt(request(), i))}`;
   };
 
   const newSeed = () => {
     seed = randomSeed();
-    seedLabel.textContent = `seed ${hex(seed)}`;
-    dirty = true;
+    seedLabel.textContent = hex(seed);
   };
 
-  // ---- preview (computed in the frame loop) ----
-  let pvKey = '';
-  let pv: GeneratedTable | null = null;
-  let lastCompute = -Infinity;
-  let dirty = true;
+  // ---- preview job ----
+  let job: Job | null = null;
+  let lastStart = -Infinity;
 
-  const request = (): MutateRequest => ({ mutation, amount, seed, mode: 'single', count: 1 });
-  const currentKey = () => `${source()?.id ?? 'none'}|${mutation}|${amount}|${seed}`;
-
-  const computePreview = (key: string) => {
+  const startJob = (): Job | null => {
     const src = source();
-    pv = src ? mutateBatch(request(), src)[0] : null;
-    pvKey = key;
-    dirty = true;
+    const req = request();
+    job = src ? { key: keyOf(src, req), req, source: src, tables: new Array(req.count), next: 0 } : null;
+    cardsDirty = mainDirty = true;
+    return job;
   };
 
-  const draw = () => {
-    const src = source();
-    const idx = model.indexOf(model.selectedId);
-    srcLabel.textContent = src ? `#${idx + 1} · id ${src.id} · ${describeRecipe(src.recipe)}` : 'Nothing selected';
-    syncButtons();
-    const axis = cssColor('--border');
-    const cSrc = cssColor('--text');
-    const cPv = cssColor('--new');
-    const cGhost = cssColor('--muted');
-    const [g1, w1, h1] = fit(srcWave, WAVE_H);
-    const [s1, sw1, sh1] = fit(srcSpec, SPEC_H);
-    const [g2, w2, h2] = fit(pvWave, WAVE_H);
-    const [s2, sw2, sh2] = fit(pvSpec, SPEC_H);
-    if (!src) return;
-    drawWave(g1, 0, 0, w1, h1, src.data, cSrc, { axis, lineWidth: 1.75 });
-    drawSpectrum(s1, sw1, sh1, src.data, cSrc);
-    if (!pv) return;
-    drawWave(g2, 0, 0, w2, h2, src.data, cGhost, { axis, lineWidth: 1 });
-    drawWave(g2, 0, 0, w2, h2, pv.data, cPv, { lineWidth: 1.75 });
-    drawSpectrum(s2, sw2, sh2, pv.data, cPv);
+  /** The job for the current request (started synchronously if needed), or null. */
+  const currentJob = (): Job | null => (job?.key === keyOf(source(), request()) ? job : startJob());
+
+  /** Compute table i (and, for a chain, every missing table before it). */
+  const computeOne = (j: Job, i: number): GeneratedTable => {
+    let k = j.req.mode === 'chain' ? 0 : i;
+    while (j.tables[k] && k < i) k++;
+    for (; k <= i; k++) {
+      if (j.tables[k]) continue;
+      j.tables[k] = mutateBatchTable(j.req, j.source, k, j.tables[k - 1]?.data);
+      cardsDirty = true;
+      if (k === strip.shown()) mainDirty = true;
+    }
+    return j.tables[i]!;
   };
+
+  /** Shown table first (a sweep table is independent; a chain computes in order), then the rest. */
+  const work = (j: Job, deadline: number) => {
+    const shown = Math.min(strip.shown(), j.req.count - 1);
+    if (j.req.mode !== 'chain') computeOne(j, shown);
+    while (j.next < j.req.count && performance.now() < deadline) computeOne(j, j.next++);
+  };
+
+  /**
+   * The table that is shown and added. A planned Edit layer (draw / edit harmonics) slots
+   * in here, as in the Seed tab.
+   */
+  const finalTable = (j: Job, i: number): GeneratedTable => computeOne(j, i);
 
   // ---- actions ----
-  const applySingle = () => {
+  const afterAdd = (msg: string) => {
+    if (seeded()) {
+      newSeed();
+      flash(`${msg} · new seed`);
+    } else flash(msg);
+  };
+
+  const addShown = () => {
+    const j = currentJob();
+    if (!j) return;
+    const i = strip.shown();
+    model.addTables([finalTable(j, i)], 'single', true);
+    afterAdd(`Added #${i + 1} to the Timeline (now the source)`);
+  };
+
+  const addBatch = () => {
+    const j = currentJob();
+    if (!j) return;
+    const tables = Array.from({ length: j.req.count }, (_, i) => finalTable(j, i));
+    model.addTables(tables, 'batch', false);
+    afterAdd(`Added ${tables.length} table${tables.length > 1 ? 's' : ''} to the Timeline`);
+  };
+
+  // ---- drawing ----
+  // While a restarted preview is computing, the previous tables stay drawn (no flicker).
+  let lastMain: Float32Array | undefined;
+  let drawnSrc: WaveTable | null | undefined;
+  const drawMain = () => {
+    mainDirty = false;
     const src = source();
-    if (!src) return;
-    const gen = pv && pvKey === currentKey() ? pv : mutateBatch(request(), src)[0];
-    model.addTables([gen], 'single', true);
-    newSeed();
-  };
-
-  const applyBatch = () => {
-    const src = source();
-    if (!src) return;
-    const req: MutateRequest = { mutation, amount, seed, mode, count: opts.count() };
-    const gen = mutateBatch(req, src);
-    model.addTables(gen, 'batch', false);
-    newSeed();
-  };
-
-  /** Evolve pauses (skips ticks) while the Generate section / Mutate tab isn't showing. */
-  const evolveTick = () => {
-    const newest = model.timeline.at(-1);
-    if (!newest || !opts.active()) return;
-    const req: MutateRequest = { mutation, amount: Math.min(amount, EVOLVE_MAX_AMOUNT), seed: randomSeed(), mode: 'single', count: 1 };
-    model.addTables(mutateBatch(req, newest), 'single', false);
-  };
-
-  const setEvolve = (on: boolean) => {
-    if (on === (evolveTimer !== null)) return;
-    if (on) evolveTimer = setInterval(evolveTick, EVOLVE_MS);
-    else {
-      clearInterval(evolveTimer!);
-      evolveTimer = null;
+    const t = job && src && job.source === src ? job.tables[Math.min(strip.shown(), job.req.count - 1)] : undefined;
+    const data = src ? (t?.data ?? lastMain) : undefined;
+    lastMain = data;
+    const grid = cssColor('--surface-2');
+    const [g, w, hh] = fit(waveC, Math.max(40, waveBox.clientHeight || 150));
+    g.strokeStyle = grid;
+    g.lineWidth = 1;
+    g.beginPath();
+    for (const f of [0.25, 0.5, 0.75]) {
+      g.moveTo(Math.round(w * f) + 0.5, 0);
+      g.lineTo(Math.round(w * f) + 0.5, hh);
     }
-    evolveBtn.textContent = on ? 'Stop evolving' : 'Evolve';
-    evolveBtn.setAttribute('aria-pressed', String(on));
-    evolveBtn.classList.toggle('active', on);
+    g.stroke();
+    g.strokeStyle = cssColor('--border');
+    g.beginPath();
+    g.moveTo(0, Math.round(hh / 2) + 0.5);
+    g.lineTo(w, Math.round(hh / 2) + 0.5);
+    g.stroke();
+    if (src) {
+      g.setLineDash([5, 4]);
+      drawWave(g, 0, 0, w, hh, src.data, cssColor('--muted'), { lineWidth: 1.25 });
+      g.setLineDash([]);
+    }
+    if (data) drawWave(g, 0, 0, w, hh, data, cssColor('--wave'), { lineWidth: 2 });
+    const [gs, sw, sh] = fit(specC, Math.max(30, specBox.clientHeight || 90));
+    gs.strokeStyle = grid;
+    gs.beginPath();
+    for (const f of [1 / 3, 2 / 3]) {
+      gs.moveTo(0, Math.round(sh * f) + 0.5);
+      gs.lineTo(sw, Math.round(sh * f) + 0.5);
+    }
+    gs.stroke();
+    if (src) drawSpectrum(gs, sw, sh, src.data, cssColor('--border-strong'), { bins: SPEC_BINS });
+    if (data) {
+      gs.globalAlpha = 0.85;
+      drawSpectrum(gs, sw, sh, data, cssColor('--accent'), { bins: SPEC_BINS });
+      gs.globalAlpha = 1;
+    }
   };
-  const stopEvolve = () => setEvolve(false);
-  const toggleEvolve = () => setEvolve(evolveTimer === null);
 
-  // ---- subscriptions ----
-  // Undo while evolving would be undone again by the next tick: stop instead.
-  model.on('undone', stopEvolve);
-  model.on('timeline', () => (dirty = true));
-  onThemeChange(() => (dirty = true));
-  new ResizeObserver(() => (dirty = true)).observe(el);
+  const drawCards = () => {
+    cardsDirty = false;
+    const cur = job && job.source === source() ? job : null;
+    strip.cards.forEach((c, i) => {
+      const t = cur && i < cur.req.count ? cur.tables[i] : undefined;
+      // Keep the previous drawing while a restarted job computes this card.
+      if (c.drawn === t || (!t && c.drawn && cur)) return;
+      c.drawn = t;
+      drawCard(c, t?.data);
+    });
+  };
 
-  updateSteps();
+  const drawSource = () => {
+    srcDirty = false;
+    const src = source();
+    drawnSrc = src ?? null;
+    const idx = model.indexOf(model.selectedId);
+    srcNo.textContent = src ? `#${idx + 1}` : '—';
+    srcChip.title = src ? `The Timeline selection: #${idx + 1} · id ${src.id} · ${describeRecipe(src.recipe)}` : 'Select a table in the Timeline';
+    addShownBtn.disabled = addBatchBtn.disabled = !src;
+    const g = fitFixed(srcThumb, SRC_W, SRC_H);
+    if (src) drawWave(g, 0, 0, SRC_W, SRC_H, src.data, cssColor('--wave'), { lineWidth: 1.2, points: SRC_W * 2 });
+  };
+
+  // Library thumbnails: each mutation applied to the source at the current amount (and
+  // seed). Restarted at most every THUMBS_MS; only entries scrolled into view, within
+  // the frame budget; old drawings stay until replaced.
+  const thumbDrawn: string[] = MUTATION_CHOICES.map(() => '');
+  let thumbTarget = '';
+  let thumbTargetAt = -Infinity;
+  const thumbKey = () => `${source()?.id ?? 'none'}|${amount}|${seed}`;
+  const drawThumbs = (now: number, deadline: number) => {
+    const src = source();
+    const target = thumbKey();
+    if (target !== thumbTarget) {
+      if (now - thumbTargetAt < THUMBS_MS) return; // stay dirty; retried next frame
+      thumbTarget = target;
+      thumbTargetAt = now;
+    }
+    const [srcId, a, s] = thumbTarget.split('|');
+    const thumbSrc = src && String(src.id) === srcId ? src : undefined;
+    const normal = cssColor('--text-2');
+    const current = cssColor('--accent-text');
+    const ghost = cssColor('--border-strong');
+    let pending = false;
+    for (const i of lib.inView()) {
+      const m = MUTATION_CHOICES[i];
+      const color = i === sel ? current : normal;
+      const want = `${srcId}|${a}|${'seeded' in m ? s : ''}|${color}`;
+      if (thumbDrawn[i] === want) continue;
+      if (performance.now() > deadline) {
+        pending = true;
+        break;
+      }
+      const g = fitFixed(lib.thumbs[i], THUMB_W, THUMB_H);
+      if (thumbSrc) {
+        drawWave(g, 0, 0, THUMB_W, THUMB_H, thumbSrc.data, ghost, { lineWidth: 1, points: THUMB_W * 2 });
+        const out = mutate(m.id, thumbSrc.data, Number(a), Number(s));
+        drawWave(g, 0, 0, THUMB_W, THUMB_H, out, color, { lineWidth: 1.2, points: THUMB_W * 2 });
+      }
+      thumbDrawn[i] = want;
+    }
+    thumbsDirty = pending || thumbTarget !== target;
+  };
+
+  // ---- assembly ----
+  const el = h(
+    'div',
+    { role: 'tabpanel', id: 'panel-mutate', class: 'gen-tab mutate' },
+    lib.el,
+    h('div', { class: 'gen-main' }, params, viewer, batchBox),
+  );
+  watchVisibility(el);
+
+  opts.onCount((n) => {
+    const atEnd = strip.shown() >= strip.cards.length - 1;
+    stepper.sync(n);
+    addBatchBtn.textContent = `Add +${n}`;
+    relabelCards();
+    if (atEnd) strip.setShown(n - 1);
+    syncShownLabel();
+    cardsDirty = mainDirty = true;
+    flash('');
+  });
+  const onSource = () => {
+    srcDirty = mainDirty = thumbsDirty = true;
+  };
+  model.on('timeline', onSource);
+  model.on('selection', onSource);
+  onThemeChange(() => {
+    thumbDrawn.fill('');
+    for (const c of strip.cards) c.drawn = null;
+    thumbsDirty = cardsDirty = mainDirty = srcDirty = true;
+  });
+  new ResizeObserver(() => (mainDirty = true)).observe(viewer);
+
+  syncParams();
+  setMode(mode);
+  strip.setShown(opts.count() - 1);
+  syncAmount();
   newSeed();
 
   return {
     el,
     view: {
       frame(now) {
-        if (!opts.active() || !isOnScreen(pvWave)) return;
-        const key = currentKey();
-        if (key !== pvKey && now - lastCompute >= PREVIEW_MS) {
-          lastCompute = now;
-          computePreview(key);
+        if (!opts.active() || !isOnScreen(el)) return;
+        const deadline = performance.now() + BUDGET_MS;
+        const src = source();
+        const key = keyOf(src, request());
+        if (job?.key !== key && now - lastStart >= PREVIEW_MS) {
+          lastStart = now;
+          startJob();
         }
-        if (dirty) {
-          dirty = false;
-          draw();
-        }
+        if (job?.key === key) work(job, deadline);
+        if (srcDirty || drawnSrc !== (src ?? null)) drawSource();
+        if (mainDirty) drawMain();
+        if (cardsDirty) drawCards();
+        if (thumbsDirty || thumbKey() !== thumbTarget) drawThumbs(now, deadline + 4);
       },
     },
   };

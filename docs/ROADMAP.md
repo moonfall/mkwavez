@@ -20,24 +20,20 @@ step sequences on a shared transport, undo for adds and note edits, unit + smoke
   Apply N (adds a batch from the same source, which stays selected) with Linear
   sweep `A·i/N`, Log sweep `A·64^((i−N)/(N−1))` and Chain (each step mutates the
   previous at A; step seeds derived from the Apply seed).
-- Evolve: toggle; every 0.7 s mutates the newest table with the current mutation at
-  `min(A, 30%)` and a fresh seed (single add, so following windows extend).
-  It pauses while the Generate section is collapsed or another tab is showing, and
-  Undo stops it (otherwise the next tick would re-add what was undone).
+- Evolve (a timer mutating the newest table): removed in the Mutate rebuild (see
+  below); periodic additions will be designed separately.
 - Recipes (`op: 'mutate'`) record mutation, amount, batch amount, mode, seed, batch
   index/count and parent id(s); `renderRecipe` reproduces every mutation × mode
   (unit-tested). Window following and batch targets behave as for seed batches;
-  undo covers Apply / Apply N / each Evolve step.
+  undo covers Apply / Apply N.
 - **Breed decision:** kept in Mutate as the prototype's magnitude pull, with the
   second parent clearly defined: "Mate from window of" picks a voice; the mate is
   one table from that voice's window chosen by the Apply's seed (one mate for the
   whole batch, shown in the tab and recorded as `parents[1]`). With no voice to take a
-  mate from, Apply / Apply N / Evolve are disabled for Breed. The M3 Breed tab
+  mate from, Apply / Apply N were disabled for Breed. The M3 Breed tab
   supersedes it with explicit multi-parent selection (done in M3: removed from Mutate).
 
 Deferred / known gaps from M2:
-- Each Evolve tick is an undo step, so a long Evolve run pushes older history out of
-  the 40-deep undo stack (as in the prototype).
 - Breed of a table with few harmonics (e.g. a sine) borrows the source's
   near-zero-magnitude phases, which are effectively noise — same as the prototype.
   (M3: resolved in the Breed tab; the mutation is legacy.)
@@ -83,14 +79,33 @@ Deferred / known gaps from M2:
   re-render.
 
 Deferred / known gaps from M3:
-- No Evolve for breeding (e.g. keep breeding the newest table with a voice window);
-  Mutate's Evolve no longer offers the old Breed.
 - Parent reorder is by buttons, not drag; no "select range" in the timeline.
 - Parent list isn't part of undo snapshots (undo only drops parents that vanish).
 - Splice segment count, crossfade width and envelope smoothing are fixed constants,
   not controls. Spectral magnitude/phase interpolation as a voice blend mode is still
   open.
 - Recipes still have no code-version tag (M5).
+
+## Mutate tab rebuild (done)
+
+- Same hierarchy as the rebuilt Seed tab, sharing its components (`ui/library.ts`,
+  `ui/batch.ts`): mutation library (search by name, group or amount-mapping hint; ▲/▼
+  and arrow keys; grouped Morph / Waveshape / Spectral / Random; `rnd` tag on seeded
+  mutations; each thumbnail is that mutation applied to the current source at the
+  current amount / seed over a faint source, recomputed throttled and only for
+  visible entries); source chip + "Group › Name" with the amount mapping, Amount,
+  Seed / Reroll only when seeded; the shown table over the source (wave dashed /
+  solid, spectrum grey / accent); batch row (Linear / Log / Chain with formula
+  tooltips, N, voice targets, Add shown, Add +N) and the card strip (←/→; last card
+  shown by default).
+- The preview is the whole batch, computed incrementally through
+  `mutateBatchTable()`, so Add shown / Add +N append exactly what is shown (tested);
+  recipes unchanged (old `single` recipes still re-render).
+- Evolve removed (button, timer, the `undone` model topic it used, docs, smoke).
+
+Deferred: no Edit layer yet (the `finalTable()` slot is there, as in Seed); the
+amount slider has no per-mutation curve (e.g. suggesting Log for small-amount
+mutations).
 
 ## M4 — Sample tab
 
