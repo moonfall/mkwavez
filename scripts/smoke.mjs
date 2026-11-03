@@ -135,6 +135,28 @@ async function run(label, url, browser) {
   assert((await tlCount()) === 4096, 'timeline capped at 4096 after 5000 adds');
   await page.waitForFunction(() => window.mkwavez.bridge.workletTableCount === 4096, null, { timeout: 20000 });
   assert(true, `worklet synced 4096 tables (${Date.now() - t0} ms)`);
+  // At the cap, an add that doesn't select (eviction shifts the selection's index) keeps a
+  // strip scrolled to the end following the newest waveform (it doesn't jump to the selection).
+  {
+    const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await page.$eval('#timeline-scroll', (s) => s.scrollIntoView({ block: 'center' }));
+    await page.evaluate(() => window.mkwavez.model.select(window.mkwavez.model.timeline[100].id));
+    await frames();
+    await page.$eval('#timeline-scroll', (s) => (s.scrollLeft = s.scrollWidth));
+    await frames();
+    const r = await page.evaluate(async () => {
+      const m = window.mkwavez.model;
+      const sel = m.selectedId;
+      const idx0 = m.indexOf(sel);
+      const g = m.timeline.at(-1);
+      m.addTables([0, 1, 2].map(() => ({ data: g.data, recipe: g.recipe })), false);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const s = document.querySelector('#timeline-scroll');
+      return { n: m.timeline.length, kept: m.selectedId === sel, shifted: m.indexOf(sel) !== idx0, atEnd: s.scrollLeft + s.clientWidth >= s.scrollWidth - 63 };
+    });
+    assert(r.n === 4096 && r.kept && r.shifted && r.atEnd, `eviction at the cap: strip follows the end, not the selection (${JSON.stringify(r)})`);
+    await page.click('#undo');
+  }
   await page.waitForTimeout(300);
   const ev = await page.evaluate(() => ({
     parents: window.mkwavez.model.breedParents.length,
@@ -1284,7 +1306,35 @@ async function shortcutChecks(page) {
   assert((await mute(2)) === !m2 && (await mute(1)) === false, 'M acts on the newly selected voice (V2)');
   await page.keyboard.press('m');
   assert((await mute(2)) === m2, 'M toggles V2 back');
-  await page.keyboard.press('[');
+  // Other layouts: AltGr+8 / 9 type [ / ] (Ctrl+Alt on Windows); non-Latin layouts fall back
+  // to the physical key (e.code).
+  const key = (init) => M((init) => document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })), init);
+  await key({ key: '[', code: 'Digit8', ctrlKey: true, altKey: true, modifierAltGraph: true });
+  assert((await sel()) === 1, 'AltGr+[ (Ctrl+Alt+AltGraph) steps the voice tab');
+  await key({ key: '[', code: 'BracketLeft', ctrlKey: true });
+  assert((await sel()) === 1, 'Ctrl+[ is ignored');
+  await key({ key: 'х', code: 'BracketLeft' });
+  assert((await sel()) === 3, 'non-Latin layout: the [ key (e.code) steps back');
+  await key({ key: 'ъ', code: 'BracketRight' });
+  assert((await sel()) === 1, 'non-Latin layout: the ] key (e.code) steps forward');
+  await key({ key: 'ь', code: 'KeyM' });
+  assert(await mute(1), 'non-Latin layout: the M key (e.code) mutes');
+  await key({ key: 'ь', code: 'KeyM' });
+  assert(!(await mute(1)), 'non-Latin layout: and unmutes');
+  // A Space keyup lost to a window switch doesn't leave the next keyup swallowed.
+  const spaceUp = () => M(() => document.body.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', code: 'Space', bubbles: true, cancelable: true })));
+  await key({ key: ' ', code: 'Space' });
+  assert(!(await playing()), 'synthetic Space stops the transport');
+  await M(() => window.dispatchEvent(new Event('blur')));
+  assert(await spaceUp(), 'after a window blur the Space keyup is not swallowed');
+  await key({ key: ' ', code: 'Space' });
+  await page.waitForFunction(() => window.mkwavez.model.playing, null, { timeout: 5000 });
+  await page.focus('#seed-search');
+  await page.keyboard.down('Space'); // typed (not handled): drops the pending swallow
+  assert(await spaceUp(), 'an unhandled Space keydown drops the keyup swallow');
+  await page.keyboard.up('Space');
+  await page.press('#seed-search', 'Escape');
+  await blur();
   assert((await sel()) === 1, 'back on V1');
 
   // Shift+← / →: move the selected waveform.

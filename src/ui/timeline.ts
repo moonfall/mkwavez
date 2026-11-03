@@ -416,8 +416,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   // Scrolling: a changed (or moved) selection is brought into view; otherwise, if the
   // strip was at its end when waveforms were added, it follows the newest one.
   let lastSel = model.selectedId;
-  let lastSelIdx = model.indexOf(model.selectedId);
-  let lastLen = model.timeline.length;
+  let lastMoves = model.moves;
   let follow = false;
   let scrollPending = false;
   const scheduleScroll = () => {
@@ -426,14 +425,12 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     // Defer so layout reflects every change from the same action.
     requestAnimationFrame(() => {
       scrollPending = false;
-      const idx = model.indexOf(model.selectedId);
-      // A move (same length, new index) counts; an eviction shifting the index doesn't.
-      const moved = idx !== lastSelIdx && model.timeline.length === lastLen;
+      // A move (moveTable) reveals the moved waveform; an eviction shifting its index doesn't.
+      const moved = model.moves !== lastMoves;
       const selChanged = model.selectedId !== lastSel || moved;
       lastSel = model.selectedId;
-      lastSelIdx = idx;
-      lastLen = model.timeline.length;
-      if (selChanged) scrollToIndex(idx);
+      lastMoves = model.moves;
+      if (selChanged) scrollToIndex(model.indexOf(model.selectedId));
       else if (follow) scrollToEnd();
       follow = false;
       dirtyGrid = dirtyMarkers = true;

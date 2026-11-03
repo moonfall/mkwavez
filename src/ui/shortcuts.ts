@@ -8,7 +8,8 @@ import type { UiContext } from './context';
  *  - Shift+← / →      move the selected waveform one place earlier / later in the Timeline
  *
  * Ignored while typing (text inputs, textareas, selects, contenteditable) and when any
- * modifier other than the listed ones is held. Space on a focused checkbox / radio keeps
+ * modifier other than the listed ones is held (AltGr / Option are allowed where the layout
+ * needs them for `[` / `]`; non-Latin layouts fall back to the physical key). Space on a focused checkbox / radio keeps
  * toggling it. Handled keys stop at the document (capture phase), so local handlers
  * (plain arrows in the library lists, batch strips and voice tabs) never see Shift+arrows.
  * Panel-local keys stay with their panels (Ctrl/⌘+D in the Timeline strip, arrows in
@@ -53,11 +54,30 @@ export function installShortcuts(ctx: UiContext, actions: ShortcutActions, targe
     if (hadFocus) document.getElementById(`voice-tab-${next.id}`)?.focus();
   };
 
+  /**
+   * The shortcut a key names: by `e.key` first (layout-aware; `[` / `]` may need AltGr or
+   * Option, e.g. AltGr+8 / 9 on German keyboards), else by physical key (`e.code`) when no
+   * modifier is held and the key types none of ours (non-Latin layouts).
+   */
+  const keyOf = (e: KeyboardEvent): '[' | ']' | 'm' | null => {
+    if (e.metaKey) return null;
+    const altGr = e.getModifierState?.('AltGraph') ?? false;
+    // AltGr arrives as Ctrl+Alt on Windows; Option on macOS as Alt.
+    if (e.key === '[' || e.key === ']') return e.ctrlKey && !altGr ? null : e.key;
+    if (e.ctrlKey || e.altKey || altGr) return null;
+    if (e.key === 'm' || e.key === 'M') return 'm';
+    if (e.code === 'BracketLeft') return '[';
+    if (e.code === 'BracketRight') return ']';
+    if (e.code === 'KeyM') return 'm';
+    return null;
+  };
+
   const handle = (e: KeyboardEvent): boolean => {
+    // Any Space keydown we don't handle drops the keyup swallow (its keyup may have been lost).
+    if (e.key === ' ') spaceDown = false;
     if (e.isComposing || isTextField(e.target)) return false;
-    if (e.ctrlKey || e.metaKey || e.altKey) return false;
     if (e.key === ' ') {
-      if (e.shiftKey) return false;
+      if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return false;
       const t = e.target;
       if (t instanceof HTMLInputElement && (t.type === 'checkbox' || t.type === 'radio')) return false;
       spaceDown = true;
@@ -65,21 +85,26 @@ export function installShortcuts(ctx: UiContext, actions: ShortcutActions, targe
       return true;
     }
     if (e.shiftKey) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return false;
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return false;
       model.moveTable(model.selectedId, e.key === 'ArrowLeft' ? -1 : 1);
       return true;
     }
-    if (e.key === '[' || e.key === ']') {
-      stepVoice(e.key === '[' ? -1 : 1);
+    const k = keyOf(e);
+    if (k === '[' || k === ']') {
+      stepVoice(k === '[' ? -1 : 1);
       return true;
     }
-    if (e.key === 'm' || e.key === 'M') {
+    if (k === 'm') {
       const v = ui.voiceId === null ? undefined : model.voice(ui.voiceId);
       if (v && !e.repeat) model.updateVoice(v.id, { mute: !v.mute });
       return true;
     }
     return false;
   };
+
+  // A keyup lost to a window switch (Alt-Tab while holding Space) must not stick.
+  target.defaultView?.addEventListener('blur', () => (spaceDown = false));
 
   target.addEventListener(
     'keydown',

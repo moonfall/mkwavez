@@ -64,6 +64,8 @@ export class AppModel {
   breedParents: readonly TableId[] = [];
   playing = false;
   bpm = 132;
+  /** Counts moveTable() calls that moved something (the Timeline strip reveals the moved waveform). */
+  moves = 0;
   readonly cap: number;
 
   private byId = new Map<TableId, WaveTable>();
@@ -212,6 +214,7 @@ export class AppModel {
     list[j] = list[i];
     list[i] = other;
     this.timeline = list;
+    this.moves++;
     this.wavetables = this.wavetables.map((w) => (w.builtin === 'timeline' ? swapSlots(w, id, other.id) : w));
     const selChanged = this.selectedId !== id;
     this.selectedId = id;

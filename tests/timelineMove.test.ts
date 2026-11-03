@@ -39,6 +39,16 @@ describe('AppModel.moveTable', () => {
     expect(ids(m)).toEqual([1, 3, 2, 5, 4]);
   });
 
+  it('counts moves (the strip reveals a moved waveform), not adds, evictions or no-ops', () => {
+    const { m } = model();
+    m.moveTable(3, 1);
+    expect(m.moves).toBe(1);
+    m.moveTable(1, -1);
+    m.addTables([generateBasic('sine', 0)], false);
+    m.undo();
+    expect(m.moves).toBe(1);
+  });
+
   it('is a no-op at the ends (no undo step)', () => {
     const { m } = model();
     expect(m.moveTable(1, -1)).toBe(false);
