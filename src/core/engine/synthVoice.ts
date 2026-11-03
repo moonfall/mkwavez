@@ -15,6 +15,20 @@
  */
 import { mipLevelFor, type MipSet } from '../mipmap';
 import { deriveSeed, Prng } from '../prng';
+import {
+  applyMatrix,
+  DST_INDEX,
+  LFO_COUNT,
+  lfoRateHz,
+  lfoWave,
+  MOD_CUTOFF_OCTAVES,
+  MOD_LFO_RATE_OCTAVES,
+  MOD_PITCH_SEMIS,
+  N_DESTS,
+  N_SOURCES,
+  reflect01,
+  SRC_INDEX,
+} from '../modulation';
 import { FILTER_ENV_OCTAVES, FILTER_VEL_OCTAVES, oscSemis, type SynthParams } from '../synth';
 import type { TableId } from '../table';
 import type { VoiceParams } from '../voice';
@@ -27,6 +41,32 @@ import { WtOsc } from './wtOsc';
 export const CONTROL_SMOOTH_SEC = 0.005;
 /** Seed of the per-voice noise generators (mixed with the voice id). */
 export const NOISE_SEED = 0x5eed;
+/** Seed of the per-voice modulation randomness (S&H, smooth random, per-note random). */
+export const MOD_SEED = 0x10f0;
+
+/** What the engine hands a Synth voice each control block (one reused object, no allocation). */
+export interface SynthControl {
+  /** The engine's smoothed pitch bend (±2 st scale; rescaled to the voice's bend range). */
+  bend: number;
+  blockLen: number;
+  tables: ReadonlyMap<TableId, MipSet>;
+  wtA: PackedWavetable | undefined;
+  wtB: PackedWavetable | undefined;
+  /** Largest table-weight change per block. */
+  slew: number;
+  /** One-pole glide coefficient per block for a glide time. */
+  glideCoef: (sec: number) => number;
+  /** Level × velocity gain (0 when muted). */
+  gainTarget: number;
+  bpm: number;
+  /** Mod wheel and channel pressure 0..1. */
+  wheel: number;
+  pressure: number;
+}
+
+const D = DST_INDEX;
+const S = SRC_INDEX;
+const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
 /** Pink noise (Paul Kellet's economy filter) is scaled by this to match white noise's loudness. */
 export const PINK_GAIN = 0.32;
 
@@ -109,29 +149,73 @@ export class SynthVoice {
   posYA = 0;
   posB = 0;
   posYB = 0;
-  /** Envelope settings last configured (fAttack, fDecay, fSustain, fRelease, pAttack, pDecay). */
-  private readonly envCfg = new Float64Array(6).fill(-1);
+  /** Mod envelope (a matrix source), stepped once per control block. */
+  readonly menv = new Adsr();
+  /** LFO state: phase 0..1, this / the previous cycle's random value, time since the note (fade-in), output. */
+  readonly lfoPhase = new Float64Array(LFO_COUNT);
+  private readonly lfoCur = new Float64Array(LFO_COUNT);
+  private readonly lfoPrev = new Float64Array(LFO_COUNT);
+  private readonly lfoAge = new Float64Array(LFO_COUNT);
+  readonly lfoOut = new Float64Array(LFO_COUNT);
+  private readonly modRng: Prng;
+  /** Per-note random −1..1 (drawn at each retriggered note). */
+  noteRand = 0;
+  /** Matrix sources (MOD_SOURCES order) and summed destinations (MOD_DESTS order) of this block. */
+  readonly src = new Float64Array(N_SOURCES);
+  readonly dst = new Float64Array(N_DESTS);
+  /** Drive after modulation (block rate). */
+  private driveM = 0;
+  /** Envelope settings last configured (filter ADSR, pitch AD, mod ADSR + mode). */
+  private readonly envCfg = new Float64Array(11).fill(-1);
   private readonly smooth: number;
 
-  constructor(sampleRate: number, voiceId: number, blockLen: number) {
+  constructor(sampleRate: number, voiceId: number, blockLen: number, lfoPhases?: readonly number[]) {
     this.sampleRate = sampleRate;
     this.noise = new Prng(deriveSeed(NOISE_SEED, voiceId));
+    this.modRng = new Prng(deriveSeed(MOD_SEED, voiceId));
     this.smooth = 1 - Math.exp(-blockLen / (CONTROL_SMOOTH_SEC * sampleRate));
+    for (let i = 0; i < LFO_COUNT; i++) {
+      this.lfoPhase[i] = lfoPhases?.[i] ?? 0;
+      this.lfoCur[i] = this.modRng.bipolar();
+      this.lfoPrev[i] = this.lfoCur[i];
+      this.lfoAge[i] = 1e9;
+    }
   }
 
   /** (Re)configure the envelopes from the params (cheap check: only when they changed). */
   configure(s: SynthParams, blockLen: number): void {
     const c = this.envCfg;
-    if (c[0] === s.fAttack && c[1] === s.fDecay && c[2] === s.fSustain && c[3] === s.fRelease && c[4] === s.pAttack && c[5] === s.pDecay) return;
+    const ad = s.mMode === 'ad' ? 1 : 0;
+    if (
+      c[0] === s.fAttack &&
+      c[1] === s.fDecay &&
+      c[2] === s.fSustain &&
+      c[3] === s.fRelease &&
+      c[4] === s.pAttack &&
+      c[5] === s.pDecay &&
+      c[6] === s.mAttack &&
+      c[7] === s.mDecay &&
+      c[8] === s.mSustain &&
+      c[9] === s.mRelease &&
+      c[10] === ad
+    )
+      return;
     c[0] = s.fAttack;
     c[1] = s.fDecay;
     c[2] = s.fSustain;
     c[3] = s.fRelease;
     c[4] = s.pAttack;
     c[5] = s.pDecay;
-
+    c[6] = s.mAttack;
+    c[7] = s.mDecay;
+    c[8] = s.mSustain;
+    c[9] = s.mRelease;
+    c[10] = ad;
     this.fenv.configure(s.fAttack, s.fDecay, s.fSustain, s.fRelease, this.sampleRate);
     this.penv.configure(s.pAttack, s.pDecay, 0, s.pDecay, this.sampleRate / blockLen);
+    // AD: attack, then decay to 0 regardless of the gate (sustain 0, release = decay).
+    if (ad) this.menv.configure(s.mAttack, s.mDecay, 0, s.mDecay, this.sampleRate / blockLen);
+    else this.menv.configure(s.mAttack, s.mDecay, s.mSustain, s.mRelease, this.sampleRate / blockLen);
   }
 
   /**
@@ -146,16 +230,31 @@ export class SynthVoice {
     const glide = s.glide > 0 && sounding && (!s.glideLegato || legato);
     if (!glide) this.pitch = pitch;
     if (retrigger) {
+      this.configure(s, this.blockLen);
       this.fenv.gateOn();
       this.penv.gateOn();
+      this.menv.gateOn();
+      this.noteRand = this.modRng.bipolar();
+      for (let i = 0; i < LFO_COUNT; i++) {
+        const l = s.lfos[i];
+        this.lfoAge[i] = 0;
+        if (l.retrig) {
+          this.lfoPhase[i] = l.phase;
+          this.lfoPrev[i] = this.lfoCur[i];
+          this.lfoCur[i] = this.modRng.bipolar();
+        }
+      }
     }
     if (!glide) this.retune(p);
   }
 
-  gateOff(): void {
+  gateOff(p: VoiceParams): void {
     this.fenv.gateOff();
     this.penv.gateOff();
+    if (p.synth.mMode !== 'ad') this.menv.gateOff();
   }
+
+  private blockLen = 64;
 
   /** Jump the block's pitch ramps to the current pitch (a new note without glide). */
   private retune(p: VoiceParams): void {
@@ -175,32 +274,45 @@ export class SynthVoice {
     const sr = this.sampleRate;
     const pe = this.penv.value * s.pAmount;
     const base = this.pitch + bendSemis;
-    const pa = base + oscSemis(s.aOct, s.aCoarse, s.aFine) + (s.pTarget !== 'b' ? pe : 0);
-    const pb = base + oscSemis(s.bOct, s.bCoarse, s.bFine) + (s.pTarget !== 'a' ? pe : 0);
+    const dst = this.dst;
+    const pa = base + oscSemis(s.aOct, s.aCoarse, s.aFine) + (s.pTarget !== 'b' ? pe : 0) + dst[D.pitchA] * MOD_PITCH_SEMIS;
+    const pb = base + oscSemis(s.bOct, s.bCoarse, s.bFine) + (s.pTarget !== 'a' ? pe : 0) + dst[D.pitchB] * MOD_PITCH_SEMIS;
     const fa = Math.min(pitchFreq(pa), sr * 0.45);
     this.incA1 = fa / sr;
     this.incB1 = Math.min(pitchFreq(pb), sr * 0.45) / sr;
     this.incS1 = fa / (s.subOct >= 2 ? 4 : 2) / sr;
   }
 
+  /** Advance the LFOs by one block; their outputs (−1..1 × depth × fade-in) land in lfoOut. */
+  private stepLfos(s: SynthParams, bpm: number, blockLen: number): void {
+    const dt = blockLen / this.sampleRate;
+    for (let i = 0; i < LFO_COUNT; i++) {
+      const l = s.lfos[i];
+      // Rate modulation uses the previous block's matrix (an LFO may modulate another's rate).
+      const rate = lfoRateHz(l, bpm) * Math.pow(2, this.dst[D.lfo1Rate + i] * MOD_LFO_RATE_OCTAVES);
+      let ph = this.lfoPhase[i] + rate * dt;
+      if (ph >= 1) {
+        ph -= Math.floor(ph);
+        this.lfoPrev[i] = this.lfoCur[i];
+        this.lfoCur[i] = this.modRng.bipolar();
+      }
+      this.lfoPhase[i] = ph;
+      const age = this.lfoAge[i];
+      const fade = l.fade > 0 ? Math.min(1, age / l.fade) : 1;
+      this.lfoAge[i] = age + dt;
+      this.lfoOut[i] = lfoWave(l.shape, ph, this.lfoCur[i], this.lfoPrev[i]) * l.depth * fade;
+    }
+  }
+
   /**
-   * Control block: glide, pitch envelope, block ramps, both oscillators' table mixes and
-   * the filter / mixer controls. `bendSemis` = the engine's smoothed bend (±2 st scale),
-   * rescaled to the voice's bend range.
+   * Control block: glide, envelopes, LFOs and the mod matrix, block ramps, both
+   * oscillators' table mixes and the filter / mixer controls.
    */
-  control(
-    p: VoiceParams,
-    bendSemis: number,
-    blockLen: number,
-    tables: ReadonlyMap<TableId, MipSet>,
-    wtA: PackedWavetable | undefined,
-    wtB: PackedWavetable | undefined,
-    slew: number,
-    glideCoef: (sec: number) => number,
-    gainTarget: number,
-  ): void {
+  control(p: VoiceParams, c: SynthControl): void {
     const s = p.synth;
     const sr = this.sampleRate;
+    const { bend: bendSemis, blockLen, tables, wtA, wtB, slew, glideCoef, gainTarget } = c;
+    this.blockLen = blockLen;
     this.configure(s, blockLen);
     // Glide (one-pole on the pitch, ~98% there after the glide time).
     if (this.pitch !== this.target) {
@@ -210,6 +322,23 @@ export class SynthVoice {
       } else this.pitch = this.target;
     }
     this.penv.next();
+    this.menv.next();
+    this.stepLfos(s, c.bpm, blockLen);
+    // Mod matrix: sources → destinations (block rate; the ramps below smooth them).
+    const src = this.src;
+    src[S.lfo1] = this.lfoOut[0];
+    src[S.lfo2] = this.lfoOut[1];
+    src[S.lfo3] = this.lfoOut[2];
+    src[S.fenv] = this.fenv.value;
+    src[S.penv] = this.penv.value;
+    src[S.menv] = this.menv.value;
+    src[S.vel] = this.vel;
+    src[S.wheel] = c.wheel;
+    src[S.at] = c.pressure;
+    src[S.key] = (this.pitch - 60) / 24;
+    src[S.rand] = this.noteRand;
+    applyMatrix(s.mods, src, this.dst);
+    const dst = this.dst;
     const bend = (bendSemis * s.bendRange) / 2;
     this.lastBend = bend;
     this.incA0 = this.incA1;
@@ -220,40 +349,42 @@ export class SynthVoice {
     this.b.mipLevel = mipLevelFor(Math.max(this.incB0, this.incB1) * sr, sr);
 
     // Table mixes.
-    this.posA = p.position;
-    this.posYA = p.positionY;
-    this.posB = s.b.position;
-    this.posYB = s.b.positionY;
+    this.posA = dst[D.posA] ? reflect01(p.position + dst[D.posA]) : p.position;
+    this.posYA = dst[D.posYA] ? reflect01(p.positionY + dst[D.posYA]) : p.positionY;
+    this.posB = dst[D.posB] ? reflect01(s.b.position + dst[D.posB]) : s.b.position;
+    this.posYB = dst[D.posYB] ? reflect01(s.b.positionY + dst[D.posYB]) : s.b.positionY;
     this.a.hold();
     if (wtA) this.a.resolve(tables, wtA, p.windowStart, p.windowEnd, p.windowStartY, p.windowEndY, this.posA, this.posYA, slew);
     this.b.hold();
     if (wtB) this.b.resolve(tables, wtB, s.b.windowStart, s.b.windowEnd, s.b.windowStartY, s.b.windowEndY, this.posB, this.posYB, slew);
 
     // Filter: block-rate part of the log cutoff (smoothed), resonance.
-    const cut = Math.log2(s.cutoff) + (s.keyTrack * (this.pitch - 60)) / 12 + s.velAmount * (this.vel - 1) * FILTER_VEL_OCTAVES;
+    const cut =
+      Math.log2(s.cutoff) + (s.keyTrack * (this.pitch - 60)) / 12 + s.velAmount * (this.vel - 1) * FILTER_VEL_OCTAVES + dst[D.cutoff] * MOD_CUTOFF_OCTAVES;
     if (Number.isNaN(this.cutS)) this.cutS = this.cut1 = cut;
     else this.cutS += (cut - this.cutS) * this.smooth;
     this.cut0 = this.cut1;
     this.cut1 = this.cutS;
     this.k0 = this.k1;
-    this.k1 += (resonanceK(s.resonance) - this.k1) * this.smooth;
+    this.k1 += (resonanceK(clamp01(s.resonance + dst[D.res])) - this.k1) * this.smooth;
+    this.driveM = clamp01(s.drive + dst[D.drive]);
     // Mixer levels.
     const lv = this.lv1;
     this.lv0.set(lv);
-    lv[0] += (s.aLevel - lv[0]) * this.smooth;
-    lv[1] += (s.bLevel - lv[1]) * this.smooth;
-    lv[2] += (s.subLevel - lv[2]) * this.smooth;
-    lv[3] += (s.noiseLevel - lv[3]) * this.smooth;
+    lv[0] += (clamp01(s.aLevel + dst[D.levelA]) - lv[0]) * this.smooth;
+    lv[1] += (clamp01(s.bLevel + dst[D.levelB]) - lv[1]) * this.smooth;
+    lv[2] += (clamp01(s.subLevel + dst[D.sub]) - lv[2]) * this.smooth;
+    lv[3] += (clamp01(s.noiseLevel + dst[D.noise]) - lv[3]) * this.smooth;
     lv[4] += (s.ringLevel - lv[4]) * this.smooth;
     // Pan.
-    const pan = Math.max(-1, Math.min(1, s.pan));
+    const pan = Math.max(-1, Math.min(1, s.pan + dst[D.pan]));
     const gl = pan > 0 ? 1 - pan : 1;
     const gr = pan < 0 ? 1 + pan : 1;
     this.panL0 = this.panL1;
     this.panR0 = this.panR1;
     this.panL1 += (gl - this.panL1) * this.smooth;
     this.panR1 += (gr - this.panR1) * this.smooth;
-    this.gainTarget = gainTarget;
+    this.gainTarget = gainTarget * Math.max(0, 1 + dst[D.amp]);
     this.filter.flush();
     if (Math.abs(this.pink0) < 1e-20) this.pink0 = 0;
     if (Math.abs(this.pink1) < 1e-20) this.pink1 = 0;
@@ -304,7 +435,8 @@ export class SynthVoice {
           x += ln * (this.pink0 + this.pink1 + this.pink2 + w * 0.1848) * PINK_GAIN;
         } else x += ln * w;
       }
-      x = driveSample(x, s.drive);
+      x = driveSample(x, this.driveM);
+
       const cut = this.cut0 + (this.cut1 - this.cut0) * t + fe * s.envAmount * FILTER_ENV_OCTAVES;
       const g = cutoffG(Math.pow(2, cut), this.sampleRate);
       const k = this.k0 + (this.k1 - this.k0) * t;

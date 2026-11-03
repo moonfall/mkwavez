@@ -202,7 +202,9 @@ describe('MidiRouter', () => {
 
   it('CCs go to the channel’s voice', () => {
     const r = new MidiRouter();
-    expect(r.route(parseMidi([0xb2, 1, 64])!, r3())).toEqual([{ type: 'cc', voiceId: 3, cc: 1, value: 64 }]);
+    expect(r.route(parseMidi([0xb2, 74, 64])!, r3())).toEqual([{ type: 'cc', voiceId: 3, cc: 74, value: 64 }]);
+    // The mod wheel is also a matrix source.
+    expect(r.route(parseMidi([0xb2, 1, 64])!, r3())).toEqual([{ type: 'cc', voiceId: 3, cc: 1, value: 64 }, { type: 'mod', voiceId: 3, value: 64 / 127 }]);
     expect(r.route(parseMidi([0xb8, 1, 64])!, r3())).toEqual([]);
   });
 });
@@ -447,7 +449,8 @@ describe('MidiController', () => {
     tick();
     expect(m.voice(1)!.position).toBe(1);
     expect(m.voice(2)!.position).toBe(DEFAULT_VOICE.position);
-    expect(sent.length).toBe(1); // CCs don't go to the engine
+    // Mapped CCs don't go to the engine as events; the mod wheel also goes as a matrix source.
+    expect(sent.slice(1)).toEqual([{ type: 'mod', voiceId: 1, value: 1 }]);
   });
 
   it('coalesces a knob sweep into one model update per tick', () => {

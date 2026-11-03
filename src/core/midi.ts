@@ -6,7 +6,7 @@
  * legato) lives in the engine (engine/noteStack.ts), next to the sequencer it overrides.
  */
 import { CUTOFF_MAX, CUTOFF_MIN, type SynthParams } from './synth';
-import { mergeVoicePatch, type VoicePatch } from './voice';
+import { mergeVoicePatch, type VoicePatch, type VoiceParams } from './voice';
 
 /** Pitch-bend range: full wheel = ± this many semitones. */
 export const BEND_RANGE_SEMITONES = 2;
@@ -34,12 +34,14 @@ export type MidiMessage =
   | { readonly kind: 'noteOn'; readonly channel: number; readonly note: number; readonly velocity: number }
   | { readonly kind: 'noteOff'; readonly channel: number; readonly note: number }
   | { readonly kind: 'cc'; readonly channel: number; readonly cc: number; readonly value: number }
-  | { readonly kind: 'bend'; readonly channel: number; readonly value: number };
+  | { readonly kind: 'bend'; readonly channel: number; readonly value: number }
+  /** Channel pressure (aftertouch), 0..1. */
+  | { readonly kind: 'pressure'; readonly channel: number; readonly value: number };
 
 /**
  * Parse one complete MIDI message (Web MIDI and plugin hosts deliver whole messages, no
  * running status). Note-on with velocity 0 is a note-off. Returns null for everything else
- * (aftertouch, program change, system messages, malformed data).
+ * (polyphonic aftertouch, program change, system messages, malformed data).
  */
 export function parseMidi(data: ArrayLike<number>): MidiMessage | null {
   if (data.length < 2) return null;
@@ -58,6 +60,8 @@ export function parseMidi(data: ArrayLike<number>): MidiMessage | null {
       return d2 === 0 ? { kind: 'noteOff', channel, note: d1 } : { kind: 'noteOn', channel, note: d1, velocity: d2 };
     case 0xb0:
       return hasD2 ? { kind: 'cc', channel, cc: d1, value: d2 } : null;
+    case 0xd0:
+      return { kind: 'pressure', channel, value: d1 / 127 };
     case 0xe0: {
       if (!hasD2) return null;
       const v = ((d2 << 7) | d1) - 8192;
@@ -93,7 +97,10 @@ export type MidiVoiceEvent =
   | { readonly type: 'noteOn'; readonly voiceId: number; readonly note: number; readonly velocity: number }
   | { readonly type: 'noteOff'; readonly voiceId: number; readonly note: number }
   | { readonly type: 'allNotesOff'; readonly voiceId: number }
-  | { readonly type: 'bend'; readonly voiceId: number; readonly semitones: number };
+  | { readonly type: 'bend'; readonly voiceId: number; readonly semitones: number }
+  /** Mod wheel (CC 1) and channel pressure, 0..1: Synth voice mod matrix sources. */
+  | { readonly type: 'mod'; readonly voiceId: number; readonly value: number }
+  | { readonly type: 'pressure'; readonly voiceId: number; readonly value: number };
 
 /** Router output: engine events, plus controller moves for the CC map (applied to params). */
 export type MidiRouterEvent =
@@ -181,8 +188,16 @@ export class MidiRouter {
         if (msg.cc === CC_ALL_NOTES_OFF || msg.cc === CC_ALL_SOUND_OFF) return this.channelOff(msg.channel, routing, source);
         if (msg.cc === CC_RESET_ALL_CONTROLLERS) return this.resetControllers(msg.channel, source);
         const v = targetVoice(msg.channel, routing);
-        return v === null ? [] : [{ type: 'cc', voiceId: v, cc: msg.cc, value: msg.value }];
+        if (v === null) return [];
+        // The mod wheel is also a mod matrix source (whatever the CC map does with it).
+        if (msg.cc === CC_MOD_WHEEL) return [{ type: 'cc', voiceId: v, cc: msg.cc, value: msg.value }, { type: 'mod', voiceId: v, value: msg.value / 127 }];
+        return [{ type: 'cc', voiceId: v, cc: msg.cc, value: msg.value }];
       }
+      case 'pressure': {
+        const v = targetVoice(msg.channel, routing);
+        return v === null ? [] : [{ type: 'pressure', voiceId: v, value: msg.value }];
+      }
+
     }
   }
 
@@ -283,6 +298,12 @@ export const CC_PARAMS = [
   'subLevel',
   'noiseLevel',
   'glide',
+  'lfo1Rate',
+  'lfo1Depth',
+  'lfo2Rate',
+  'lfo2Depth',
+  'lfo3Rate',
+  'lfo3Depth',
 ] as const;
 export type CcParam = (typeof CC_PARAMS)[number];
 
@@ -300,10 +321,35 @@ export const CC_PARAM_LABELS: Readonly<Record<CcParam, string>> = {
   subLevel: 'Sub level',
   noiseLevel: 'Noise level',
   glide: 'Glide',
+  lfo1Rate: 'LFO 1 rate',
+  lfo1Depth: 'LFO 1 depth',
+  lfo2Rate: 'LFO 2 rate',
+  lfo2Depth: 'LFO 2 depth',
+  lfo3Rate: 'LFO 3 rate',
+  lfo3Depth: 'LFO 3 depth',
 };
 
 /** Targets that only Synth voices hear (the MIDI popover groups them). */
-export const CC_SYNTH_PARAMS: ReadonlySet<CcParam> = new Set(['cutoff', 'resonance', 'drive', 'filterEnv', 'oscMix', 'subLevel', 'noiseLevel', 'glide']);
+export const CC_SYNTH_PARAMS: ReadonlySet<CcParam> = new Set([
+  'cutoff',
+  'resonance',
+  'drive',
+  'filterEnv',
+  'oscMix',
+  'subLevel',
+  'noiseLevel',
+  'glide',
+  'lfo1Rate',
+  'lfo1Depth',
+  'lfo2Rate',
+  'lfo2Depth',
+  'lfo3Rate',
+  'lfo3Depth',
+]);
+
+/** Synth LFO rate range a controller sweeps (Hz, exponential). */
+export const CC_LFO_RATE_MIN = 0.02;
+export const CC_LFO_RATE_MAX = 20;
 
 /** Parameter → controller number (0..119), or -1 = unassigned. */
 export type CcMap = Readonly<Record<CcParam, number>>;
@@ -349,6 +395,10 @@ export function ccValue(param: CcParam, value: number): number {
   switch (param) {
     case 'lfoRate':
       return LFO_RATE_MIN * Math.pow(LFO_RATE_MAX / LFO_RATE_MIN, x);
+    case 'lfo1Rate':
+    case 'lfo2Rate':
+    case 'lfo3Rate':
+      return CC_LFO_RATE_MIN * Math.pow(CC_LFO_RATE_MAX / CC_LFO_RATE_MIN, x);
     case 'cutoff':
       return CUTOFF_MIN * Math.pow(CUTOFF_MAX / CUTOFF_MIN, x);
     case 'filterEnv':
@@ -360,8 +410,12 @@ export function ccValue(param: CcParam, value: number): number {
   }
 }
 
-/** One target's change at controller value `value`. */
-function targetPatch(p: CcParam, value: number): VoicePatch {
+/**
+ * One target's change at controller value `value`. LFO targets change one entry of the
+ * voice's LFO list, so they need the voice (current values, pending moves included); a
+ * rate move also turns tempo sync off (so the knob is heard).
+ */
+function targetPatch(p: CcParam, value: number, voice?: VoiceParams): VoicePatch | null {
   const v = ccValue(p, value);
   const synth = (s: Partial<SynthParams>): VoicePatch => ({ synth: s });
   switch (p) {
@@ -376,15 +430,34 @@ function targetPatch(p: CcParam, value: number): VoicePatch {
     case 'oscMix':
       // Crossfade: 0 = A only, 1 = B only.
       return synth({ aLevel: 1 - v, bLevel: v });
+    case 'lfo1Rate':
+    case 'lfo2Rate':
+    case 'lfo3Rate':
+    case 'lfo1Depth':
+    case 'lfo2Depth':
+    case 'lfo3Depth': {
+      if (!voice) return null;
+      const n = Number(p[3]) - 1;
+      const rate = p.endsWith('Rate');
+      return synth({ lfos: voice.synth.lfos.map((l, i) => (i !== n ? l : rate ? { ...l, rate: v, sync: false } : { ...l, depth: v })) });
+    }
     default:
       return synth({ [p]: v });
   }
 }
 
-/** The voice-parameter change a controller move makes, or null if it is unmapped. */
-export function ccPatch(map: CcMap, cc: number, value: number): VoicePatch | null {
+/**
+ * The voice-parameter change a controller move makes, or null if it is unmapped. `voice`
+ * (its current params) is needed for the LFO targets.
+ */
+export function ccPatch(map: CcMap, cc: number, value: number, voice?: VoiceParams): VoicePatch | null {
   let patch: VoicePatch | null = null;
-  for (const p of CC_PARAMS) if (map[p] === cc) patch = mergeVoicePatch(patch ?? undefined, targetPatch(p, value));
+  for (const p of CC_PARAMS) {
+    if (map[p] !== cc) continue;
+    const t = targetPatch(p, value, voice);
+    if (t) patch = mergeVoicePatch(patch ?? undefined, t);
+  }
   return patch;
 }
+
 

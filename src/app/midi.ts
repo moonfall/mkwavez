@@ -17,7 +17,8 @@ import {
   type MidiRouting,
   type MidiVoiceEvent,
 } from '../core/midi';
-import { mergeVoicePatch, type VoicePatch } from '../core/voice';
+import { applyVoicePatch, mergeVoicePatch, type VoicePatch } from '../core/voice';
+
 import type { AppModel } from './model';
 
 /** Input choice: 'off', 'all', or an input's id. */
@@ -135,7 +136,10 @@ export class MidiController {
         out.push(ev);
         continue;
       }
-      const patch = ccPatch(this.settings.cc, ev.cc, ev.value);
+      // LFO targets edit one entry of a list: start from the voice with pending moves applied.
+      const cur = this.model.voice(ev.voiceId);
+      const pend = this.pending.get(ev.voiceId);
+      const patch = ccPatch(this.settings.cc, ev.cc, ev.value, cur && pend ? applyVoicePatch(cur, pend) : cur);
       if (!patch) continue;
       // The engine hears the knob now; the model (sliders, voice/set) catches up once per tick.
       this.out.params(ev.voiceId, patch);

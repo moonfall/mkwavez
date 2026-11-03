@@ -19,7 +19,28 @@ import {
   type OscSource,
   type SynthParams,
 } from '../core/synth';
+import {
+  EMPTY_SLOT,
+  LFO_DIVS,
+  LFO_RATE_MAX_HZ,
+  LFO_RATE_MIN_HZ,
+  LFO_SHAPE_LABELS,
+  LFO_SHAPES,
+  MOD_DEST_LABELS,
+  MOD_DESTS,
+  MOD_SLOTS,
+  MOD_SOURCE_LABELS,
+  MOD_SOURCES,
+  type LfoDiv,
+  type LfoParams,
+  type LfoShape,
+  type ModDest,
+  type ModEnvMode,
+  type ModSlot,
+  type ModSource,
+} from '../core/modulation';
 import type { VoicePatch, VoiceParams } from '../core/voice';
+
 import { shapeLabel } from '../core/wavetable';
 import { Mix } from '../core/wavetablePlayback';
 import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
@@ -28,14 +49,17 @@ import { h, voiceColorVar } from './dom';
 import { oscMix, oscPositions, oscView } from './playing';
 import { createVoicePad } from './voicePad';
 
-export type SynthPage = 'osc' | 'mix' | 'filter' | 'env';
+export type SynthPage = 'osc' | 'mix' | 'filter' | 'env' | 'mod';
 const PAGES: readonly [SynthPage, string][] = [
   ['osc', 'Osc'],
   ['mix', 'Mix'],
   ['filter', 'Filter'],
   ['env', 'Env'],
+  ['mod', 'Mod'],
 ];
 type EnvPage = 'amp' | 'filter' | 'pitch';
+/** What the Mod page's left column edits: an LFO (0..2) or the mod envelope. */
+type ModEdit = 0 | 1 | 2 | 'env';
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 const secs = (v: number) => (v < 1 ? `${Math.round(v * 1000)} ms` : `${v.toFixed(2)} s`);
@@ -79,6 +103,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   let page: SynthPage = ui.pref<SynthPage>('synthPage', 'osc', (x) => PAGES.some(([p]) => p === x));
   let osc: 'a' | 'b' = ui.pref<'a' | 'b'>('synthOsc', 'a', (x) => x === 'a' || x === 'b');
   let envPage: EnvPage = ui.pref<EnvPage>('synthEnv', 'amp', (x) => x === 'amp' || x === 'filter' || x === 'pitch');
+  let modEdit: ModEdit = ui.pref<ModEdit>('synthMod', 0, (x) => x === 0 || x === 1 || x === 2 || x === 'env');
   let dirty = true;
 
   // ---- building blocks ----
@@ -180,6 +205,15 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
         });
       },
     };
+  };
+  /** A <select> bound to a value. */
+  const select = <T extends string>(id: string, label: string, options: readonly (readonly [T, string])[], get: (v: VoiceParams) => T, put: (x: T) => VoicePatch): Control & { el: HTMLSelectElement } => {
+    const el = h('select', { id, 'aria-label': label }, ...options.map(([value, text]) => h('option', { value }, text)));
+    el.addEventListener('change', () => {
+      set(put(el.value as T));
+      commit();
+    });
+    return { el, sync: (v) => void (el.value = get(v)) };
   };
   const check = (id: string, label: string, get: (v: VoiceParams) => boolean, put: (x: boolean) => VoicePatch, title = ''): Control => {
     const input = h('input', { type: 'checkbox', id });
@@ -405,7 +439,97 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   watchVisibility(envCanvas);
   const pageEnv = h('div', { class: 'syn-page', id: 'syn-page-env', role: 'tabpanel' }, h('div', { class: 'syn-ctrl' }, h('div', { class: 'syn-head' }, envSel.el), ampBox, fBox, pBox), visEnv);
 
-  const pages: Record<SynthPage, HTMLElement> = { osc: pageOsc, mix: pageMix, filter: pageFilter, env: pageEnv };
+  // ---- Mod page: LFOs / mod envelope (left), the matrix (right) ----
+  const modSel = seg<ModEdit>(
+    'syn-mod-sel',
+    'Edit',
+    [
+      [0, 'LFO 1'],
+      [1, 'LFO 2'],
+      [2, 'LFO 3'],
+      ['env', 'Env'],
+    ],
+    () => modEdit,
+    (x) => {
+      modEdit = x;
+      ui.setPref('synthMod', x);
+      sync();
+      return null;
+    },
+  );
+  const lfoN = () => (modEdit === 'env' ? 0 : modEdit);
+  const lfo = (v: VoiceParams) => v.synth.lfos[lfoN()];
+  const putLfo = (patch: Partial<LfoParams>): VoicePatch => ({ synth: { lfos: voice!.synth.lfos.map((l, i) => (i === lfoN() ? { ...l, ...patch } : l)) } });
+  const lfoShape = select<LfoShape>('syn-lfo-shape', 'LFO shape', LFO_SHAPES.map((s) => [s, LFO_SHAPE_LABELS[s]] as const), (v) => lfo(v).shape, (x) => putLfo({ shape: x }));
+  const lfoRate = row('syn-lfo-rate', 'Rate', (v) => lfo(v).rate, (x) => putLfo({ rate: x }), logTaper(LFO_RATE_MIN_HZ, LFO_RATE_MAX_HZ), (x) => (x < 10 ? `${x.toFixed(2)} Hz` : `${x.toFixed(1)} Hz`));
+  const lfoDiv = select<LfoDiv>('syn-lfo-div', 'LFO division', LFO_DIVS.map((d) => [d, d] as const), (v) => lfo(v).div, (x) => putLfo({ div: x }));
+  const lfoSync = check('syn-lfo-sync', 'Sync', (v) => lfo(v).sync, (x) => putLfo({ sync: x }), 'Tempo sync: one cycle per division at the transport tempo');
+  const lfoRetrig = check('syn-lfo-retrig', 'Retrig', (v) => lfo(v).retrig, (x) => putLfo({ retrig: x }), 'Restart at the start phase on every note (otherwise free-running)');
+  const lfoDepth = row('syn-lfo-depth', 'Depth', (v) => lfo(v).depth, (x) => putLfo({ depth: x }), linear(0, 1), pct);
+  const lfoFade = row('syn-lfo-fade', 'Fade in', (v) => lfo(v).fade, (x) => putLfo({ fade: x }), timeTaper(5), (x) => (x < 0.002 ? 'off' : secs(x)));
+  const lfoPhase = row('syn-lfo-phase', 'Phase', (v) => lfo(v).phase, (x) => putLfo({ phase: x }), linear(0, 1), (x) => `${Math.round(x * 360)}°`);
+  const divRow = h('div', { class: 'crow crow-line' }, h('span', {}, 'Division'), h('div', { class: 'crow-line-c' }, lfoDiv.el));
+  const lfoBox = h(
+    'div',
+    { class: 'crows', id: 'syn-lfo' },
+    lineRow('Shape', lfoShape.el),
+    lfoRate.el,
+    divRow,
+    lineRow('', lfoSync.el, lfoRetrig.el),
+    lfoDepth.el,
+    lfoFade.el,
+    lfoPhase.el,
+  );
+  const mMode = seg<ModEnvMode>('syn-menv-mode', 'Mod envelope mode', [['ad', 'AD'], ['adsr', 'ADSR']] as const, (v) => v.synth.mMode, (x) => ({ synth: { mMode: x } }));
+  const mRows = [
+    row('syn-m-a', 'Attack', (v) => v.synth.mAttack, sw('mAttack'), timeTaper(2), secs),
+    row('syn-m-d', 'Decay', (v) => v.synth.mDecay, sw('mDecay'), T, secs),
+    row('syn-m-s', 'Sustain', (v) => v.synth.mSustain, sw('mSustain'), linear(0, 1), pct),
+    row('syn-m-r', 'Release', (v) => v.synth.mRelease, sw('mRelease'), T, secs),
+  ];
+  const menvBox = h('div', { class: 'crows', id: 'syn-menv' }, lineRow('Mode', mMode.el), ...mRows.map((r) => r.el));
+  // Matrix: MOD_SLOTS rows of source → destination · amount.
+  const slots = Array.from({ length: MOD_SLOTS }, (_, i) => {
+    const slot = (v: VoiceParams) => v.synth.mods[i] ?? EMPTY_SLOT;
+    const putSlot = (patch: Partial<ModSlot>): VoicePatch => ({ synth: { mods: voice!.synth.mods.map((m, j) => (j === i ? { ...m, ...patch } : m)) } });
+    const src = select<ModSource | 'none'>(`syn-mod-src-${i}`, `Slot ${i + 1} source`, [['none', '—'], ...MOD_SOURCES.map((s) => [s, MOD_SOURCE_LABELS[s]] as const)], (v) => slot(v).src, (x) => putSlot({ src: x }));
+    const dst = select<ModDest | 'none'>(`syn-mod-dst-${i}`, `Slot ${i + 1} destination`, [['none', '—'], ...MOD_DESTS.map((d) => [d, MOD_DEST_LABELS[d]] as const)], (v) => slot(v).dst, (x) => putSlot({ dst: x }));
+    const amt = h('input', { type: 'range', id: `syn-mod-amt-${i}`, min: -1, max: 1, step: 0.005, value: 0, 'aria-label': `Slot ${i + 1} amount` });
+    const val = h('span', { class: 'crow-val' });
+    const fmt = (x: number) => signed(x * 100, 0);
+    amt.addEventListener('input', () => {
+      const x = Number(amt.value);
+      val.textContent = fmt(x);
+      set(putSlot({ amt: x }));
+    });
+    amt.addEventListener('change', commit);
+    // Double-click: back to 0.
+    amt.addEventListener('dblclick', () => {
+      set(putSlot({ amt: 0 }));
+      commit();
+    });
+    const el = h('div', { class: 'mod-slot' }, src.el, h('span', { class: 'mod-arrow', 'aria-hidden': 'true' }, '→'), dst.el, amt, val);
+    return {
+      el,
+      sync(v: VoiceParams) {
+        src.sync(v);
+        dst.sync(v);
+        const s = slot(v);
+        if (document.activeElement !== amt || Number(amt.value) !== s.amt) amt.value = String(s.amt);
+        val.textContent = fmt(s.amt);
+        el.classList.toggle('mod-off', s.src === 'none' || s.dst === 'none' || s.amt === 0);
+      },
+    } as Control;
+  });
+  const matrix = h('div', { class: 'mod-matrix', id: 'syn-matrix', role: 'group', 'aria-label': 'Mod matrix' }, ...slots.map((s) => s.el));
+  const pageMod = h(
+    'div',
+    { class: 'syn-page syn-page-mod', id: 'syn-page-mod', role: 'tabpanel' },
+    h('div', { class: 'syn-ctrl' }, h('div', { class: 'syn-head' }, modSel.el), lfoBox, menvBox),
+    matrix,
+  );
+
+  const pages: Record<SynthPage, HTMLElement> = { osc: pageOsc, mix: pageMix, filter: pageFilter, env: pageEnv, mod: pageMod };
   const typeSlot = h('span', { class: 'voice-type-slot' });
   const el = h(
     'div',
@@ -415,6 +539,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     pageMix,
     pageFilter,
     pageEnv,
+    pageMod,
   );
 
   const controls: Control[] = [
@@ -455,6 +580,18 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     ...fRows,
     pTarget,
     ...pRows,
+    modSel,
+    lfoShape,
+    lfoRate,
+    lfoDiv,
+    lfoSync,
+    lfoRetrig,
+    lfoDepth,
+    lfoFade,
+    lfoPhase,
+    mMode,
+    ...mRows,
+    ...slots,
   ];
 
   const sync = () => {
@@ -479,6 +616,12 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     pad.canvas.hidden = shape === '1d';
     scope.hidden = shape !== '1d';
     pageOsc.dataset.shape = shape;
+    lfoBox.hidden = modEdit === 'env';
+    menvBox.hidden = modEdit !== 'env';
+    const synced = lfo(v).sync;
+    lfoRate.el.hidden = synced;
+    divRow.hidden = !synced;
+    mRows[2].el.hidden = mRows[3].el.hidden = v.synth.mMode === 'ad';
     ampBox.hidden = envPage !== 'amp';
     fBox.hidden = envPage !== 'filter';
     pBox.hidden = envPage !== 'pitch';

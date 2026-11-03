@@ -13,6 +13,22 @@
  * type keeps its synth settings.
  */
 
+import {
+  DEFAULT_LFO,
+  EMPTY_SLOT,
+  LFO_COUNT,
+  LFO_DIVS,
+  LFO_RATE_MAX_HZ,
+  LFO_RATE_MIN_HZ,
+  LFO_SHAPES,
+  MOD_DESTS,
+  MOD_SLOTS,
+  MOD_SOURCES,
+  type LfoParams,
+  type ModEnvMode,
+  type ModSlot,
+} from './modulation';
+
 export type VoiceType = 'simple' | 'synth';
 export const VOICE_TYPES: readonly VoiceType[] = ['simple', 'synth'];
 
@@ -93,6 +109,16 @@ export interface SynthParams {
   readonly bendRange: number;
   /** Stereo position −1 (left) .. 1 (right). */
   readonly pan: number;
+  /** Three LFOs (see core/modulation.ts). */
+  readonly lfos: readonly LfoParams[];
+  /** Mod envelope (a matrix source): AD or ADSR. */
+  readonly mAttack: number;
+  readonly mDecay: number;
+  readonly mSustain: number;
+  readonly mRelease: number;
+  readonly mMode: ModEnvMode;
+  /** Mod matrix: MOD_SLOTS slots of source → destination × amount. */
+  readonly mods: readonly ModSlot[];
 }
 
 /** Filter envelope amount 1 = this many octaves. */
@@ -149,6 +175,18 @@ export const DEFAULT_SYNTH: SynthParams = {
   glideLegato: true,
   bendRange: 2,
   pan: 0,
+  lfos: [
+    { ...DEFAULT_LFO, rate: 0.25 },
+    { ...DEFAULT_LFO, rate: 5, fade: 0.4 },
+    { ...DEFAULT_LFO, shape: 'sh', sync: true, div: '1/8' },
+  ],
+  mAttack: 0.01,
+  mDecay: 0.6,
+  mSustain: 0,
+  mRelease: 0.3,
+  mMode: 'ad',
+  // An evolving wavetable by default: LFO 1 sweeps osc A's position.
+  mods: [{ src: 'lfo1', dst: 'posA', amt: 0.3 }, ...Array.from({ length: MOD_SLOTS - 1 }, () => EMPTY_SLOT)],
 };
 
 /** Amp ADSR of a new Synth voice (Simple voices keep their own defaults). */
@@ -185,6 +223,10 @@ export const SYNTH_RANGES: Readonly<Partial<Record<keyof SynthParams, readonly [
   glide: [0, 5],
   bendRange: [0, 24, true],
   pan: [-1, 1],
+  mAttack: [0, 10],
+  mDecay: [0, 10],
+  mSustain: [0, 1],
+  mRelease: [0, 10],
 };
 
 const ENUMS: Readonly<Partial<Record<keyof SynthParams, readonly string[]>>> = {
@@ -192,7 +234,33 @@ const ENUMS: Readonly<Partial<Record<keyof SynthParams, readonly string[]>>> = {
   noiseType: NOISE_TYPES,
   filterMode: FILTER_MODES,
   pTarget: PITCH_TARGETS,
+  mMode: ['ad', 'adsr'],
 };
+
+/** One LFO from untrusted data. */
+export function normalizeLfo(raw: unknown, def: LfoParams = DEFAULT_LFO): LfoParams {
+  const o = isObj(raw) ? raw : {};
+  return {
+    shape: (LFO_SHAPES as readonly unknown[]).includes(o.shape) ? (o.shape as LfoParams['shape']) : def.shape,
+    rate: clampNum(o.rate, def.rate, [LFO_RATE_MIN_HZ, LFO_RATE_MAX_HZ]),
+    sync: typeof o.sync === 'boolean' ? o.sync : def.sync,
+    div: (LFO_DIVS as readonly unknown[]).includes(o.div) ? (o.div as LfoParams['div']) : def.div,
+    retrig: typeof o.retrig === 'boolean' ? o.retrig : def.retrig,
+    phase: clampNum(o.phase, def.phase, [0, 1]),
+    fade: clampNum(o.fade, def.fade, [0, 10]),
+    depth: clampNum(o.depth, def.depth, [0, 1]),
+  };
+}
+
+/** One matrix slot from untrusted data (unknown source / destination → none). */
+export function normalizeSlot(raw: unknown): ModSlot {
+  const o = isObj(raw) ? raw : {};
+  return {
+    src: (MOD_SOURCES as readonly unknown[]).includes(o.src) ? (o.src as ModSlot['src']) : 'none',
+    dst: (MOD_DESTS as readonly unknown[]).includes(o.dst) ? (o.dst as ModSlot['dst']) : 'none',
+    amt: clampNum(o.amt, 0, [-1, 1]),
+  };
+}
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 const fin = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
@@ -233,6 +301,9 @@ export function normalizeSynth(raw: unknown, fallbackSource: OscSource = DEFAULT
   for (const [k, def] of Object.entries(DEFAULT_SYNTH) as [keyof SynthParams, unknown][]) {
     const v = o[k];
     if (k === 'b') out.b = normalizeSource(v, fallbackSource);
+    else if (k === 'lfos') out.lfos = Array.from({ length: LFO_COUNT }, (_, i) => normalizeLfo(Array.isArray(v) ? v[i] : undefined, DEFAULT_SYNTH.lfos[i]));
+    else if (k === 'mods') out.mods = Array.isArray(v) ? Array.from({ length: MOD_SLOTS }, (_, i) => normalizeSlot(v[i])) : DEFAULT_SYNTH.mods;
+
     else if (typeof def === 'number') out[k] = clampNum(v, def, SYNTH_RANGES[k]);
     else if (typeof def === 'boolean') out[k] = typeof v === 'boolean' ? v : def;
     else if (typeof def === 'string') out[k] = typeof v === 'string' && (ENUMS[k] ?? []).includes(v) ? v : def;

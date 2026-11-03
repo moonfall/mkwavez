@@ -18,7 +18,7 @@ import type { WavetableId } from '../wavetable';
 import type { PackedWavetable } from '../wavetablePlayback';
 import { Adsr } from './adsr';
 import { NoteStack } from './noteStack';
-import { freqPitch, SynthVoice } from './synthVoice';
+import { freqPitch, SynthVoice, type SynthControl } from './synthVoice';
 import { WtOsc } from './wtOsc';
 
 export const MASTER_GAIN = 0.22;
@@ -70,6 +70,9 @@ class VoiceRuntime {
   syn: SynthVoice | null = null;
   /** Simple (0) ↔ Synth (1) crossfade position. */
   typeMix = 0;
+  /** Mod wheel (CC 1) and channel pressure, 0..1 (Synth voice mod matrix sources). */
+  wheel = 0;
+  pressure = 0;
 
   constructor(p: VoiceParams, sampleRate: number) {
     this.params = p;
@@ -77,7 +80,7 @@ class VoiceRuntime {
     this.lfoPhaseY = p.lfoPhaseY;
     this.env.configure(p.attack, p.decay, p.sustain, p.release, sampleRate);
     if (p.type === 'synth') {
-      this.syn = new SynthVoice(sampleRate, p.id, CONTROL_BLOCK);
+      this.syn = new SynthVoice(sampleRate, p.id, CONTROL_BLOCK, p.synth.lfos.map((l) => l.phase));
       this.typeMix = 1;
     }
   }
@@ -140,6 +143,20 @@ export class SynthEngine {
   /** Per-voice stereo output of the sample being rendered (renderMixed). */
   private outL = 0;
   private outR = 0;
+  /** Reused per control block for each Synth voice. */
+  private readonly ctl: SynthControl = {
+    bend: 0,
+    blockLen: CONTROL_BLOCK,
+    tables: this.tables,
+    wtA: undefined,
+    wtB: undefined,
+    slew: 0,
+    glideCoef: this.glideCoef,
+    gainTarget: 0,
+    bpm: 132,
+    wheel: 0,
+    pressure: 0,
+  };
 
   constructor(sampleRate: number) {
     this.sampleRate = sampleRate;
@@ -194,7 +211,7 @@ export class SynthEngine {
     v.env.configure(p.attack, p.decay, p.sustain, p.release, this.sampleRate);
     if (p.type === 'synth' && !v.syn) {
       // Becoming a Synth voice: start its path at the current note (then crossfade in).
-      const syn = new SynthVoice(this.sampleRate, p.id, CONTROL_BLOCK);
+      const syn = new SynthVoice(this.sampleRate, p.id, CONTROL_BLOCK, p.synth.lfos.map((l) => l.phase));
       syn.noteOn(p, freqPitch(v.freq), 1, false, v.env.stage !== IDLE, false);
       v.syn = syn;
     }
@@ -241,7 +258,7 @@ export class SynthEngine {
   /** Release the amp envelope (and the Synth path's envelopes). */
   private gateOff(v: VoiceRuntime): void {
     v.env.gateOff();
-    v.syn?.gateOff();
+    v.syn?.gateOff(v.params);
   }
 
   /**
@@ -340,6 +357,12 @@ export class SynthEngine {
         return this.midiAllNotesOff(ev.voiceId);
       case 'bend':
         return this.setPitchBend(ev.voiceId, ev.semitones);
+      case 'mod':
+      case 'pressure': {
+        const v = this.findVoice(ev.voiceId);
+        if (v) v[ev.type === 'mod' ? 'wheel' : 'pressure'] = Math.max(0, Math.min(1, ev.value));
+        return;
+      }
     }
   }
 
@@ -475,8 +498,18 @@ export class SynthEngine {
   private controlSynth(v: VoiceRuntime, blockLen: number): void {
     const p = v.params;
     const s = p.synth;
-    const gainTarget = p.mute ? 0 : p.level * (1 - s.velAmp + s.velAmp * v.vel);
-    v.syn!.control(p, v.bendSemis, blockLen, this.tables, this.wavetables.get(p.wavetableId), this.wavetables.get(s.b.wavetableId), this.slew, this.glideCoef, gainTarget);
+    const c = this.ctl;
+    c.bend = v.bendSemis;
+    c.blockLen = blockLen;
+    c.wtA = this.wavetables.get(p.wavetableId);
+    c.wtB = this.wavetables.get(s.b.wavetableId);
+    c.slew = this.slew;
+    c.gainTarget = p.mute ? 0 : p.level * (1 - s.velAmp + s.velAmp * v.vel);
+    c.bpm = this.bpm;
+    c.wheel = v.wheel;
+    c.pressure = v.pressure;
+    v.syn!.control(p, c);
+
   }
 
   /** Mip level for the voice's current pitch (a new note mid-block keeps the block's mix). */
