@@ -272,7 +272,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         perlin: 'Loop-seamless noise. A batch shares one noise region (the seed) and drifts through z.',
         ca: 'Each generation’s cells become ±1 steps of one waveform; a batch is N consecutive generations from the start.',
       };
-      edBody.replaceChildren(h('div', { class: 'seed-params' }, ...controls), h('p', { class: 'hint' }, hints[e.mode] ?? ''));
+      edBody.replaceChildren(h('div', { class: 'seed-params' }, ...controls), h('p', { class: 'hint' }, e.about ?? hints[e.mode] ?? ''));
     }
   };
 
@@ -453,7 +453,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     addShownBtn.title = room1 ? '' : model.fullMessage();
     addBatchBtn.title = !roomN ? model.fullMessage() : failed.length ? 'Every waveform of the batch must evaluate; Add shown still works for the others' : '';
     el.classList.toggle('seed-stale', !!blocking);
-    seedBox.hidden = !seedUsesRandomness(e, exprOf(e));
+    seedBox.hidden = !seedUsesRandomness(e, exprOf(e), paramsOf(e));
   };
 
   // ---- actions ----
@@ -478,7 +478,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     }
     if (!model.addTables(j.tables.map((_, i) => finalTable(j, i)!), true).length) return; // refused: keep the seed
     const n = j.req.count;
-    if (seedUsesRandomness(j.req.entry, j.req.expr)) {
+    if (seedUsesRandomness(j.req.entry, j.req.expr, j.req.params)) {
       newSeed();
       flash(`Added ${n} waveform${n > 1 ? 's' : ''} to the Timeline · new seed`);
     } else flash(`Added ${n} waveform${n > 1 ? 's' : ''} to the Timeline`);

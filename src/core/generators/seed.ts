@@ -10,21 +10,13 @@ import { basicWave, pulse, type BasicWave } from './basic';
 import { CA_RULES, caGenerations } from './ca';
 import { formulaTable, type FormulaFn } from './formula';
 import { FORMULA_PRESETS } from './formulaPresets';
+import { PARAM_MODES, paramMode, type SeedParam } from './paramModes';
 import { batchU, DEFAULT_PERLIN, perlinTable, type PerlinParams } from './perlin';
 
-export type SeedMode = 'basic' | 'pulse' | 'formula' | 'perlin' | 'ca';
+export type { SeedParam } from './paramModes';
 
-export interface SeedParam {
-  readonly key: string;
-  readonly label: string;
-  readonly min: number;
-  readonly max: number;
-  readonly step: number;
-  /** Default value. */
-  readonly value: number;
-  /** Discrete choices (value, label) — shown as a dropdown instead of a slider. */
-  readonly options?: readonly (readonly [number, string])[];
-}
+/** Built-in modes, or a PARAM_MODES mode (e.g. 'dynamical'). */
+export type SeedMode = 'basic' | 'pulse' | 'formula' | 'perlin' | 'ca' | (string & {});
 
 export interface SeedEntry {
   /** Stable id, recorded in recipes as `params.preset`. */
@@ -36,9 +28,9 @@ export interface SeedEntry {
   readonly expr?: string;
   /** Additive generator (mode 'basic'). */
   readonly wave?: BasicWave;
-  /** Editable parameters (modes 'pulse', 'perlin', 'ca'). */
+  /** Editable parameters (every mode except 'basic' and 'formula'). */
   readonly params?: readonly SeedParam[];
-  /** One-line description (basic waves). */
+  /** One-line description (basic waves, PARAM_MODES). */
   readonly about?: string;
   /** An equivalent formula (basic waves), for "Edit as formula". */
   readonly asFormula?: string;
@@ -120,6 +112,7 @@ export const SEED_LIBRARY: readonly SeedEntry[] = [
       { key: 'start', label: 'Start generation', min: 0, max: 64, step: 1, value: 0 },
     ],
   },
+  ...PARAM_MODES.map((m): SeedEntry => ({ id: m.id, cat: m.cat, name: m.name, mode: m.mode, params: m.params, about: m.about })),
   { id: 'blank-formula', cat: 'Custom', name: 'Blank formula', mode: 'formula', expr: 'sin(p) + 0.5*sin(2*p)*u' },
 ];
 
@@ -134,9 +127,18 @@ export function seedParams(entry: SeedEntry, over: Readonly<Record<string, numbe
   return out;
 }
 
-/** True when the seed changes the result: Perlin, CA, or a formula that calls pnoise(). */
-export function seedUsesRandomness(entry: SeedEntry, expr = entry.expr ?? ''): boolean {
+/**
+ * True when the seed changes the result: Perlin, CA, a formula that calls pnoise(), or a
+ * parameter mode that is seeded for these params (defaults when omitted).
+ */
+export function seedUsesRandomness(
+  entry: SeedEntry,
+  expr = entry.expr ?? '',
+  params: Readonly<Record<string, number>> = {},
+): boolean {
   if (entry.mode === 'perlin' || entry.mode === 'ca') return true;
+  const pm = paramMode(entry.mode);
+  if (pm) return pm.seeded(seedParams(entry, params));
   return entry.mode === 'formula' && /\bpnoise\s*\(/.test(expr);
 }
 
@@ -145,7 +147,7 @@ export interface SeedRequest {
   readonly entry: SeedEntry;
   /** The expression for 'formula' entries (may differ from the preset: edited). */
   readonly expr: string;
-  /** Param values for 'pulse' / 'perlin' / 'ca' entries (missing keys use defaults). */
+  /** Param values for parameter-mode entries (missing keys use defaults). */
   readonly params: Readonly<Record<string, number>>;
   readonly seed: number;
   /** Batch size N (u = index / (N-1)). */
@@ -201,6 +203,11 @@ export function seedTable(req: SeedRequest, index: number, fn?: FormulaFn, abort
         data: caGenerations({ rule: p.rule, cells: p.cells }, seed, generation, 1)[0],
         recipe: recipe('ca', { rule: p.rule, cells: p.cells, start: p.start, generation }),
       };
+    }
+    default: {
+      const pm = paramMode(entry.mode);
+      if (!pm) throw new Error(`seedTable: unknown mode ${entry.mode}`);
+      return { data: pm.render(p, seed, index, count), recipe: recipe(pm.mode, { ...p, name: entry.name }) };
     }
   }
 }

@@ -4,11 +4,14 @@ import type { Recipe, TableId } from '../table';
 import { basicWave, pulse, type BasicWave } from './basic';
 import { caGenerations } from './ca';
 import { formulaTable, type FormulaCompiler } from './formula';
+import { paramMode } from './paramModes';
 import { perlinTable, type PerlinParams } from './perlin';
 import { pulseWidth } from './seed';
 
 export * from './basic';
 export * from './ca';
+export * from './dynamical';
+export * from './paramModes';
 export * from './formula';
 export * from './formulaPresets';
 export * from './perlin';
@@ -52,7 +55,10 @@ export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
       if (!env.resolveTable) throw new Error('renderRecipe: breed needs resolveTable');
       return renderBreedRecipe(r, env.resolveTable);
     }
-    default:
-      throw new Error(`renderRecipe: unknown op ${r.op}`);
+    default: {
+      const pm = paramMode(r.op);
+      if (!pm) throw new Error(`renderRecipe: unknown op ${r.op}`);
+      return pm.render(p, r.seed, index, count);
+    }
   }
 }

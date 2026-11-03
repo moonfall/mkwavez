@@ -91,6 +91,7 @@ function describeOp(r: Recipe): string {
       return `${label} ${pct}%${mode}${b} of id ${r.parents.join('×')}`;
     }
     default:
-      return `${r.op}${b}`;
+      // Parameter modes (core/generators/paramModes.ts) record their library name.
+      return `${p.name ? String(p.name) : r.op}${b}`;
   }
 }

@@ -12,6 +12,8 @@ src/
                         exact (fractional) fundamental phase alignment, peak normalise
     perlin.ts           improved Perlin noise, fBm, seeded NoiseField, loop-seamless pnoise
     generators/         basic, formula (FormulaFn interface only), Perlin, CA, presets,
+                        paramModes.ts (further parameter modes: library entry + pure
+                        render(params, seed, index, count); dynamical.ts, …),
                         seed.ts (Seed library entries + seedTable/seedBatch),
                         renderRecipe() to re-render a table from its recipe
                         (mutations need env.resolveTable for parent data)
@@ -92,7 +94,9 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   `params.preset` the library entry id, plus the generator's params: `wave`;
   `width, widthEnd` (duty sweeps linearly across the batch); `expr, name, edited`
   (the expression actually used); `freq, z, zDrift, octaves, persistence`;
-  `rule, cells, start, generation (= start + index)`. `seed` and `batch {index, count}`
+  `rule, cells, start, generation (= start + index)`. Parameter modes from
+  `PARAM_MODES` (`dynamical`, …) record `op` = the mode, every param plus `name`, and
+  re-render through the mode's `render(params, seed, index, count)`. `seed` and `batch {index, count}`
   are always set (also for single "Add shown" tables, which keep their batch position),
   so every Seed table re-renders exactly (tested for every library entry).
 - **Mutation recipe** — `op: 'mutate'`, `params { mutation, amount (this table's),
