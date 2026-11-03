@@ -22,6 +22,8 @@ export const FORMULA_PRESETS: readonly FormulaPreset[] = [
     name: 'Superformula',
     expr: 'pow(pow(abs(cos(1.5*p)),2+u*6)+pow(abs(sin(1.5*p)),2+u*6),-0.5)',
   },
+  { group: 'Shapers', name: 'Superellipse', expr: 'sign(sin(p))*pow(abs(sin(p)),0.05+0.95*u)' },
+  { group: 'Shapers', name: 'Shaped PWM', expr: 'tanh((3+20*u)*(sin(p)-0.8+1.6*u))' },
   { group: 'Phase', name: 'Nested FM', expr: 'sin(p + (0.5+u*2)*sin(2*p + 2*sin(3*p)))' },
   {
     group: 'Phase',
@@ -43,6 +45,16 @@ export const FORMULA_PRESETS: readonly FormulaPreset[] = [
     group: 'Spectral',
     name: 'Pluck position',
     expr: '[...Array(40)].reduce((s,_,k)=>s+sin(PI*(k+1)*(0.05+0.45*u))*sin((k+1)*p)/pow(k+1,2),0)',
+  },
+  {
+    group: 'Spectral',
+    name: 'Schroeder phases',
+    expr: '[...Array(24)].reduce((s,_,k)=>s+sin((k+1)*p+PI*(k+1)*(k+1)/24)/pow(k+1,0.5+u),0)',
+  },
+  {
+    group: 'Spectral',
+    name: 'Rounded bell partials',
+    expr: '[1,2.76,5.4,8.93].reduce((s,f,i)=>s+sin(round(f*(1+u))*p)/(i+1),0)',
   },
   {
     group: 'Fractal',
@@ -75,4 +87,19 @@ export const FORMULA_PRESETS: readonly FormulaPreset[] = [
   { group: 'Math', name: 'Harmonics', expr: 'sin((n+1)*p)' },
   { group: 'Math', name: 'Sync sweep', expr: 'sin(p*(1+u*3))' },
   { group: 'Math', name: 'Sine→saw', expr: '(1-u)*sin(p) + u*(t*2-1)' },
+  { group: 'Chaos', name: 'Logistic map', expr: '[...Array(20)].reduce(x=>(3.5+0.5*u)*x*(1-x), 0.5+0.4*sin(p))*2-1' },
+  { group: 'Chaos', name: 'Iterated sine map', expr: '[...Array(3+n)].reduce(x=>sin(PI*(1+u)*x), sin(p))' },
+  {
+    group: 'Voice',
+    name: 'Vowel formants',
+    expr: '[...Array(40)].reduce((s,_,i)=>s+sin((i+1)*p)*(exp(-pow((i+1-7+4*u)/1.5,2))+0.7*exp(-pow((i+1-11-10*u)/2,2))+0.05/(i+1)),0)',
+  },
+  { group: 'Voice', name: 'CZ resonance (sine window)', expr: 'sin((2+10*u)*p)*(0.5-0.5*cos(p))' },
+  { group: 'Voice', name: 'CZ resonance (saw window)', expr: 'sin((2+10*u)*p)*(1-t)' },
+  {
+    group: 'Sequence',
+    name: 'Euclidean pulses',
+    expr: '(floor(floor(t*16)*(5+n)/16)-floor((floor(t*16)-1)*(5+n)/16))*2-1',
+  },
+  { group: 'Sequence', name: 'Digits of π', expr: '[3,1,4,1,5,9,2,6,5,3,5,8,9,7,9,3][(floor(t*16)+n)%16]/4.5-1' },
 ];
