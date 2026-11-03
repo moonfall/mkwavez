@@ -83,14 +83,15 @@ jobs:
       - name: Collect plugins
         shell: bash
         run: |
-          mkdir -p dist
+          # (not dist/: that is the web build)
+          mkdir -p plugin-dist
           for f in VST3 CLAP AU LV2 Standalone; do
             src=$(find build -type d -path "*mkwavez_artefacts/Release/$f" | head -1)
-            [ -n "$src" ] && cp -R "$src" dist/
+            if [ -n "$src" ]; then cp -R "$src" plugin-dist/; fi
           done
-          ls -R dist | head -50
+          ls -R plugin-dist | head -50
 
       - uses: actions/upload-artifact@v4
         with:
           name: mkwavez-${{ matrix.name }}
-          path: dist
+          path: plugin-dist

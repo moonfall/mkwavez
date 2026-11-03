@@ -49,6 +49,13 @@ if(MKWAVEZ_WEBVIEW)
     get_filename_component(MKWAVEZ_WEB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
     set(MKWAVEZ_WEB_ZIP "${CMAKE_CURRENT_BINARY_DIR}/web/web.zip")
     find_program(MKWAVEZ_NPM NAMES npm npm.cmd)
+    # On Windows npm is a batch file: in the build's generated script it must run through
+    # `cmd /c`, or the script stops after it (and the zip step never runs).
+    if(WIN32)
+        set(MKWAVEZ_NPM_RUN cmd /c "${MKWAVEZ_NPM}")
+    else()
+        set(MKWAVEZ_NPM_RUN "${MKWAVEZ_NPM}")
+    endif()
     if(MKWAVEZ_BUILD_WEB AND MKWAVEZ_NPM)
         if(NOT EXISTS "${MKWAVEZ_WEB_ROOT}/node_modules")
             message(STATUS "mkwavez: npm ci (web UI dependencies)")
@@ -60,7 +67,7 @@ if(MKWAVEZ_WEBVIEW)
         file(GLOB_RECURSE MKWAVEZ_WEB_SOURCES CONFIGURE_DEPENDS "${MKWAVEZ_WEB_ROOT}/src/*")
         set(MKWAVEZ_WEB_DIST "${MKWAVEZ_WEB_ROOT}/dist" CACHE PATH "" FORCE)
         add_custom_command(OUTPUT "${MKWAVEZ_WEB_ZIP}"
-            COMMAND "${MKWAVEZ_NPM}" run build
+            COMMAND ${MKWAVEZ_NPM_RUN} run build
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/web"
             COMMAND "${CMAKE_COMMAND}" -E rm -f "${MKWAVEZ_WEB_ZIP}"
             COMMAND "${CMAKE_COMMAND}" -E chdir "${MKWAVEZ_WEB_DIST}" "${CMAKE_COMMAND}" -E tar cf "${MKWAVEZ_WEB_ZIP}" --format=zip index.html assets
