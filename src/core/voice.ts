@@ -1,3 +1,4 @@
+import { DEFAULT_SYNTH, type OscSource, type SynthParams, type VoiceType } from './synth';
 import { axisLength, clampWindow, type Wavetable, type WavetableEdit, type WavetableId } from './wavetable';
 
 /**
@@ -8,6 +9,14 @@ import { axisLength, clampWindow, type Wavetable, type WavetableEdit, type Wavet
 export interface VoiceParams {
   readonly id: number;
   readonly name: string;
+  /**
+   * Signal path (see core/synth.ts): 'simple' = the original voice; 'synth' = two
+   * oscillators (A = this voice's wavetable / window / position, B = `synth.b`), sub, noise,
+   * filter, envelopes. The amp ADSR, level, mute and octave below apply to both.
+   */
+  readonly type: VoiceType;
+  /** Synth voice settings (kept, unused, on Simple voices). */
+  readonly synth: SynthParams;
   readonly wavetableId: WavetableId;
   /** Inclusive X window (slot indices). Unused on Rows (position spans each whole row). */
   readonly windowStart: number;
@@ -38,6 +47,8 @@ export interface VoiceParams {
 }
 
 export const DEFAULT_VOICE: Omit<VoiceParams, 'id' | 'name'> = {
+  type: 'simple',
+  synth: DEFAULT_SYNTH,
   wavetableId: 0,
   windowStart: 0,
   windowEnd: 0,
@@ -72,7 +83,7 @@ export function modulatedPosition(position: number, depth: number, lfoPhase: num
 }
 
 /** The voice's window as the playback mapping wants it. */
-export function voiceWindow(v: VoiceParams): { x0: number; x1: number; y0: number; y1: number } {
+export function voiceWindow(v: Pick<VoiceParams, 'windowStart' | 'windowEnd' | 'windowStartY' | 'windowEndY'>): { x0: number; x1: number; y0: number; y1: number } {
   return { x0: v.windowStart, x1: v.windowEnd, y0: v.windowStartY, y1: v.windowEndY };
 }
 
@@ -83,8 +94,53 @@ export function fullWindow(wt: Wavetable): Pick<VoiceParams, 'windowStart' | 'wi
   return { windowStart: 0, windowEnd: w - 1, windowStartY: 0, windowEndY: h - 1 };
 }
 
-/** Clamp a voice's windows to its wavetable (start <= end on each axis). */
+/** The window fields of a voice or an oscillator source. */
+type WindowFields = Pick<OscSource, 'wavetableId' | 'windowStart' | 'windowEnd' | 'windowStartY' | 'windowEndY'>;
+
+/** Clamp a voice's (osc A) windows to its wavetable (start <= end on each axis). */
 export function clampVoiceWindow(v: VoiceParams, wt: Wavetable): VoiceParams {
+  return clampSourceWindow(v, wt);
+}
+
+/** Osc B's source with its window clamped to `wt` (its wavetable); the same voice if unchanged. */
+export function clampOscB(v: VoiceParams, wt: Wavetable): VoiceParams {
+  const b = clampSourceWindow(v.synth.b, wt);
+  return b === v.synth.b ? v : { ...v, synth: { ...v.synth, b } };
+}
+
+/** Osc A's source (the voice's own wavetable / window / position). */
+export function oscASource(v: VoiceParams): OscSource {
+  return {
+    wavetableId: v.wavetableId,
+    windowStart: v.windowStart,
+    windowEnd: v.windowEnd,
+    windowStartY: v.windowStartY,
+    windowEndY: v.windowEndY,
+    position: v.position,
+    positionY: v.positionY,
+  };
+}
+
+/**
+ * A voice parameter change: top-level fields replace, `synth` fields merge into the voice's
+ * synth block (so a MIDI controller or a slider can change one synth parameter).
+ */
+export type VoicePatch = Partial<Omit<VoiceParams, 'synth'>> & { readonly synth?: Partial<SynthParams> };
+
+export function applyVoicePatch(v: VoiceParams, p: VoicePatch): VoiceParams {
+  if (!p.synth) return { ...v, ...(p as Partial<VoiceParams>) };
+  return { ...v, ...p, synth: { ...v.synth, ...p.synth } };
+}
+
+/** Merge two patches (the later wins; synth fields merge). */
+export function mergeVoicePatch(a: VoicePatch | undefined, b: VoicePatch): VoicePatch {
+  if (!a) return b;
+  const synth = a.synth && b.synth ? { ...a.synth, ...b.synth } : (b.synth ?? a.synth);
+  return synth ? { ...a, ...b, synth } : { ...a, ...b };
+}
+
+/** Clamp a window to a wavetable (start <= end on each axis); the same object if unchanged. */
+export function clampSourceWindow<S extends WindowFields>(v: S, wt: Wavetable): S {
   let xLen = 1;
   let yLen = 1;
   if (wt.shape === '1d') xLen = wt.rows[0]?.length ?? 0;
@@ -138,9 +194,9 @@ export function followEdit(voices: readonly VoiceParams[], before: Wavetable, ed
   const after = edit.wt;
   const oldLen = axisLength(before);
   const newLen = axisLength(after);
-  return voices.map((v) => {
+  const follow = <S extends WindowFields>(v: S): S => {
     if (v.wavetableId !== before.id) return v;
-    if (before.shape === '2d') return clampVoiceWindow(v, after);
+    if (before.shape === '2d') return clampSourceWindow(v, after);
     const y = before.shape === 'rows';
     let s = y ? v.windowStartY : v.windowStart;
     let e = y ? v.windowEndY : v.windowEnd;
@@ -149,9 +205,24 @@ export function followEdit(voices: readonly VoiceParams[], before: Wavetable, ed
     else [s, e] = remapWindowByMap(s, e, edit.map, oldLen, newLen);
     if (following && newLen > 0) e = newLen - 1;
     const next = y ? { ...v, windowStartY: s, windowEndY: e } : { ...v, windowStart: s, windowEnd: e };
-    const out = clampVoiceWindow(next, after);
+    const out = clampSourceWindow(next, after);
     return out.windowStart === v.windowStart && out.windowEnd === v.windowEnd && out.windowStartY === v.windowStartY && out.windowEndY === v.windowEndY
       ? v
       : out;
+  };
+  return voices.map((v) => {
+    const a = follow(v);
+    // Osc B (Synth voices; kept in step on Simple voices too) follows its own wavetable.
+    const b = v.synth ? follow(v.synth.b) : undefined;
+    if (!b || b === v.synth.b) return a;
+    return { ...a, synth: { ...a.synth, b } };
   });
+}
+
+/** A voice whose osc A or B wavetable is missing moves that oscillator to `tl` (whole window). */
+export function rehomeVoice(v: VoiceParams, has: (id: WavetableId) => boolean, tl: Wavetable): VoiceParams {
+  let out = v;
+  if (!has(v.wavetableId)) out = clampVoiceWindow({ ...out, wavetableId: tl.id, ...fullWindow(tl) }, tl);
+  if (out.synth && !has(out.synth.b.wavetableId)) out = { ...out, synth: { ...out.synth, b: clampSourceWindow({ ...out.synth.b, wavetableId: tl.id, ...fullWindow(tl) }, tl) } };
+  return out;
 }

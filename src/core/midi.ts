@@ -5,7 +5,8 @@
  * CC → parameter map (with learn). The per-voice note stack (last-note priority,
  * legato) lives in the engine (engine/noteStack.ts), next to the sequencer it overrides.
  */
-import type { VoiceParams } from './voice';
+import { CUTOFF_MAX, CUTOFF_MIN, type SynthParams } from './synth';
+import { mergeVoicePatch, type VoicePatch } from './voice';
 
 /** Pitch-bend range: full wheel = ± this many semitones. */
 export const BEND_RANGE_SEMITONES = 2;
@@ -262,7 +263,27 @@ export class MidiRouter {
 
 // ---- CC → parameter map ----
 
-export const CC_PARAMS = ['position', 'positionY', 'lfoDepth', 'lfoRate', 'level'] as const;
+/**
+ * Controller targets. The first five drive every voice (position / LFO depth / LFO rate are
+ * the Simple voice's; on a Synth voice position is osc A's); the rest are Synth voice
+ * parameters (on a Simple voice they set its stored synth settings, unheard until it
+ * becomes a Synth voice).
+ */
+export const CC_PARAMS = [
+  'position',
+  'positionY',
+  'lfoDepth',
+  'lfoRate',
+  'level',
+  'cutoff',
+  'resonance',
+  'drive',
+  'filterEnv',
+  'oscMix',
+  'subLevel',
+  'noiseLevel',
+  'glide',
+] as const;
 export type CcParam = (typeof CC_PARAMS)[number];
 
 export const CC_PARAM_LABELS: Readonly<Record<CcParam, string>> = {
@@ -271,13 +292,29 @@ export const CC_PARAM_LABELS: Readonly<Record<CcParam, string>> = {
   lfoDepth: 'LFO depth',
   lfoRate: 'LFO rate',
   level: 'Level',
+  cutoff: 'Cutoff',
+  resonance: 'Resonance',
+  drive: 'Drive',
+  filterEnv: 'Filter env amount',
+  oscMix: 'Osc A / B mix',
+  subLevel: 'Sub level',
+  noiseLevel: 'Noise level',
+  glide: 'Glide',
 };
+
+/** Targets that only Synth voices hear (the MIDI popover groups them). */
+export const CC_SYNTH_PARAMS: ReadonlySet<CcParam> = new Set(['cutoff', 'resonance', 'drive', 'filterEnv', 'oscMix', 'subLevel', 'noiseLevel', 'glide']);
 
 /** Parameter → controller number (0..119), or -1 = unassigned. */
 export type CcMap = Readonly<Record<CcParam, number>>;
 
-/** CC 1 (mod wheel) drives position X; position Y (2D / Rows wavetables) is unassigned until learned. */
-export const DEFAULT_CC_MAP: CcMap = { position: CC_MOD_WHEEL, positionY: -1, lfoDepth: -1, lfoRate: -1, level: -1 };
+const UNASSIGNED: CcMap = Object.fromEntries(CC_PARAMS.map((p) => [p, -1])) as Record<CcParam, number>;
+
+/** CC 1 (mod wheel) drives position X; everything else is unassigned until learned. */
+export const DEFAULT_CC_MAP: CcMap = { ...UNASSIGNED, position: CC_MOD_WHEEL };
+
+/** Longest glide a controller sets (seconds; quadratic taper). */
+export const CC_GLIDE_MAX = 2;
 
 const validCc = (cc: unknown): number =>
   typeof cc === 'number' && Number.isInteger(cc) && cc >= 0 && cc <= CC_MAX_ASSIGNABLE ? cc : -1;
@@ -298,21 +335,56 @@ export function assignCc(map: CcMap, param: CcParam, cc: number): CcMap {
 export function normalizeCcMap(x: unknown): CcMap {
   if (!x || typeof x !== 'object') return DEFAULT_CC_MAP;
   const o = x as Record<string, unknown>;
-  let map: CcMap = { position: -1, positionY: -1, lfoDepth: -1, lfoRate: -1, level: -1 };
+  let map: CcMap = UNASSIGNED;
   for (const p of CC_PARAMS) if (p in o) map = assignCc(map, p, validCc(o[p]));
   return map;
 }
 
-/** A 7-bit controller value → that parameter's value. LFO rate is exponential. */
+/**
+ * A 7-bit controller value → that parameter's value. LFO rate and cutoff are exponential,
+ * filter env amount bipolar (64 ≈ 0), glide quadratic; the rest linear 0..1.
+ */
 export function ccValue(param: CcParam, value: number): number {
   const x = Math.max(0, Math.min(127, value)) / 127;
-  if (param === 'lfoRate') return LFO_RATE_MIN * Math.pow(LFO_RATE_MAX / LFO_RATE_MIN, x);
-  return x;
+  switch (param) {
+    case 'lfoRate':
+      return LFO_RATE_MIN * Math.pow(LFO_RATE_MAX / LFO_RATE_MIN, x);
+    case 'cutoff':
+      return CUTOFF_MIN * Math.pow(CUTOFF_MAX / CUTOFF_MIN, x);
+    case 'filterEnv':
+      return x * 2 - 1;
+    case 'glide':
+      return CC_GLIDE_MAX * x * x;
+    default:
+      return x;
+  }
+}
+
+/** One target's change at controller value `value`. */
+function targetPatch(p: CcParam, value: number): VoicePatch {
+  const v = ccValue(p, value);
+  const synth = (s: Partial<SynthParams>): VoicePatch => ({ synth: s });
+  switch (p) {
+    case 'position':
+    case 'positionY':
+    case 'lfoDepth':
+    case 'lfoRate':
+    case 'level':
+      return { [p]: v };
+    case 'filterEnv':
+      return synth({ envAmount: v });
+    case 'oscMix':
+      // Crossfade: 0 = A only, 1 = B only.
+      return synth({ aLevel: 1 - v, bLevel: v });
+    default:
+      return synth({ [p]: v });
+  }
 }
 
 /** The voice-parameter change a controller move makes, or null if it is unmapped. */
-export function ccPatch(map: CcMap, cc: number, value: number): Partial<VoiceParams> | null {
-  let patch: Partial<Record<CcParam, number>> | null = null;
-  for (const p of CC_PARAMS) if (map[p] === cc) (patch ??= {})[p] = ccValue(p, value);
+export function ccPatch(map: CcMap, cc: number, value: number): VoicePatch | null {
+  let patch: VoicePatch | null = null;
+  for (const p of CC_PARAMS) if (map[p] === cc) patch = mergeVoicePatch(patch ?? undefined, targetPatch(p, value));
   return patch;
 }
+

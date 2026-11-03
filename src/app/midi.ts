@@ -17,7 +17,7 @@ import {
   type MidiRouting,
   type MidiVoiceEvent,
 } from '../core/midi';
-import type { VoiceParams } from '../core/voice';
+import { mergeVoicePatch, type VoicePatch } from '../core/voice';
 import type { AppModel } from './model';
 
 /** Input choice: 'off', 'all', or an input's id. */
@@ -44,7 +44,7 @@ export const MIDI_STORAGE_KEY = 'mkwavez.midi';
 /** Where routed MIDI goes: note / bend events and light param patches, both to the engine. */
 export interface MidiOutput {
   notes(events: readonly MidiVoiceEvent[]): void;
-  params(voiceId: number, patch: Partial<VoiceParams>): void;
+  params(voiceId: number, patch: VoicePatch): void;
 }
 
 /** 'settings' = input / Omni / CC map changed; 'learn' = learn target changed; 'activity' = a message arrived. */
@@ -72,7 +72,7 @@ export class MidiController {
   learn: CcParam | null = null;
   private listeners = new Map<MidiTopic, Set<() => void>>();
   /** CC patches not yet applied to the model (per voice), flushed once per `schedule` tick. */
-  private pending = new Map<number, Partial<VoiceParams>>();
+  private pending = new Map<number, VoicePatch>();
   private flushScheduled = false;
 
   constructor(
@@ -139,7 +139,7 @@ export class MidiController {
       if (!patch) continue;
       // The engine hears the knob now; the model (sliders, voice/set) catches up once per tick.
       this.out.params(ev.voiceId, patch);
-      this.pending.set(ev.voiceId, { ...this.pending.get(ev.voiceId), ...patch });
+      this.pending.set(ev.voiceId, mergeVoicePatch(this.pending.get(ev.voiceId), patch));
       if (!this.flushScheduled) {
         this.flushScheduled = true;
         this.schedule(() => this.flush());
@@ -154,7 +154,8 @@ export class MidiController {
     if (!this.pending.size) return;
     const pending = this.pending;
     this.pending = new Map();
-    for (const [id, patch] of pending) if (this.model.voice(id)) this.model.updateVoice(id, patch);
+    for (const [id, patch] of pending) if (this.model.voice(id)) this.model.updateVoice(id, patch, { undo: false });
+
   }
 
   private routing(): MidiRouting {

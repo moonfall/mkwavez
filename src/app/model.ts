@@ -9,7 +9,20 @@ import type { ModelState } from '../core/session';
 import { DEFAULT_STEP_LENGTH, emptySteps, isStepLength, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
-import { clampVoiceWindow, DEFAULT_VOICE, followEdit, fullWindow, voiceWindow, type VoiceParams } from '../core/voice';
+import { DEFAULT_SYNTH, SYNTH_AMP_DEFAULTS, type VoiceType } from '../core/synth';
+import {
+  applyVoicePatch,
+  clampOscB,
+  clampVoiceWindow,
+  DEFAULT_VOICE,
+  followEdit,
+  fullWindow,
+  oscASource,
+  rehomeVoice,
+  voiceWindow,
+  type VoicePatch,
+  type VoiceParams,
+} from '../core/voice';
 import {
   builtinWavetables,
   cellAt,
@@ -64,6 +77,13 @@ export const MAX_VOICES = 8;
 
 type Windows = Pick<VoiceParams, 'wavetableId' | 'windowStart' | 'windowEnd' | 'windowStartY' | 'windowEndY'>;
 const WINDOW_KEYS = ['windowStart', 'windowEnd', 'windowStartY', 'windowEndY'] as const;
+/**
+ * Voice fields the Synth voice panel edits: on a Synth voice an edit of any of them is an
+ * undo step (a slider drag is one), and undo restores them. A type switch is an undo step
+ * on any voice. (Simple voices' slider moves stay non-undoable, as before.)
+ */
+const SYNTH_UNDO_KEYS = ['type', 'synth', 'attack', 'decay', 'sustain', 'release', 'level', 'octave', 'position', 'positionY'] as const;
+type SynthSound = Pick<VoiceParams, (typeof SYNTH_UNDO_KEYS)[number]>;
 
 interface Snapshot {
   timeline: readonly WaveTable[];
@@ -71,6 +91,8 @@ interface Snapshot {
   wavetables: readonly Wavetable[];
   selectedId: TableId | null;
   windows: Map<number, Windows>;
+  /** Each voice's type, synth block and (restored on Synth voices) the shared params the Synth panel edits. */
+  sounds: Map<number, SynthSound>;
   steps: Map<number, readonly number[]>;
 }
 
@@ -340,20 +362,30 @@ export class AppModel {
 
   // ---- voices ----
 
-  /** Add a voice (on the Timeline unless `patch` says otherwise; window = whole wavetable). */
+  /**
+   * Add a voice (on the Timeline unless `patch` says otherwise; window = whole wavetable).
+   * A Synth voice (`type: 'synth'`) starts from the Init patch with osc B on osc A's
+   * wavetable and window (unless `patch.synth` says otherwise) and synth amp defaults.
+   */
   addVoice(patch: Partial<VoiceParams> = {}): VoiceParams | null {
     if (this.voices.length >= MAX_VOICES) return null;
     const id = this.nextVoiceId++;
     const wt = this.wavetable(patch.wavetableId ?? TIMELINE_WAVETABLE_ID) ?? this.wavetables[0];
+    const type: VoiceType = patch.type === 'synth' ? 'synth' : 'simple';
     let v: VoiceParams = {
       ...DEFAULT_VOICE,
+      ...(type === 'synth' ? SYNTH_AMP_DEFAULTS : {}),
       ...fullWindow(wt),
       ...patch,
+      type,
       wavetableId: wt.id,
       id,
       name: patch.name ?? `V${id}`,
     };
     v = clampVoiceWindow(v, wt);
+    if (!patch.synth) v = { ...v, synth: { ...DEFAULT_SYNTH, b: { ...oscASource(v), position: Math.min(1, v.position + 0.25) } } };
+    v = rehomeVoice(v, (x) => !!this.wavetable(x), this.wavetable(TIMELINE_WAVETABLE_ID)!);
+    v = clampOscB(v, this.wavetable(v.synth.b.wavetableId)!);
     this.voices = [...this.voices, v];
     this.emit('voices');
     return v;
@@ -364,23 +396,33 @@ export class AppModel {
    * be snapshotted too); a drag is one step until endGesture() or another action.
    * Switching wavetable (without an explicit window) selects the whole new wavetable.
    */
-  updateVoice(id: number, patch: Partial<VoiceParams>): void {
+  updateVoice(id: number, patch: VoicePatch, opts: { undo?: boolean } = {}): void {
     const windowEdit = WINDOW_KEYS.some((k) => k in patch);
     const v0 = this.voice(id);
     // Switching wavetable is an undo step (undo puts the voice back, window and all).
     const switching = !!v0 && patch.wavetableId !== undefined && patch.wavetableId !== v0.wavetableId && !!this.wavetable(patch.wavetableId);
+    // Synth voices: edits from the panel are undo steps (a drag is one, see endGesture); a
+    // type switch is one on any voice. MIDI controller moves pass `undo: false`.
+    const synthEdit =
+      !!v0 &&
+      opts.undo !== false &&
+      ((patch.type !== undefined && patch.type !== v0.type) || ((v0.type === 'synth' || patch.type === 'synth') && SYNTH_UNDO_KEYS.some((k) => k in patch)));
     if (switching) this.snapshot();
     else if (windowEdit && this.gestureKey !== `window:${id}`) {
       this.snapshot();
       this.gestureKey = `window:${id}`;
+    } else if (synthEdit && !windowEdit && this.gestureKey !== `synth:${id}`) {
+      this.snapshot();
+      this.gestureKey = `synth:${id}`;
     }
     let changed = false;
     this.voices = this.voices.map((v) => {
       if (v.id !== id) return v;
-      let next: VoiceParams = { ...v, ...patch, id };
+      let next: VoiceParams = { ...applyVoicePatch(v, patch), id };
       const wt = this.wavetable(next.wavetableId);
       if (!wt) return v;
       if (next.wavetableId !== v.wavetableId && !windowEdit) next = { ...next, ...fullWindow(wt) };
+      next = this.fixOscB(v, next, patch);
       const ordered = (a: 'windowStart' | 'windowStartY', b: 'windowEnd' | 'windowEndY') => {
         // Keep start <= end by pushing the other handle, not the one being dragged.
         if (next[a] > next[b]) next = b in patch && !(a in patch) ? { ...next, [a]: next[b] } : { ...next, [b]: next[a] };
@@ -392,7 +434,36 @@ export class AppModel {
       changed = true;
       return next;
     });
-    if (changed) this.emit('voices', ...(windowEdit || switching ? (['undo'] as Topic[]) : []));
+    if (changed) this.emit('voices', ...(windowEdit || switching || synthEdit ? (['undo'] as Topic[]) : []));
+  }
+
+  /**
+   * Osc B after an edit: a new wavetable selects all of it (unless the patch sets its
+   * window), the window is rounded, clamped and ordered (pushing the other handle), and a
+   * missing wavetable falls back to the Timeline.
+   */
+  private fixOscB(v: VoiceParams, next: VoiceParams, patch: VoicePatch): VoiceParams {
+    const pb = patch.synth?.b;
+    let b = next.synth.b;
+    if (b === v.synth.b) return next;
+    const bwt = this.wavetable(b.wavetableId);
+    if (!bwt) return rehomeVoice(next, (x) => !!this.wavetable(x), this.wavetable(TIMELINE_WAVETABLE_ID)!);
+    const old = v.synth.b;
+    const winEdit = !!pb && WINDOW_KEYS.some((k) => pb[k] !== old[k]);
+    if (b.wavetableId !== old.wavetableId && !winEdit) b = { ...b, ...fullWindow(bwt) };
+    b = { ...b, windowStart: Math.round(b.windowStart), windowEnd: Math.round(b.windowEnd), windowStartY: Math.round(b.windowStartY), windowEndY: Math.round(b.windowEndY) };
+    const xLen = bwt.shape === 'rows' ? 1 : Math.max(1, bwt.rows[0]?.length ?? 0);
+    const yLen = bwt.shape === '1d' ? 1 : Math.max(1, bwt.rows.length);
+    const c = (x: number, len: number) => Math.max(0, Math.min(len - 1, x));
+    b = { ...b, windowStart: c(b.windowStart, xLen), windowEnd: c(b.windowEnd, xLen), windowStartY: c(b.windowStartY, yLen), windowEndY: c(b.windowEndY, yLen) };
+    const ordered = (s: 'windowStart' | 'windowStartY', e: 'windowEnd' | 'windowEndY') => {
+      if (b[s] <= b[e]) return;
+      const movedEnd = pb && pb[e] !== old[e] && pb[s] === old[s];
+      b = movedEnd ? { ...b, [s]: b[e] } : { ...b, [e]: b[s] };
+    };
+    ordered('windowStart', 'windowEnd');
+    ordered('windowStartY', 'windowEndY');
+    return { ...next, synth: { ...next.synth, b } };
   }
 
   /** End a coalesced gesture (slider released). */
@@ -459,10 +530,10 @@ export class AppModel {
     return id;
   }
 
-  /** Voices whose wavetable is gone move to the Timeline (whole window). */
+  /** Voices whose wavetable (osc A or B) is gone move that oscillator to the Timeline (whole window). */
   private rehomeVoices(): void {
     const tl = this.wavetable(TIMELINE_WAVETABLE_ID)!;
-    this.voices = this.voices.map((v) => (this.wavetable(v.wavetableId) ? v : clampVoiceWindow({ ...v, wavetableId: tl.id, ...fullWindow(tl) }, tl)));
+    this.voices = this.voices.map((v) => rehomeVoice(v, (id) => !!this.wavetable(id), tl));
   }
 
   /** `base`, or `base 2`, `base 3`, … — the first name no wavetable has. */
@@ -660,6 +731,7 @@ export class AppModel {
       selectedId: this.selectedId,
       wavetables: this.wavetables,
       windows: new Map(this.voices.map((v) => [v.id, windowsOf(v)])),
+      sounds: new Map(this.voices.map((v) => [v.id, soundOf(v)])),
       steps: new Map(this.sequences.map((s) => [s.id, s.steps])),
     });
     if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift();
@@ -684,9 +756,14 @@ export class AppModel {
     // too); a voice whose wavetable no longer exists (an undone create) moves to the Timeline.
     this.voices = this.voices.map((v) => {
       const w = s.windows.get(v.id);
-      const next = w && this.wavetable(w.wavetableId) ? { ...v, ...w } : v;
+      let next = w && this.wavetable(w.wavetableId) ? { ...v, ...w } : v;
+      // Type and synth block always; the shared sound params only if it was a Synth voice.
+      const snd = s.sounds.get(next.id);
+      if (snd) next = snd.type === 'synth' ? { ...next, ...snd } : { ...next, type: snd.type, synth: snd.synth };
       const wt = this.wavetable(next.wavetableId);
-      return wt ? clampVoiceWindow(next, wt) : next;
+      if (wt) next = clampVoiceWindow(next, wt);
+      const bwt = this.wavetable(next.synth.b.wavetableId);
+      return bwt ? clampOscB(next, bwt) : next;
     });
     this.rehomeVoices();
     this.sequences = this.sequences.map((q) => {
@@ -702,7 +779,23 @@ export class AppModel {
   }
 }
 
+function soundOf(v: VoiceParams): SynthSound {
+  return {
+    type: v.type,
+    synth: v.synth,
+    attack: v.attack,
+    decay: v.decay,
+    sustain: v.sustain,
+    release: v.release,
+    level: v.level,
+    octave: v.octave,
+    position: v.position,
+    positionY: v.positionY,
+  };
+}
+
 function windowsOf(v: VoiceParams): Windows {
+
   return { wavetableId: v.wavetableId, windowStart: v.windowStart, windowEnd: v.windowEnd, windowStartY: v.windowStartY, windowEndY: v.windowEndY };
 }
 

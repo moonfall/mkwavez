@@ -2,17 +2,24 @@
  * The synth engine: everything that runs on the audio thread. No DOM, no WebAudio,
  * no allocation in process() (apart from Map lookups). The AudioWorklet is a thin
  * message adapter around this class; a native port would mirror it 1:1.
+ *
+ * Voices are Simple (one wavetable oscillator, position LFOs, amp ADSR: the original voice,
+ * rendered exactly as before) or Synth (engine/synthVoice.ts). Note handling, the amp
+ * envelope, pitch bend and the sequencer are shared; a type switch crossfades the two
+ * paths. The output is stereo: Simple voices are centred (identical left and right).
  */
-import { CONTROL_BLOCK, MIP_LENGTHS, MIP_OFFSETS } from '../constants';
+import { CONTROL_BLOCK } from '../constants';
 import { midiNoteFreq, type MidiVoiceEvent, velocityGain } from '../midi';
 import { mipLevelFor, type MipSet } from '../mipmap';
 import { noteFreq, type SequenceData, STEP_TICKS, stepLengthOf, stepSamples, TICKS_PER_BEAT } from '../sequence';
 import type { TableId } from '../table';
-import { DEFAULT_VOICE, modulatedPosition, type VoiceParams } from '../voice';
+import { applyVoicePatch, DEFAULT_VOICE, modulatedPosition, type VoicePatch, type VoiceParams } from '../voice';
 import type { WavetableId } from '../wavetable';
-import { Mix, resolveMix, type PackedWavetable } from '../wavetablePlayback';
+import type { PackedWavetable } from '../wavetablePlayback';
 import { Adsr } from './adsr';
 import { NoteStack } from './noteStack';
+import { freqPitch, SynthVoice } from './synthVoice';
+import { WtOsc } from './wtOsc';
 
 export const MASTER_GAIN = 0.22;
 
@@ -22,9 +29,10 @@ export const REMOVE_RELEASE_SEC = 0.012;
 /** Pitch-bend smoothing time constant (one-pole per control block, ramped within it). */
 export const BEND_SMOOTH_SEC = 0.004;
 
+/** Simple ↔ Synth switch of a sounding voice: the two paths crossfade over this long. */
+export const TYPE_FADE_SEC = 0.01;
+
 const IDLE = 0;
-/** Tables a voice can be crossfading at once: this block's mix (<= 4) plus earlier ones fading out. */
-const MAX_LIVE = 16;
 
 /**
  * Longest a mix change takes: weights move towards their targets at most 1 / this many
@@ -36,7 +44,8 @@ export const CROSSFADE_SEC = 0.006;
 class VoiceRuntime {
   params: VoiceParams;
   readonly env = new Adsr();
-  phase = 0;
+  /** The Simple voice's oscillator: its table mix, phase and mip level. */
+  readonly osc = new WtOsc();
   lfoPhase: number;
   freq = 110;
   gateRemaining = 0;
@@ -52,49 +61,45 @@ class VoiceRuntime {
   bendTo = 1;
   /** LFO on the Y position. */
   lfoPhaseY: number;
-  /** Modulated positions 0..1 and the coordinates they resolve to (for the UI). */
+  /** Modulated positions 0..1 (for the UI). */
   pos = 0;
   posY = 0;
-  index = 0;
-  indexY = 0;
-  mipLevel = 0;
-  /** Interpolation of the voice's wavetable at the last resolve. */
-  step = false;
-  /**
-   * Tables being mixed, tracked by table id (not wavetable index) so a wavetable re-index
-   * (eviction) never changes what is playing. Each entry's weight ramps linearly from
-   * w0 (block start) to w1 (block end): a table entering the mix ramps up from 0, one
-   * leaving ramps down to 0, so any window / table / position change is click-free.
-   */
-  n = 0;
-  ids = new Int32Array(MAX_LIVE);
-  tabs: (MipSet | null)[] = new Array<MipSet | null>(MAX_LIVE).fill(null);
-  w0 = new Float64Array(MAX_LIVE);
-  w1 = new Float64Array(MAX_LIVE);
-  /** Double buffers for building the next block's entries without allocating. */
-  nIds = new Int32Array(MAX_LIVE);
-  nTabs: (MipSet | null)[] = new Array<MipSet | null>(MAX_LIVE).fill(null);
-  nW0 = new Float64Array(MAX_LIVE);
-  nW1 = new Float64Array(MAX_LIVE);
-  readonly mix = new Mix();
-  readonly win = { x0: 0, x1: 0, y0: 0, y1: 0 };
-  /** Step mode: the held table (kept until the oscillator wraps) and the pending target. */
-  heldId: TableId = -1;
-  heldTable: MipSet | null = null;
-  targetId: TableId = -1;
   /** Fading out before removal. */
   removing = false;
+  /** The Synth path (allocated when the voice first becomes a Synth voice, then kept). */
+  syn: SynthVoice | null = null;
+  /** Simple (0) ↔ Synth (1) crossfade position. */
+  typeMix = 0;
 
   constructor(p: VoiceParams, sampleRate: number) {
     this.params = p;
     this.lfoPhase = p.lfoPhase;
     this.lfoPhaseY = p.lfoPhaseY;
     this.env.configure(p.attack, p.decay, p.sustain, p.release, sampleRate);
+    if (p.type === 'synth') {
+      this.syn = new SynthVoice(sampleRate, p.id, CONTROL_BLOCK);
+      this.typeMix = 1;
+    }
   }
 }
 
 /** Clock ticks per eighth note: the clock's accumulator advances per eighth (see SynthEngine.process). */
 const TICKS_PER_EIGHTH = TICKS_PER_BEAT / 2;
+
+export interface VoiceStatus {
+  id: number;
+  pos: number;
+  posY: number;
+  index: number;
+  y: number;
+  env: number;
+  note: number;
+  /** Synth voices: osc B's position and resolved coordinates (else equal to A's). */
+  posB: number;
+  posYB: number;
+  indexB: number;
+  yB: number;
+}
 
 export interface EngineStatus {
   /** Shared clock: ticks since the transport started (TICKS_PER_BEAT per beat; -1 before the first). */
@@ -103,9 +108,10 @@ export interface EngineStatus {
   /**
    * Per voice: modulated positions (pos, posY: 0..1), the coordinates they resolve to in
    * the wavetable (index = x along the row, y = row; the chosen cell in Step), envelope
-   * level, and `note`: the MIDI note it plays (top of its held stack), or -1.
+   * level, and `note`: the MIDI note it plays (top of its held stack), or -1. Synth voices
+   * report osc A there and osc B in posB / posYB / indexB / yB.
    */
-  voices: { id: number; pos: number; posY: number; index: number; y: number; env: number; note: number }[];
+  voices: VoiceStatus[];
 }
 
 export class SynthEngine {
@@ -128,11 +134,18 @@ export class SynthEngine {
   private readonly bendCoef: number;
   /** Largest weight change per control block (see CROSSFADE_SEC). */
   private readonly slew: number;
+  /** Simple ↔ Synth crossfade step per sample. */
+  private readonly typeStep: number;
+  private readonly glideCoef = (sec: number): number => 1 - Math.exp(-CONTROL_BLOCK / (Math.max(1e-4, sec / 4) * this.sampleRate));
+  /** Per-voice stereo output of the sample being rendered (renderMixed). */
+  private outL = 0;
+  private outR = 0;
 
   constructor(sampleRate: number) {
     this.sampleRate = sampleRate;
     this.bendCoef = 1 - Math.exp(-CONTROL_BLOCK / (BEND_SMOOTH_SEC * sampleRate));
     this.slew = CONTROL_BLOCK / (CROSSFADE_SEC * sampleRate);
+    this.typeStep = 1 / (TYPE_FADE_SEC * sampleRate);
   }
 
   // ---- state commands (called between process() calls) ----
@@ -173,8 +186,18 @@ export class SynthEngine {
       }
       return;
     }
+    this.applyParams(v, p);
+  }
+
+  private applyParams(v: VoiceRuntime, p: VoiceParams): void {
     v.params = p;
     v.env.configure(p.attack, p.decay, p.sustain, p.release, this.sampleRate);
+    if (p.type === 'synth' && !v.syn) {
+      // Becoming a Synth voice: start its path at the current note (then crossfade in).
+      const syn = new SynthVoice(this.sampleRate, p.id, CONTROL_BLOCK);
+      syn.noteOn(p, freqPitch(v.freq), 1, false, v.env.stage !== IDLE, false);
+      v.syn = syn;
+    }
   }
 
   /** Fade the voice out with a short release, then drop it (see control()). */
@@ -185,7 +208,7 @@ export class SynthEngine {
     v.gateRemaining = 0;
     const p = v.params;
     v.env.configure(p.attack, p.decay, p.sustain, REMOVE_RELEASE_SEC, this.sampleRate);
-    v.env.gateOff();
+    this.gateOff(v);
   }
 
   /** Voices still allocated (including ones fading out). */
@@ -211,8 +234,22 @@ export class SynthEngine {
       this.sub = 0;
     }
     // Stopping releases sequencer notes; held MIDI keys keep sounding.
-    if (!playing && this.playing) for (const v of this.voices) if (!v.notes.size) v.env.gateOff();
+    if (!playing && this.playing) for (const v of this.voices) if (!v.notes.size) this.gateOff(v);
     this.playing = playing;
+  }
+
+  /** Release the amp envelope (and the Synth path's envelopes). */
+  private gateOff(v: VoiceRuntime): void {
+    v.env.gateOff();
+    v.syn?.gateOff();
+  }
+
+  /**
+   * Start a note on the Synth path (if any): pitch, velocity, glide, envelope retrigger.
+   * Call before the amp envelope's gateOn (glide needs to know whether it was sounding).
+   */
+  private synthNote(v: VoiceRuntime, vel: number, legato: boolean, retrigger: boolean): void {
+    if (v.syn) v.syn.noteOn(v.params, freqPitch(v.freq), vel, legato, retrigger, v.env.stage !== IDLE);
   }
 
   /** A sequencer note (full velocity, gated). Ignored while MIDI keys are held on the voice. */
@@ -222,6 +259,7 @@ export class SynthEngine {
     v.freq = freq;
     v.vel = 1;
     v.gateRemaining = Math.max(1, Math.round(gateSamples));
+    this.synthNote(v, 1, false, true);
     v.env.gateOn();
     this.resolvePitch(v);
   }
@@ -237,10 +275,12 @@ export class SynthEngine {
     if (velocity <= 0) return this.midiNoteOff(voiceId, note);
     const v = this.findVoice(voiceId);
     if (!v) return;
+    const legato = v.notes.size > 0;
     v.notes.push(note, velocity);
     v.freq = midiNoteFreq(note, v.params.octave);
     v.vel = velocityGain(velocity);
     v.gateRemaining = 0;
+    this.synthNote(v, Math.min(127, velocity) / 127, legato, true);
     v.env.gateOn();
     this.resolvePitch(v);
   }
@@ -257,10 +297,11 @@ export class SynthEngine {
     // Still held by another channel / input (Omni): nothing changes.
     if (!v.notes.remove(note)) return;
     if (!v.notes.size) {
-      v.env.gateOff();
+      this.gateOff(v);
     } else if (wasTop) {
       v.freq = midiNoteFreq(v.notes.top, v.params.octave);
       v.vel = velocityGain(v.notes.topVelocity);
+      this.synthNote(v, v.notes.topVelocity / 127, true, false);
       this.resolvePitch(v);
     }
   }
@@ -270,17 +311,17 @@ export class SynthEngine {
     for (const v of this.voices) {
       if (v.removing || (voiceId >= 0 && v.params.id !== voiceId) || !v.notes.size) continue;
       v.notes.clear();
-      v.env.gateOff();
+      this.gateOff(v);
     }
   }
 
   /**
-   * MIDI-controller parameter change (position, LFO, level): merged into the voice's
-   * params without a full voice/set (the main thread's model catches up at frame rate).
+   * MIDI-controller parameter change (position, LFO, level, synth params): merged into the
+   * voice's params without a full voice/set (the main thread's model catches up at frame rate).
    */
-  patchVoice(voiceId: number, patch: Partial<VoiceParams>): void {
+  patchVoice(voiceId: number, patch: VoicePatch): void {
     const v = this.findVoice(voiceId);
-    if (v) v.params = { ...v.params, ...patch, id: v.params.id };
+    if (v) this.applyParams(v, { ...applyVoicePatch(v.params, patch), id: v.params.id });
   }
 
   /** Pitch bend in semitones (smoothed: no zipper noise). Applies to sequencer notes too. */
@@ -308,12 +349,25 @@ export class SynthEngine {
     out.voices.length = this.voices.length;
     for (let i = 0; i < this.voices.length; i++) {
       const v = this.voices[i];
-      const o = out.voices[i] ?? (out.voices[i] = { id: 0, pos: 0, posY: 0, index: 0, y: 0, env: 0, note: -1 });
+      const o =
+        out.voices[i] ?? (out.voices[i] = { id: 0, pos: 0, posY: 0, index: 0, y: 0, env: 0, note: -1, posB: 0, posYB: 0, indexB: 0, yB: 0 });
       o.id = v.params.id;
-      o.pos = v.pos;
-      o.posY = v.posY;
-      o.index = v.index;
-      o.y = v.indexY;
+      const syn = v.params.type === 'synth' ? v.syn : null;
+      if (syn) {
+        o.pos = syn.posA;
+        o.posY = syn.posYA;
+        o.index = syn.a.index;
+        o.y = syn.a.indexY;
+        o.posB = syn.posB;
+        o.posYB = syn.posYB;
+        o.indexB = syn.b.index;
+        o.yB = syn.b.indexY;
+      } else {
+        o.pos = o.posB = v.pos;
+        o.posY = o.posYB = v.posY;
+        o.index = o.indexB = v.osc.index;
+        o.y = o.yB = v.osc.indexY;
+      }
       o.env = v.env.value;
       o.note = v.notes.top;
     }
@@ -323,7 +377,8 @@ export class SynthEngine {
   // ---- audio ----
 
   /**
-   * Render `frames` mono samples into out[0..frames).
+   * Render `frames` samples: stereo into out (left) and outR (right), or, without outR,
+   * the mono sum ((L + R) / 2) into out. Simple voices are identical in both channels.
    *
    * The sequencer clock: one fractional sample accumulator per eighth note (exactly the
    * arithmetic the eighth-note-only sequencer used, so 1/8 sequences fire on the same
@@ -332,7 +387,7 @@ export class SynthEngine {
    * counted from the transport start, so different step lengths stay bar-aligned and a
    * step length change takes effect on the next boundary of the new grid.
    */
-  process(out: Float32Array, frames: number): void {
+  process(out: Float32Array, frames: number, outR?: Float32Array): void {
     const sr = this.sampleRate;
     const eighthLen = stepSamples(this.bpm, sr, '1/8');
     for (let i = 0; i < frames; i++) {
@@ -359,11 +414,24 @@ export class SynthEngine {
         this.toNext--;
       }
 
-      let mix = 0;
+      let left = 0;
+      let right = 0;
       for (let k = 0; k < this.voices.length; k++) {
-        mix += this.renderVoiceSample(this.voices[k], blockT, sr);
+        const v = this.voices[k];
+        if (v.syn === null || (v.typeMix === 0 && v.params.type !== 'synth')) {
+          const s = this.renderVoiceSample(v, blockT, sr);
+          left += s;
+          right += s;
+        } else {
+          this.renderMixed(v, blockT, sr);
+          left += this.outL;
+          right += this.outR;
+        }
       }
-      out[i] = mix * MASTER_GAIN;
+      if (outR) {
+        out[i] = left * MASTER_GAIN;
+        outR[i] = right * MASTER_GAIN;
+      } else out[i] = (left + right) * 0.5 * MASTER_GAIN;
     }
   }
 
@@ -398,169 +466,85 @@ export class SynthEngine {
         v.bendFrom = v.bendTo;
         v.bendTo = Math.pow(2, v.bendSemis / 12);
       }
-      this.resolve(v);
+      const synthOnly = v.params.type === 'synth' && v.typeMix === 1;
+      if (!synthOnly) this.resolve(v);
+      if (v.syn && (v.params.type === 'synth' || v.typeMix > 0)) this.controlSynth(v, blockLen);
     }
+  }
+
+  private controlSynth(v: VoiceRuntime, blockLen: number): void {
+    const p = v.params;
+    const s = p.synth;
+    const gainTarget = p.mute ? 0 : p.level * (1 - s.velAmp + s.velAmp * v.vel);
+    v.syn!.control(p, v.bendSemis, blockLen, this.tables, this.wavetables.get(p.wavetableId), this.wavetables.get(s.b.wavetableId), this.slew, this.glideCoef, gainTarget);
   }
 
   /** Mip level for the voice's current pitch (a new note mid-block keeps the block's mix). */
   private resolvePitch(v: VoiceRuntime): void {
-    v.mipLevel = mipLevelFor(v.freq * Math.max(v.bendFrom, v.bendTo), this.sampleRate);
-    if (v.n === 0) this.resolve(v);
+    v.osc.mipLevel = mipLevelFor(v.freq * Math.max(v.bendFrom, v.bendTo), this.sampleRate);
+    if (v.osc.n === 0) this.resolve(v);
   }
 
-  /** Recompute positions, mip level and this block's table mix for a voice. */
+  /** Recompute positions, mip level and this block's table mix for a (Simple) voice. */
   private resolve(v: VoiceRuntime): void {
     const p = v.params;
     const wt = this.wavetables.get(p.wavetableId);
     v.pos = modulatedPosition(p.position, p.lfoDepth, v.lfoPhase);
     v.posY = modulatedPosition(p.positionY, p.lfoDepthY, v.lfoPhaseY);
-    v.mipLevel = mipLevelFor(v.freq * Math.max(v.bendFrom, v.bendTo), this.sampleRate);
+    v.osc.mipLevel = mipLevelFor(v.freq * Math.max(v.bendFrom, v.bendTo), this.sampleRate);
     // The previous block's end weights are this block's start weights.
-    this.hold(v);
+    v.osc.hold();
     if (!wt) return;
-    const win = v.win;
-    win.x0 = p.windowStart;
-    win.x1 = p.windowEnd;
-    win.y0 = p.windowStartY;
-    win.y1 = p.windowEndY;
-    v.step = wt.interp === 'step';
-    const mix = resolveMix(wt, win, v.pos, v.posY, v.step, v.mix);
-    if (mix.n === 0) return; // nothing to address: keep whatever was playing
-    v.index = mix.x;
-    v.indexY = mix.y;
-    if (v.step) {
-      v.targetId = mix.ids[0];
-      if (v.heldId < 0) {
-        // Switched from Blend while sounding: keep the current mix until the phase wraps
-        // (renderVoiceSample takes the target there), so the change is click-free.
-        if (v.n > 0) return;
-        v.heldId = v.targetId;
-      }
-      // Late-arriving table: pick it up; otherwise keep the previous pointer.
-      const t = this.tables.get(v.heldId);
-      if (t) v.heldTable = t;
-      if (!v.heldTable) return;
-      for (let k = 1; k < v.n; k++) v.tabs[k] = null;
-      v.n = 1;
-      v.ids[0] = v.heldId;
-      v.tabs[0] = v.heldTable;
-      v.w0[0] = v.w1[0] = 1;
-      return;
-    }
-    v.heldId = v.targetId = -1;
-    v.heldTable = null;
-    // Tables that haven't arrived yet drop out (the rest renormalised); none: hold.
-    let total = 0;
-    let missing = false;
-    for (let k = 0; k < mix.n; k++) {
-      if (this.tables.has(mix.ids[k])) total += mix.w[k];
-      else missing = true;
-    }
-    if (total <= 0) return;
-    const norm = missing ? 1 / total : 1;
-    const first = v.n === 0;
-    let m = 0;
-    // Entries already playing ramp from their weight to the new one (0 if leaving).
-    for (let k = 0; k < v.n; k++) {
-      const id = v.ids[k];
-      let w = 0;
-      for (let j = 0; j < mix.n; j++) if (mix.ids[j] === id) w = mix.w[j] * norm;
-      if (w === 0 && v.w0[k] === 0) continue;
-      v.nIds[m] = id;
-      v.nTabs[m] = v.tabs[k];
-      v.nW0[m] = v.w0[k];
-      v.nW1[m] = w;
-      m++;
-    }
-    // New entries ramp up from 0 (start at their weight on the voice's first resolve).
-    for (let j = 0; j < mix.n && m < MAX_LIVE; j++) {
-      const id = mix.ids[j];
-      const t = this.tables.get(id);
-      if (!t) continue;
-      let known = false;
-      for (let k = 0; k < m; k++) if (v.nIds[k] === id) known = true;
-      if (known) continue;
-      const w = mix.w[j] * norm;
-      v.nIds[m] = id;
-      v.nTabs[m] = t;
-      v.nW0[m] = first ? w : 0;
-      v.nW1[m] = w;
-      m++;
-    }
-    // Slew-limit: scale every entry's step by the same factor (the weights keep summing to 1).
-    let maxDiff = 0;
-    for (let k = 0; k < m; k++) maxDiff = Math.max(maxDiff, Math.abs(v.nW1[k] - v.nW0[k]));
-    if (maxDiff > this.slew) {
-      const f = this.slew / maxDiff;
-      for (let k = 0; k < m; k++) v.nW1[k] = v.nW0[k] + (v.nW1[k] - v.nW0[k]) * f;
-    }
-    this.swap(v, m);
+    v.osc.resolve(this.tables, wt, p.windowStart, p.windowEnd, p.windowStartY, p.windowEndY, v.pos, v.posY, this.slew);
   }
 
-  /** Keep the current mix without ramping (block start = previous block end). */
-  private hold(v: VoiceRuntime): void {
-    for (let k = 0; k < v.n; k++) v.w0[k] = v.w1[k];
-  }
-
-  private swap(v: VoiceRuntime, m: number): void {
-    const ids = v.ids;
-    const tabs = v.tabs;
-    const w0 = v.w0;
-    const w1 = v.w1;
-    v.ids = v.nIds;
-    v.tabs = v.nTabs;
-    v.w0 = v.nW0;
-    v.w1 = v.nW1;
-    v.nIds = ids;
-    v.nTabs = tabs;
-    v.nW0 = w0;
-    v.nW1 = w1;
-    for (let k = 0; k < MAX_LIVE; k++) v.nTabs[k] = null;
-    for (let k = m; k < MAX_LIVE; k++) v.tabs[k] = null;
-    v.n = m;
-  }
-
+  /** The Simple voice: gate countdown, amp envelope, then its oscillator. */
   private renderVoiceSample(v: VoiceRuntime, blockT: number, sr: number): number {
-    if (v.gateRemaining > 0 && --v.gateRemaining === 0) v.env.gateOff();
+    if (v.gateRemaining > 0 && --v.gateRemaining === 0) this.gateOff(v);
     const e = v.env.next();
+    return this.simpleSample(v, e, blockT, sr);
+  }
+
+  private simpleSample(v: VoiceRuntime, e: number, blockT: number, sr: number): number {
     const target = v.params.mute ? 0 : v.params.level * v.vel;
     v.gain += (target - v.gain) * 0.002;
-
+    const o = v.osc;
     let out = 0;
-    if (e > 0 && v.n > 0) {
-      const off = MIP_OFFSETS[v.mipLevel];
-      const len = MIP_LENGTHS[v.mipLevel];
-      const x = v.phase * len;
-      const k = x | 0;
-      const fr = x - k;
-      const k1 = off + k;
-      const k2 = k + 1 === len ? off : k1 + 1;
-      for (let j = 0; j < v.n; j++) {
-        const T = v.tabs[j]!;
-        const a0 = T[k1];
-        const w = v.w0[j] + (v.w1[j] - v.w0[j]) * blockT;
-        out += (a0 + (T[k2] - a0) * fr) * w;
-      }
+    if (e > 0 && o.n > 0) {
+      out = o.read(o.phase, blockT);
       out *= e * v.gain;
     }
-
-    v.phase += (v.freq * (v.bendFrom + (v.bendTo - v.bendFrom) * blockT)) / sr;
-    if (v.phase >= 1) {
-      v.phase -= Math.floor(v.phase);
-      if (v.step && v.targetId >= 0 && v.heldId !== v.targetId) {
-        const t = this.tables.get(v.targetId);
-        if (t) {
-          v.heldId = v.targetId;
-          v.heldTable = t;
-          for (let j = 1; j < v.n; j++) v.tabs[j] = null;
-          v.n = 1;
-          v.ids[0] = v.heldId;
-          v.tabs[0] = t;
-          v.w0[0] = v.w1[0] = 1;
-        }
-      }
+    o.phase += (v.freq * (v.bendFrom + (v.bendTo - v.bendFrom) * blockT)) / sr;
+    if (o.phase >= 1) {
+      o.phase -= Math.floor(o.phase);
+      o.wrapped(this.tables);
     }
     return out;
+  }
+
+  /**
+   * A Synth voice (or one crossfading between Simple and Synth): stereo into outL / outR.
+   * The amp envelope and gate are shared by both paths.
+   */
+  private renderMixed(v: VoiceRuntime, blockT: number, sr: number): void {
+    if (v.gateRemaining > 0 && --v.gateRemaining === 0) this.gateOff(v);
+    const e = v.env.next();
+    const target = v.params.type === 'synth' ? 1 : 0;
+    if (v.typeMix < target) v.typeMix = Math.min(1, v.typeMix + this.typeStep);
+    else if (v.typeMix > target) v.typeMix = Math.max(0, v.typeMix - this.typeStep);
+    const m = v.typeMix;
+    const syn = v.syn!;
+    let simple = 0;
+    if (m < 1) simple = this.simpleSample(v, e, blockT, sr) * (1 - m);
+    let l = simple;
+    let r = simple;
+    if (m > 0) {
+      const y = syn.render(v.params, e, blockT, this.tables) * m;
+      l += y * (syn.panL0 + (syn.panL1 - syn.panL0) * blockT);
+      r += y * (syn.panR0 + (syn.panR1 - syn.panR0) * blockT);
+    }
+    this.outL = l;
+    this.outR = r;
   }
 }
 

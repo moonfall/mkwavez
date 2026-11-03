@@ -33,6 +33,33 @@ export function playingMix(model: AppModel, bridge: AudioBridge, v: VoiceParams,
   return resolveMix(packedOf(wt), voiceWindow(v), p.x, p.y, wt.interp === 'step', out);
 }
 
+/**
+ * A Synth voice's oscillator as a voice-shaped view (wavetable, window, position; no
+ * position LFO: Synth voices don't use the Simple voice's LFOs), for the pad and scope.
+ */
+export function oscView(v: VoiceParams, osc: 'a' | 'b'): VoiceParams {
+  const src = osc === 'b' ? v.synth.b : v;
+  return { ...v, ...(osc === 'b' ? src : {}), lfoDepth: 0, lfoDepthY: 0 };
+}
+
+/** Where a Synth voice's oscillator plays: live (status) while the transport runs, else its sliders. */
+export function oscPositions(model: AppModel, bridge: AudioBridge, v: VoiceParams, osc: 'a' | 'b'): { x: number; y: number; live: boolean } {
+  const src = osc === 'b' ? v.synth.b : v;
+  const st = model.playing ? bridge.status.voices.find((s) => s.id === v.id) : undefined;
+  if (st && st.posB !== undefined) return osc === 'b' ? { x: st.posB, y: st.posYB, live: true } : { x: st.pos, y: st.posY, live: true };
+  return { x: src.position, y: src.positionY, live: false };
+}
+
+/** Tables (and weights) a Synth voice's oscillator plays, resolved as the engine does. */
+export function oscMix(model: AppModel, bridge: AudioBridge, v: VoiceParams, osc: 'a' | 'b', out = new Mix()): Mix {
+  out.n = 0;
+  const src = osc === 'b' ? v.synth.b : v;
+  const wt = model.wavetable(src.wavetableId);
+  if (!wt) return out;
+  const p = oscPositions(model, bridge, v, osc);
+  return resolveMix(packedOf(wt), voiceWindow(src), p.x, p.y, wt.interp === 'step', out);
+}
+
 /** The table with the largest weight in a mix (-1 if none). */
 export function dominantId(m: Mix): number {
   let best = -1;

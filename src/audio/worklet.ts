@@ -75,8 +75,11 @@ class EngineProcessor extends AudioWorkletProcessor {
     const out = outputs[0];
     const ch0 = out?.[0];
     if (!ch0) return true;
-    this.engine.process(ch0, ch0.length);
-    for (let c = 1; c < out.length; c++) out[c].set(ch0);
+    // Stereo (the node has 2 output channels); a mono output gets the (L + R) / 2 sum.
+    const ch1 = out[1];
+    if (ch1) this.engine.process(ch0, ch0.length, ch1);
+    else this.engine.process(ch0, ch0.length);
+    for (let c = 2; c < out.length; c++) out[c].set(c % 2 ? ch1 : ch0);
     this.statusCountdown -= ch0.length;
     if (this.statusCountdown <= 0) {
       this.statusCountdown = sampleRate / STATUS_HZ;

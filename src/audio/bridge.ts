@@ -8,7 +8,7 @@ import { emptyStatus, type EngineStatus } from '../core/engine/engine';
 import type { MidiVoiceEvent } from '../core/midi';
 import { buildMipSet } from '../core/mipmap';
 import type { TableId, WaveTable } from '../core/table';
-import type { VoiceParams } from '../core/voice';
+import type { VoicePatch } from '../core/voice';
 import type { Wavetable } from '../core/wavetable';
 import { packWavetable } from '../core/wavetablePlayback';
 import { PROCESSOR_NAME, type FromWorklet, type ToWorklet } from './protocol';
@@ -253,7 +253,7 @@ export class AudioBridge {
   }
 
   /** Light per-voice param change (MIDI CCs); the model's voice/set follows at frame rate. */
-  patchVoice(id: number, patch: Partial<VoiceParams>): void {
+  patchVoice(id: number, patch: VoicePatch): void {
     if (this.sentVoices.has(id)) this.post({ type: 'voice/patch', id, patch });
   }
 

@@ -1,0 +1,246 @@
+/**
+ * Synth voice parameters: plain data (shared verbatim between UI, engine, sessions and
+ * presets), defaults and validation. A voice's `type` picks its signal path:
+ *
+ *  - 'simple': the original voice (one wavetable oscillator with position LFOs and an
+ *    amplitude ADSR). Every voice saved before Synth voices existed is Simple, and sounds
+ *    exactly as it did.
+ *  - 'synth': two wavetable oscillators (A: the voice's own wavetable / window / position;
+ *    B: `synth.b`), sub oscillator, noise, ring modulation → multimode filter → amp, with
+ *    filter / pitch envelopes, glide and pan (see engine/synthVoice.ts).
+ *
+ * Every voice carries a `synth` block (Simple voices keep it, unused), so switching a voice's
+ * type keeps its synth settings.
+ */
+
+export type VoiceType = 'simple' | 'synth';
+export const VOICE_TYPES: readonly VoiceType[] = ['simple', 'synth'];
+
+/** LP12 / HP / BP / notch: one zero-delay-feedback SVF; LP24: two cascaded. */
+export type FilterMode = 'lp12' | 'lp24' | 'hp' | 'bp' | 'notch';
+export const FILTER_MODES: readonly FilterMode[] = ['lp12', 'lp24', 'hp', 'bp', 'notch'];
+export const FILTER_MODE_LABELS: Readonly<Record<FilterMode, string>> = { lp12: 'LP12', lp24: 'LP24', hp: 'HP', bp: 'BP', notch: 'Notch' };
+
+export type SubWave = 'sine' | 'square';
+export const SUB_WAVES: readonly SubWave[] = ['sine', 'square'];
+export type NoiseType = 'white' | 'pink';
+export const NOISE_TYPES: readonly NoiseType[] = ['white', 'pink'];
+/** Which oscillator(s) the pitch envelope bends. */
+export type PitchTarget = 'a' | 'b' | 'ab';
+export const PITCH_TARGETS: readonly PitchTarget[] = ['a', 'b', 'ab'];
+
+/** Where an oscillator reads: a wavetable, an inclusive X / Y window and a position (0..1) per axis. */
+export interface OscSource {
+  readonly wavetableId: number;
+  readonly windowStart: number;
+  readonly windowEnd: number;
+  readonly windowStartY: number;
+  readonly windowEndY: number;
+  readonly position: number;
+  readonly positionY: number;
+}
+
+export const OSC_SOURCE_KEYS = ['wavetableId', 'windowStart', 'windowEnd', 'windowStartY', 'windowEndY', 'position', 'positionY'] as const;
+
+export interface SynthParams {
+  /** Osc A (reads the voice's own wavetable / window / position): octave ±3, coarse ±24 st, fine ±100 cents, level 0..1. */
+  readonly aOct: number;
+  readonly aCoarse: number;
+  readonly aFine: number;
+  readonly aLevel: number;
+  /** Osc B: its own wavetable / window / position, and tuning / level like A. */
+  readonly b: OscSource;
+  readonly bOct: number;
+  readonly bCoarse: number;
+  readonly bFine: number;
+  readonly bLevel: number;
+  /** Sub oscillator: 1 or 2 octaves below osc A. */
+  readonly subWave: SubWave;
+  readonly subOct: number;
+  readonly subLevel: number;
+  /** Seeded noise (deterministic per voice). */
+  readonly noiseType: NoiseType;
+  readonly noiseLevel: number;
+  /** Ring modulation A × B. */
+  readonly ringLevel: number;
+  /** Filter: cutoff in Hz; resonance 0..1 (1 = near self-oscillation); drive 0..1. */
+  readonly filterMode: FilterMode;
+  readonly cutoff: number;
+  readonly resonance: number;
+  readonly drive: number;
+  /** Key tracking 0..1 (1 = the cutoff follows the note 1:1, around middle C). */
+  readonly keyTrack: number;
+  /** Filter envelope amount −1..1 (± FILTER_ENV_OCTAVES octaves). */
+  readonly envAmount: number;
+  /** Velocity → cutoff 0..1: softer notes close the filter by up to FILTER_VEL_OCTAVES octaves. */
+  readonly velAmount: number;
+  /** Filter ADSR (seconds, seconds, 0..1, seconds). */
+  readonly fAttack: number;
+  readonly fDecay: number;
+  readonly fSustain: number;
+  readonly fRelease: number;
+  /** Pitch envelope: attack / decay (seconds), amount −24..24 semitones at its peak, target osc(s). */
+  readonly pAttack: number;
+  readonly pDecay: number;
+  readonly pAmount: number;
+  readonly pTarget: PitchTarget;
+  /** Velocity → amplitude 0..1 (0: every note at full level; 1: the Simple voice's velocity curve). */
+  readonly velAmp: number;
+  /** Portamento time (seconds, 0 = off); legato only: glide only between overlapping notes. */
+  readonly glide: number;
+  readonly glideLegato: boolean;
+  /** Pitch-bend range in semitones (full wheel). */
+  readonly bendRange: number;
+  /** Stereo position −1 (left) .. 1 (right). */
+  readonly pan: number;
+}
+
+/** Filter envelope amount 1 = this many octaves. */
+export const FILTER_ENV_OCTAVES = 6;
+/** Velocity amount 1: velocity 0 closes the cutoff by this many octaves (velocity 127: none). */
+export const FILTER_VEL_OCTAVES = 4;
+export const CUTOFF_MIN = 20;
+export const CUTOFF_MAX = 20000;
+
+export const DEFAULT_SOURCE: OscSource = {
+  wavetableId: 0,
+  windowStart: 0,
+  windowEnd: 0,
+  windowStartY: 0,
+  windowEndY: 0,
+  position: 0.5,
+  positionY: 0.5,
+};
+
+/** The Init patch. */
+export const DEFAULT_SYNTH: SynthParams = {
+  aOct: 0,
+  aCoarse: 0,
+  aFine: 0,
+  aLevel: 0.8,
+  b: DEFAULT_SOURCE,
+  bOct: 0,
+  bCoarse: 0,
+  bFine: 7,
+  bLevel: 0,
+  subWave: 'sine',
+  subOct: 1,
+  subLevel: 0,
+  noiseType: 'white',
+  noiseLevel: 0,
+  ringLevel: 0,
+  filterMode: 'lp24',
+  cutoff: 2400,
+  resonance: 0.15,
+  drive: 0,
+  keyTrack: 0.5,
+  envAmount: 0.3,
+  velAmount: 0.3,
+  fAttack: 0.004,
+  fDecay: 0.45,
+  fSustain: 0.35,
+  fRelease: 0.3,
+  pAttack: 0.001,
+  pDecay: 0.08,
+  pAmount: 0,
+  pTarget: 'ab',
+  velAmp: 0.7,
+  glide: 0,
+  glideLegato: true,
+  bendRange: 2,
+  pan: 0,
+};
+
+/** Amp ADSR of a new Synth voice (Simple voices keep their own defaults). */
+export const SYNTH_AMP_DEFAULTS = { attack: 0.004, decay: 0.4, sustain: 0.7, release: 0.25 } as const;
+
+/** Numeric ranges: [min, max, integer?]. Values outside are clamped; non-finite → default. */
+export const SYNTH_RANGES: Readonly<Partial<Record<keyof SynthParams, readonly [number, number, boolean?]>>> = {
+  aOct: [-3, 3, true],
+  aCoarse: [-24, 24, true],
+  aFine: [-100, 100],
+  aLevel: [0, 1],
+  bOct: [-3, 3, true],
+  bCoarse: [-24, 24, true],
+  bFine: [-100, 100],
+  bLevel: [0, 1],
+  subOct: [1, 2, true],
+  subLevel: [0, 1],
+  noiseLevel: [0, 1],
+  ringLevel: [0, 1],
+  cutoff: [CUTOFF_MIN, CUTOFF_MAX],
+  resonance: [0, 1],
+  drive: [0, 1],
+  keyTrack: [0, 1],
+  envAmount: [-1, 1],
+  velAmount: [0, 1],
+  fAttack: [0, 10],
+  fDecay: [0, 10],
+  fSustain: [0, 1],
+  fRelease: [0, 10],
+  pAttack: [0, 10],
+  pDecay: [0, 10],
+  pAmount: [-24, 24],
+  velAmp: [0, 1],
+  glide: [0, 5],
+  bendRange: [0, 24, true],
+  pan: [-1, 1],
+};
+
+const ENUMS: Readonly<Partial<Record<keyof SynthParams, readonly string[]>>> = {
+  subWave: SUB_WAVES,
+  noiseType: NOISE_TYPES,
+  filterMode: FILTER_MODES,
+  pTarget: PITCH_TARGETS,
+};
+
+const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
+const fin = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
+
+export function isVoiceType(x: unknown): x is VoiceType {
+  return x === 'simple' || x === 'synth';
+}
+
+function clampNum(x: unknown, def: number, r?: readonly [number, number, boolean?]): number {
+  if (!fin(x)) return def;
+  if (!r) return x;
+  const v = Math.max(r[0], Math.min(r[1], x));
+  return r[2] ? Math.round(v) : v;
+}
+
+/** An oscillator source from untrusted data (window rounding / clamping to a wavetable is the caller's). */
+export function normalizeSource(raw: unknown, fallback: OscSource = DEFAULT_SOURCE): OscSource {
+  const o = isObj(raw) ? raw : {};
+  return {
+    wavetableId: Number.isInteger(o.wavetableId) ? (o.wavetableId as number) : fallback.wavetableId,
+    windowStart: fin(o.windowStart) ? Math.round(o.windowStart) : fallback.windowStart,
+    windowEnd: fin(o.windowEnd) ? Math.round(o.windowEnd) : fallback.windowEnd,
+    windowStartY: fin(o.windowStartY) ? Math.round(o.windowStartY) : fallback.windowStartY,
+    windowEndY: fin(o.windowEndY) ? Math.round(o.windowEndY) : fallback.windowEndY,
+    position: clampNum(o.position, fallback.position, [0, 1]),
+    positionY: clampNum(o.positionY, fallback.positionY, [0, 1]),
+  };
+}
+
+/**
+ * Synth params from untrusted data (sessions, presets, imports): every known field is
+ * validated (wrong type / non-finite → default, numbers clamped to SYNTH_RANGES, enums
+ * checked); unknown fields are kept (forward compatibility).
+ */
+export function normalizeSynth(raw: unknown, fallbackSource: OscSource = DEFAULT_SOURCE): SynthParams {
+  const o = isObj(raw) ? raw : {};
+  const out: Record<string, unknown> = { ...o };
+  for (const [k, def] of Object.entries(DEFAULT_SYNTH) as [keyof SynthParams, unknown][]) {
+    const v = o[k];
+    if (k === 'b') out.b = normalizeSource(v, fallbackSource);
+    else if (typeof def === 'number') out[k] = clampNum(v, def, SYNTH_RANGES[k]);
+    else if (typeof def === 'boolean') out[k] = typeof v === 'boolean' ? v : def;
+    else if (typeof def === 'string') out[k] = typeof v === 'string' && (ENUMS[k] ?? []).includes(v) ? v : def;
+  }
+  return out as unknown as SynthParams;
+}
+
+/** Semitone offset of an oscillator's tuning (octave, coarse, fine). */
+export function oscSemis(oct: number, coarse: number, fine: number): number {
+  return oct * 12 + coarse + fine / 100;
+}

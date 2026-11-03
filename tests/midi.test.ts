@@ -22,7 +22,7 @@ import {
 } from '../src/core/midi';
 import { buildMipSet } from '../src/core/mipmap';
 import { emptySteps } from '../src/core/sequence';
-import { DEFAULT_VOICE, type VoiceParams } from '../src/core/voice';
+import { DEFAULT_VOICE, type VoicePatch, type VoiceParams } from '../src/core/voice';
 import { packIds } from '../src/core/wavetablePlayback';
 
 const SR = 48000;
@@ -217,7 +217,7 @@ describe('CC map', () => {
   it('assigning a controller moves it from any other parameter', () => {
     let m = assignCc(DEFAULT_CC_MAP, 'lfoDepth', 74);
     m = assignCc(m, 'level', 74);
-    expect(m).toEqual({ position: 1, positionY: -1, lfoDepth: -1, lfoRate: -1, level: 74 });
+    expect(m).toMatchObject({ position: 1, positionY: -1, lfoDepth: -1, lfoRate: -1, level: 74 });
     m = assignCc(m, 'position', -1);
     expect(m.position).toBe(-1);
     expect(assignCc(m, 'lfoRate', 120).lfoRate).toBe(-1); // channel-mode CCs can't be assigned
@@ -233,7 +233,7 @@ describe('CC map', () => {
 
   it('normalizes untrusted stored maps', () => {
     expect(normalizeCcMap(null)).toEqual(DEFAULT_CC_MAP);
-    expect(normalizeCcMap({ position: 7, level: 7, lfoRate: 'x', bogus: 3 })).toEqual({ position: -1, positionY: -1, lfoDepth: -1, lfoRate: -1, level: 7 });
+    expect(normalizeCcMap({ position: 7, level: 7, lfoRate: "x", bogus: 3 })).toMatchObject({ position: -1, positionY: -1, lfoDepth: -1, lfoRate: -1, level: 7 });
   });
 });
 
@@ -418,7 +418,7 @@ function controller(store?: SettingsStore) {
   m.addVoice();
   m.addVoice();
   const sent: MidiVoiceEvent[] = [];
-  const patches: [number, Partial<VoiceParams>][] = [];
+  const patches: [number, VoicePatch][] = [];
   let selected = 1;
   const ticks: (() => void)[] = [];
   const c = new MidiController(
@@ -547,5 +547,45 @@ describe('MidiController', () => {
     sent.length = 0;
     c.sourceLost(3);
     expect(sent).toEqual([{ type: 'noteOff', voiceId: 1, note: 60 }]);
+  });
+});
+
+describe('Synth voice controller targets', () => {
+  it('map cutoff exponentially, filter env bipolar, osc mix as a crossfade, glide quadratic', () => {
+    expect(ccValue('cutoff', 0)).toBeCloseTo(20, 6);
+    expect(ccValue('cutoff', 127)).toBeCloseTo(20000, 6);
+    expect(ccValue('filterEnv', 0)).toBe(-1);
+    expect(ccValue('filterEnv', 127)).toBe(1);
+    expect(ccValue('glide', 127)).toBe(2);
+    let map = assignCc(DEFAULT_CC_MAP, 'cutoff', 74);
+    map = assignCc(map, 'oscMix', 75);
+    expect(ccPatch(map, 74, 127)).toEqual({ synth: { cutoff: 20000 } });
+    expect(ccPatch(map, 75, 127)).toEqual({ synth: { aLevel: 0, bLevel: 1 } });
+    expect(ccPatch(map, 1, 0)).toEqual({ position: 0 });
+    expect(normalizeCcMap({ resonance: 71, cutoff: 'x' })).toMatchObject({ resonance: 71, cutoff: -1, position: -1 });
+  });
+
+  it('controller moves reach the engine and the model (merged per voice), without undo steps', () => {
+    const { m, c, patches, tick } = controller();
+    m.updateVoice(1, { type: 'synth' });
+    m.endGesture();
+    const depth = m.undoDepth;
+    c.setCc('cutoff', 74);
+    c.setCc('resonance', 71);
+    c.handle([0xb0, 74, 0]);
+    c.handle([0xb0, 71, 127]);
+    expect(patches.map(([, p]) => p)).toEqual([{ synth: { cutoff: 20 } }, { synth: { resonance: 1 } }]);
+    tick();
+    expect(m.voice(1)!.synth.cutoff).toBeCloseTo(20, 6);
+    expect(m.voice(1)!.synth.resonance).toBe(1);
+    expect(m.undoDepth).toBe(depth);
+    // The engine merges synth patches into the voice's synth block.
+    const e = engine({ type: 'synth' });
+    e.patchVoice(1, { synth: { cutoff: 300 } });
+    e.patchVoice(1, { synth: { resonance: 0.5 } });
+    e.applyMidi({ type: 'noteOn', voiceId: 1, note: 60, velocity: 100 });
+    const out = render(e, 4800);
+    expect(out.every(Number.isFinite)).toBe(true);
+    expect(rms(out)).toBeGreaterThan(0.001);
   });
 });
