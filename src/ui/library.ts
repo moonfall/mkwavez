@@ -81,6 +81,8 @@ export function buildLibrary(opts: LibraryOpts): Library {
   const empty = h('p', { class: 'gen-lib-empty', id: `${p}-empty`, hidden: true });
   list.append(empty);
   list.addEventListener('scroll', () => opts.onThumbs(), { passive: true });
+  // A taller list (window resize, list opened) reveals entries whose thumbnails need drawing.
+  new ResizeObserver(() => opts.onThumbs()).observe(list);
 
   const search = h('input', {
     type: 'search',

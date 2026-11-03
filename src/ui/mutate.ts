@@ -312,15 +312,16 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   };
 
   // ---- drawing ----
-  // While a restarted preview is computing, the previous tables stay drawn (no flicker).
-  let lastMain: Float32Array | undefined;
+  // Until a restarted preview has produced a table (new source, amount, mode, …), the
+  // last good frame stays drawn: never an old result over a new source, no flicker.
+  // Only a missing source clears the views.
   let drawnSrc: WaveTable | null | undefined;
   const drawMain = () => {
     mainDirty = false;
     const src = source();
     const t = job && src && job.source === src ? job.tables[Math.min(strip.shown(), job.req.count - 1)] : undefined;
-    const data = src ? (t?.data ?? lastMain) : undefined;
-    lastMain = data;
+    if (src && !t) return; // redrawn when computeOne() produces the shown table
+    const data = t?.data;
     const grid = cssColor('--surface-2');
     const [g, w, hh] = fit(waveC, Math.max(40, waveBox.clientHeight || 150));
     g.strokeStyle = grid;
@@ -360,11 +361,12 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
 
   const drawCards = () => {
     cardsDirty = false;
-    const cur = job && job.source === source() ? job : null;
+    const src = source();
+    const cur = job && job.source === src ? job : null;
     strip.cards.forEach((c, i) => {
       const t = cur && i < cur.req.count ? cur.tables[i] : undefined;
-      // Keep the previous drawing while a restarted job computes this card.
-      if (c.drawn === t || (!t && c.drawn && cur)) return;
+      // Keep the previous drawing until the current job has computed this card.
+      if (c.drawn === t || (!t && src)) return;
       c.drawn = t;
       drawCard(c, t?.data);
     });
