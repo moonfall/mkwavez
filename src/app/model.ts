@@ -5,6 +5,7 @@
  */
 import { MAX_PARENTS } from '../core/breed';
 import { MAX_STEPS, TIMELINE_CAP, UNDO_DEPTH } from '../core/constants';
+import type { ModelState } from '../core/session';
 import { emptySteps, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
@@ -599,6 +600,45 @@ export class AppModel {
     if (patch.playing !== undefined) this.playing = patch.playing;
     if (patch.bpm !== undefined) this.bpm = Math.max(40, Math.min(300, patch.bpm));
     this.emit('transport');
+  }
+
+  // ---- session (persistence) ----
+
+  /** Everything a saved session holds (references: tables and wavetables are immutable). No undo history. */
+  exportState(): ModelState {
+    return {
+      timeline: this.timeline,
+      nextTableId: this.tableIds.next,
+      wavetables: this.wavetables,
+      voices: this.voices,
+      nextVoiceId: this.nextVoiceId,
+      sequences: this.sequences,
+      nextSeqId: this.nextSeqId,
+      selectedId: this.selectedId,
+      breedParents: this.breedParents,
+      bpm: this.bpm,
+    };
+  }
+
+  /**
+   * Replace the whole state (restore, import, new session). Clears undo; the transport's
+   * play state is kept. Every topic is emitted, timeline first (as for an add).
+   */
+  loadState(s: ModelState): void {
+    this.gestureKey = null;
+    this.undoStack = [];
+    this.timeline = s.timeline;
+    this.byId = new Map(s.timeline.map((t) => [t.id, t]));
+    this.tableIds = new IdAllocator(Math.max(s.nextTableId, ...s.timeline.map((t) => t.id + 1), 1));
+    this.wavetables = s.wavetables;
+    this.voices = s.voices;
+    this.nextVoiceId = Math.max(s.nextVoiceId, ...s.voices.map((v) => v.id + 1), 1);
+    this.sequences = s.sequences;
+    this.nextSeqId = Math.max(s.nextSeqId, ...s.sequences.map((q) => q.id + 1), 1);
+    this.selectedId = s.selectedId !== null && this.byId.has(s.selectedId) ? s.selectedId : (s.timeline.at(-1)?.id ?? null);
+    this.breedParents = s.breedParents.filter((id) => this.byId.has(id)).slice(0, MAX_PARENTS);
+    this.bpm = Math.max(40, Math.min(300, s.bpm));
+    this.emit('timeline', 'wavetables', 'voices', 'sequences', 'selection', 'transport', 'undo', 'parents');
   }
 
   // ---- undo ----
