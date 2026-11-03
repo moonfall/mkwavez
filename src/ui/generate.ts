@@ -15,6 +15,7 @@ import { randomSeed } from '../core/prng';
 import type { GeneratedTable } from '../core/table';
 import type { FrameView, UiContext } from './context';
 import { h, section, selectField, slider, voiceColorVar } from './dom';
+import { buildBreedPanel } from './breed';
 import { buildMutatePanel } from './mutate';
 
 const BASIC_LABELS: Record<BasicWave, string> = {
@@ -257,12 +258,19 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   });
   panels.set('Mutate', mutate.el);
 
+  // ---- Breed panel ----
+  const breed = buildBreedPanel(ctx, {
+    count: () => count,
+    onCount: (fn) => countListeners.push(fn),
+    active: () => sec.el.open && currentTab === 'Breed',
+  });
+  panels.set('Breed', breed.el);
+
   // ---- placeholders ----
   const soon: Record<string, string> = {
-    Breed: 'Combine two or more parents: crossfades, spectral and per-harmonic genetic crossover.',
     Sample: 'Extract single cycles from the microphone or an audio file.',
   };
-  for (const name of ['Breed', 'Sample']) {
+  for (const name of ['Sample']) {
     const p = h(
       'div',
       { role: 'tabpanel', id: `panel-${name.toLowerCase()}`, class: 'placeholder' },
@@ -273,5 +281,13 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   }
   sec.body.append(...panels.values());
   setTab('Seed');
-  return { el: sec.el, view: mutate.view };
+  return {
+    el: sec.el,
+    view: {
+      frame(now) {
+        mutate.view.frame(now);
+        breed.view.frame(now);
+      },
+    },
+  };
 }

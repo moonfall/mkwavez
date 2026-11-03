@@ -1,3 +1,4 @@
+import { renderBreedRecipe } from '../breed';
 import { renderMutateRecipe } from '../mutateBatch';
 import type { Recipe, TableId } from '../table';
 import { basicWave, type BasicWave } from './basic';
@@ -14,11 +15,11 @@ export * from './perlin';
 export interface RenderEnv {
   /** Needed only for 'formula' recipes (browser: src/browser/formulaEval.ts). */
   compileFormula?: FormulaCompiler;
-  /** Needed only for recipes with parents ('mutate'): parent table data by id. */
+  /** Needed only for recipes with parents ('mutate', 'breed'): parent table data by id. */
   resolveTable?: (id: TableId) => Float32Array | undefined;
 }
 
-/** Re-render a single table from its recipe (seed generators and mutations). Deterministic. */
+/** Re-render a single table from its recipe (seed generators, mutations, breeds). Deterministic. */
 export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
   const index = r.batch?.index ?? 0;
   const count = r.batch?.count ?? 1;
@@ -42,6 +43,10 @@ export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
     case 'mutate': {
       if (!env.resolveTable) throw new Error('renderRecipe: mutate needs resolveTable');
       return renderMutateRecipe(r, env.resolveTable);
+    }
+    case 'breed': {
+      if (!env.resolveTable) throw new Error('renderRecipe: breed needs resolveTable');
+      return renderBreedRecipe(r, env.resolveTable);
     }
     default:
       throw new Error(`renderRecipe: unknown op ${r.op}`);

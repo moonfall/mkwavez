@@ -1,6 +1,8 @@
 // Headless-Chrome smoke test: page loads without console errors, sections collapse and
 // expand, Seed adds tables to the timeline, the worklet loads and the transport runs,
-// Mutate previews / applies / sweeps / chains / rerolls / evolves while playing.
+// Mutate previews / applies / sweeps / chains / rerolls / evolves while playing,
+// Breed picks parents (timeline Shift-click / long-press, Add selected, voice window),
+// previews and applies every operator, sweeps and generations; evicted parents drop out.
 //
 // Usage: npm run smoke            (builds, then tests `vite preview` and `vite dev`)
 //        CHROME=/path/to/chrome   (default /usr/bin/google-chrome)
@@ -43,7 +45,8 @@ async function run(label, url, browser) {
 
   // Tabs.
   await page.click('#tab-breed');
-  assert(await page.isVisible('#panel-breed'), 'Breed tab shows placeholder');
+  assert(await page.isVisible('#panel-breed'), 'Breed tab shows');
+  assert(await page.isDisabled('#breed-apply1'), 'Breed disabled without parents');
   await page.click('#tab-seed');
   assert(await page.isVisible('#panel-seed'), 'Seed tab visible again');
 
@@ -100,6 +103,7 @@ async function run(label, url, browser) {
   );
   assert(true, 'worklet holds every timeline table');
   await mutateChecks(page, tlCount);
+  await breedChecks(page, tlCount);
   await page.click('#add-voice');
   assert((await page.evaluate(() => window.mkwavez.model.voices.length)) === 4, 'voice added');
   await page.click('#voice-4 .card-head button[aria-label^="Remove"]');
@@ -117,9 +121,21 @@ async function run(label, url, browser) {
   await page.waitForFunction(() => window.mkwavez.bridge.workletTableCount === 4096, null, { timeout: 20000 });
   assert(true, `worklet synced 4096 tables (${Date.now() - t0} ms)`);
   await page.waitForTimeout(300);
+  const ev = await page.evaluate(() => ({
+    parents: window.mkwavez.model.breedParents.length,
+    cards: document.querySelectorAll('#breed-parents .parent-card').length,
+  }));
+  assert(ev.parents === 0 && ev.cards === 0, 'evicted Breed parents drop out of the list and its cards');
   await page.click('#play');
   assert((await page.evaluate(() => window.mkwavez.model.playing)) === false, 'transport stops');
-  await breedWithoutMate(page);
+  // Leave eight parents showing (layout / overflow / screenshots).
+  await page.click('#tab-breed');
+  await page.evaluate(() => {
+    const m = window.mkwavez.model;
+    m.setBreedParents(m.timeline.slice(0, 8).map((t) => t.id));
+  });
+  assert((await page.$$('#breed-parents .parent-card')).length === 8, 'eight parent cards');
+  await page.waitForTimeout(200);
 
   if (SHOTS) {
     await page.setViewportSize({ width: 1200, height: 900 });
@@ -243,13 +259,8 @@ async function mutateChecks(page, tlCount) {
   await page.click('#undo');
   assert((await tlCount()) === n - 8, 'undo removes the chain batch');
 
-  // Breed records its mate.
-  assert(!(await page.isVisible('#mutate-mate-voice')), 'mate pool hidden for non-breed mutations');
-  await page.selectOption('#mutate-op', 'breed');
-  assert(await page.isVisible('#mutate-mate-voice'), 'breed shows the mate pool');
-  await page.click('#mutate-apply1');
-  r = await M(() => window.mkwavez.model.timeline.at(-1).recipe);
-  assert(r.params.mutation === 'breed' && r.parents.length === 2, 'breed recipe has two parents');
+  // The legacy Breed mutation is superseded by the Breed tab.
+  assert(!(await page.$('#mutate-op option[value="breed"]')), 'Mutate no longer offers Breed');
 
   // Evolve.
   await page.selectOption('#mutate-op', 'jitter');
@@ -277,20 +288,189 @@ async function mutateChecks(page, tlCount) {
   await page.click('#tab-seed');
 }
 
-/** Breed with no mate available (no voices) must not add tables. */
-async function breedWithoutMate(page) {
-  await page.evaluate(() => {
+/** Centre of timeline cell i, relative to the grid canvas (grid scrolled to the top). */
+const cellPos = (page, i) =>
+  page.evaluate((i) => {
+    const s = document.querySelector('.tl-scroll');
+    s.scrollTop = 0;
+    const w = s.clientWidth;
+    const cols = Math.max(4, Math.floor(w / 56));
+    const cw = w / cols;
+    return { x: (i % cols) * cw + cw / 2, y: Math.floor(i / cols) * 42 + 21 };
+  }, i);
+
+const waitInk = (page, sel) =>
+  page.waitForFunction(
+    (sel) => {
+      const c = document.querySelector(sel);
+      return c && c.width > 1 && c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 === 3 && v);
+    },
+    sel,
+    { timeout: 5000 },
+  );
+
+async function breedChecks(page, tlCount) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const seedOf = async () => parseInt((await page.textContent('#breed-seed')).replace('seed ', '').trim(), 16);
+  const parents = () => M(() => [...window.mkwavez.model.breedParents]);
+  const same = async (want) => JSON.stringify(await parents()) === JSON.stringify(want);
+  const ids = (from, to) => M(([a, b]) => window.mkwavez.model.timeline.slice(a, b).map((t) => t.id), [from, to]);
+  await page.click('#tab-breed');
+  await M(() => window.mkwavez.model.setBreedParents([]));
+  assert(await page.isDisabled('#breed-apply1'), 'Breed disabled with no parents');
+
+  // Timeline: Shift-click toggles parents without changing the selection.
+  const sel0 = await M(() => window.mkwavez.model.selectedId);
+  await page.click('#timeline-grid', { position: await cellPos(page, 1), modifiers: ['Shift'] });
+  await page.click('#timeline-grid', { position: await cellPos(page, 2), modifiers: ['Shift'] });
+  const [t1, t2, t3] = await ids(1, 4);
+  assert(await same([t1, t2]), 'Shift-click adds timeline tables as parents A, B');
+  assert((await M(() => window.mkwavez.model.selectedId)) === sel0, 'Shift-click leaves the selection alone');
+  assert((await page.$$('#breed-parents .parent-card')).length === 2, 'two parent cards');
+  await waitInk(page, '#breed-parents .parent-card canvas');
+  assert(true, 'parent thumbnails render');
+
+  // Touch long-press toggles a parent and swallows the click.
+  const p3 = await cellPos(page, 3);
+  await page.evaluate(({ x, y }) => {
+    const g = document.querySelector('#timeline-grid');
+    const r = g.getBoundingClientRect();
+    g.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', clientX: r.left + x, clientY: r.top + y, bubbles: true }));
+  }, p3);
+  await page.waitForTimeout(600);
+  await page.evaluate(({ x, y }) => {
+    const g = document.querySelector('#timeline-grid');
+    const r = g.getBoundingClientRect();
+    const o = { clientX: r.left + x, clientY: r.top + y, bubbles: true };
+    g.dispatchEvent(new PointerEvent('pointerup', { ...o, pointerType: 'touch' }));
+    g.dispatchEvent(new MouseEvent('click', o));
+  }, p3);
+  assert(await same([t1, t2, t3]), 'long-press adds parent C');
+  assert((await M(() => window.mkwavez.model.selectedId)) === sel0, 'long-press does not select');
+
+  // Remove, reorder, Add selected.
+  await page.click('button[aria-label="Remove parent C"]');
+  assert(await same([t1, t2]), '× removes a parent');
+  await page.click('button[aria-label="Move A later"]');
+  assert(await same([t2, t1]), '› reorders parents');
+  await page.click('button[aria-label="Move B earlier"]');
+  await page.click('#timeline-grid', { position: await cellPos(page, 3) });
+  await page.click('#breed-add-selected');
+  assert(await same([t1, t2, t3]), 'Add selected appends the selection');
+  assert(await page.isDisabled('#breed-add-selected'), 'Add selected disabled when already a parent');
+
+  // Use a voice's window.
+  const win = await M(() => {
     const m = window.mkwavez.model;
-    for (const v of [...m.voices]) m.removeVoice(v.id);
+    const v = m.voices[0];
+    const len = v.windowEnd - v.windowStart + 1;
+    const n = Math.min(8, len);
+    return Array.from({ length: n }, (_, i) => m.timeline[v.windowStart + (n > 1 ? Math.round((i * (len - 1)) / (n - 1)) : 0)].id);
   });
-  await page.click('#tab-mutate');
-  await page.selectOption('#mutate-op', 'breed');
-  await page.waitForFunction(() => document.querySelector('#mutate-apply1').disabled, null, { timeout: 3000 });
-  const dis = await page.evaluate(() => ['#mutate-apply1', '#mutate-applyN', '#mutate-evolve'].map((s) => document.querySelector(s).disabled));
-  assert(dis.every(Boolean), 'Breed without a mate disables Apply, Apply N and Evolve');
-  await page.selectOption('#mutate-op', 'fold');
-  await page.waitForFunction(() => !document.querySelector('#mutate-apply1').disabled, null, { timeout: 3000 });
-  assert(true, 'other mutations stay enabled without voices');
+  await page.selectOption('#breed-window-voice', { index: 0 });
+  await page.click('#breed-use-window');
+  assert(await same(win), `Use window takes the voice window (${win.length} parents)`);
+
+  // Back to tri + saw for the operator pass; preview renders and follows Bias.
+  await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2]);
+  await waitInk(page, '#breed-pv-wave');
+  const before = await canvasInk(page, '#breed-pv-wave');
+  await page.fill('#breed-bias', '0.3');
+  await page.waitForFunction(
+    (b) => {
+      const c = document.querySelector('#breed-pv-wave');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 4) sum = (sum * 31 + d[i] + d[i + 1] * 7 + d[i + 3] * 13) % 1000000007;
+      return sum !== b;
+    },
+    before.sum,
+    { timeout: 5000 },
+  );
+  assert(true, 'preview renders and updates with Bias');
+  assert((await page.textContent('#breed-weights')).includes('A 70'), 'weights readout shows A 70 · B 30');
+  const s0 = await seedOf();
+  await page.click('#breed-reroll');
+  assert((await seedOf()) !== s0, 'Reroll draws a new seed');
+
+  // Every operator: Breed adds one selected child with a full recipe.
+  const opIds = await page.$$eval('#breed-op option', (os) => os.map((o) => o.value));
+  assert(opIds.length >= 7, `${opIds.length} operators`);
+  for (const op of opIds) {
+    await page.selectOption('#breed-op', op);
+    await page.waitForTimeout(80);
+    const seed = await seedOf();
+    const n = await tlCount();
+    await page.click('#breed-apply1');
+    const r = await M(() => {
+      const m = window.mkwavez.model;
+      const t = m.timeline.at(-1);
+      return { ...t.recipe, id: t.id, sel: m.selectedId, peak: Math.max(...t.data.map(Math.abs)) };
+    });
+    assert(
+      (await tlCount()) === n + 1 &&
+        r.op === 'breed' &&
+        r.params.breed === op &&
+        r.params.bias === 0.3 &&
+        r.seed === seed &&
+        JSON.stringify(r.parents) === JSON.stringify([t1, t2]) &&
+        r.sel === r.id &&
+        Math.abs(r.peak - 1) < 1e-4,
+      `Breed (${op}) adds one child with its recipe`,
+    );
+    assert((await seedOf()) !== seed, `${op}: new seed after Breed`);
+  }
+
+  // Breed N: sweep, then a generation.
+  await page.selectOption('#breed-op', 'spectral');
+  await page.selectOption('#breed-mode', 'sweep');
+  let n = await tlCount();
+  let seed = await seedOf();
+  await page.click('#breed-applyN');
+  let r = await M(() => {
+    const m = window.mkwavez.model;
+    const b = m.timeline.slice(-8);
+    const v = m.voices[0];
+    return { biases: b.map((t) => t.recipe.params.bias), seeds: [...new Set(b.map((t) => t.recipe.seed))], win: [v.windowStart, v.windowEnd], len: m.timeline.length };
+  });
+  assert((await tlCount()) === n + 8, 'Breed N (sweep) adds 8');
+  assert(
+    r.biases.every((b, i) => Math.abs(b - (0.3 * (i + 1)) / 8) < 1e-12) && r.seeds.length === 1 && r.seeds[0] === seed,
+    'sweep biases 0.3·i/8, one seed',
+  );
+  assert(r.win[0] === r.len - 8 && r.win[1] === r.len - 1, 'sweep sets the targeted voice window');
+
+  await page.selectOption('#breed-op', 'genetic');
+  await page.selectOption('#breed-mode', 'gen');
+  n = await tlCount();
+  await page.click('#breed-applyN');
+  r = await M(() => {
+    const b = window.mkwavez.model.timeline.slice(-8);
+    const distinct = new Set(b.map((t) => Array.from(t.data.slice(0, 64), (v) => v.toFixed(5)).join())).size;
+    return { biases: [...new Set(b.map((t) => t.recipe.params.bias))], modes: [...new Set(b.map((t) => t.recipe.params.mode))], distinct };
+  });
+  assert((await tlCount()) === n + 8 && r.biases.length === 1 && r.modes[0] === 'gen', 'Breed N (generation) adds 8 at one bias');
+  assert(r.distinct > 1, `generation children differ (${r.distinct} distinct)`);
+  await page.click('#undo');
+  assert((await tlCount()) === n, 'undo removes the generation');
+
+  // Generation of a deterministic operator without mutation is disabled.
+  await page.selectOption('#breed-op', 'mix');
+  await page.fill('#breed-rate', '0');
+  assert(await page.isDisabled('#breed-applyN'), 'generation of Crossfade at 0% mutation is disabled');
+  await page.fill('#breed-rate', '0.05');
+  assert(!(await page.isDisabled('#breed-applyN')), 're-enabled with mutation');
+  await page.selectOption('#breed-mode', 'sweep');
+
+  // Custom weights.
+  await page.selectOption('#breed-walk', 'weights');
+  assert(await page.isVisible('#breed-parents .pc-weight'), 'custom weights show per-parent sliders');
+  await page.fill('#breed-parents .parent-card:nth-child(2) .pc-weight', '0.5');
+  await page.click('#breed-apply1');
+  r = await M(() => window.mkwavez.model.timeline.at(-1).recipe.params);
+  assert(r.walk === 'weights' && r.weights === '1,0.5', `custom weights recorded (${r.weights})`);
+  await page.selectOption('#breed-walk', 'path');
+  await page.click('#tab-seed');
 }
 
 const browser = await chromium.launch({

@@ -3,6 +3,7 @@
  * the audio bridge subscribe to topics. Tables are immutable, so undo snapshots are
  * reference copies.
  */
+import { MAX_PARENTS } from '../core/breed';
 import { MAX_STEPS, TIMELINE_CAP, UNDO_DEPTH } from '../core/constants';
 import { emptySteps, normalizeSteps, type SequenceData } from '../core/sequence';
 import { IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
@@ -18,8 +19,20 @@ import {
   type WavetableId,
 } from '../core/wavetable';
 
-/** 'undo' = undo depth changed (any snapshot or undo); 'undone' = an undo was applied. */
-export type Topic = 'timeline' | 'selection' | 'voices' | 'sequences' | 'transport' | 'undo' | 'undone' | 'batchTargets';
+/**
+ * 'undo' = undo depth changed (any snapshot or undo); 'undone' = an undo was applied;
+ * 'parents' = the Breed parent list changed (including tables dropping out of the timeline).
+ */
+export type Topic =
+  | 'timeline'
+  | 'selection'
+  | 'voices'
+  | 'sequences'
+  | 'transport'
+  | 'undo'
+  | 'undone'
+  | 'batchTargets'
+  | 'parents';
 
 export const MAX_VOICES = 8;
 
@@ -37,6 +50,8 @@ export class AppModel {
   sequences: readonly SequenceData[] = [];
   batchTargets: ReadonlySet<number> = new Set();
   selectedId: TableId | null = null;
+  /** Breed parents in order (A first), at most MAX_PARENTS; always tables in the timeline. */
+  breedParents: readonly TableId[] = [];
   playing = false;
   bpm = 132;
   readonly cap: number;
@@ -115,7 +130,7 @@ export class AppModel {
     const oldLen = this.timeline.length;
     const pinned = pinnedIds(this.wavetables);
     const r = appendWithEviction(this.timeline, added, this.cap, (id) => pinned.has(id));
-    this.setTimeline(r.list);
+    const parentsChanged = this.setTimeline(r.list);
     this.voices = followAppend(
       this.voices,
       ALL_WAVETABLE_ID,
@@ -128,21 +143,58 @@ export class AppModel {
     );
     if (selectNew) this.selectedId = added[added.length - 1].id;
     else if (this.selectedId !== null && !this.byId.has(this.selectedId)) this.selectedId = r.list[0]?.id ?? null;
-    this.emit('timeline', 'voices', 'selection', 'undo');
+    this.emit('timeline', 'voices', 'selection', 'undo', ...(parentsChanged ? (['parents'] as Topic[]) : []));
     return added;
   }
 
-  private setTimeline(list: readonly WaveTable[]): void {
+  /** Replace the timeline; returns true if Breed parents had to be dropped (evicted / undone). */
+  private setTimeline(list: readonly WaveTable[]): boolean {
     this.timeline = list;
     this.byId = new Map(list.map((t) => [t.id, t]));
     // Pinned tables live in the timeline, so user wavetables never dangle.
     this.wavetables = this.wavetables.map((w) => (w.auto === 'all' ? allWavetable(list.map((t) => t.id)) : w));
+    const kept = this.breedParents.filter((id) => this.byId.has(id));
+    if (kept.length === this.breedParents.length) return false;
+    this.breedParents = kept;
+    return true;
   }
 
   select(id: TableId): void {
     if (!this.byId.has(id) || id === this.selectedId) return;
     this.selectedId = id;
     this.emit('selection');
+  }
+
+  // ---- breed parents ----
+
+  /** Set the parent list (unknown ids and duplicates dropped, capped at MAX_PARENTS). */
+  setBreedParents(ids: readonly TableId[]): void {
+    const next = [...new Set(ids)].filter((id) => this.byId.has(id)).slice(0, MAX_PARENTS);
+    if (next.length === this.breedParents.length && next.every((id, i) => id === this.breedParents[i])) return;
+    this.breedParents = next;
+    this.emit('parents');
+  }
+
+  /** Add or remove one parent. Returns false if it couldn't be added (unknown id or list full). */
+  toggleBreedParent(id: TableId): boolean {
+    if (this.breedParents.includes(id)) {
+      this.setBreedParents(this.breedParents.filter((p) => p !== id));
+      return true;
+    }
+    if (!this.byId.has(id) || this.breedParents.length >= MAX_PARENTS) return false;
+    this.setBreedParents([...this.breedParents, id]);
+    return true;
+  }
+
+  /** Move a parent by `delta` places (clamped). */
+  moveBreedParent(id: TableId, delta: number): void {
+    const list = [...this.breedParents];
+    const i = list.indexOf(id);
+    const j = Math.max(0, Math.min(list.length - 1, i + delta));
+    if (i < 0 || i === j) return;
+    list.splice(i, 1);
+    list.splice(j, 0, id);
+    this.setBreedParents(list);
   }
 
   // ---- voices ----
@@ -280,7 +332,7 @@ export class AppModel {
     this.gestureKey = null;
     const s = this.undoStack.pop();
     if (!s) return;
-    this.setTimeline(s.timeline);
+    const parentsChanged = this.setTimeline(s.timeline);
     this.selectedId = s.selectedId !== null && this.byId.has(s.selectedId) ? s.selectedId : (s.timeline.at(-1)?.id ?? null);
     const len = this.timeline.length;
     this.voices = this.voices.map((v) => {
@@ -292,7 +344,7 @@ export class AppModel {
       const st = s.steps.get(q.id);
       return st ? { ...q, steps: st } : q;
     });
-    this.emit('timeline', 'voices', 'sequences', 'selection', 'undo', 'undone');
+    this.emit('timeline', 'voices', 'sequences', 'selection', 'undo', 'undone', ...(parentsChanged ? (['parents'] as Topic[]) : []));
   }
 
   clearUndo(): void {

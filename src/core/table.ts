@@ -1,3 +1,4 @@
+import { BREED_OPS } from './breed';
 import { MUTATIONS } from './mutations';
 
 /** Stable table identifier (monotonic per project; never reused). */
@@ -10,7 +11,7 @@ export type ParamValue = number | string | boolean;
  * (given the same code version), and to trace lineage via `parents`.
  */
 export interface Recipe {
-  /** Generator or mutation id, e.g. 'basic', 'formula', 'perlin', 'ca', 'mutate' (later 'breed'). */
+  /** Generator or mutation id, e.g. 'basic', 'formula', 'perlin', 'ca', 'mutate', 'breed'. */
   readonly op: string;
   readonly params: Readonly<Record<string, ParamValue>>;
   /** uint32 seed for every random choice the op makes. */
@@ -65,6 +66,12 @@ export function describeRecipe(r: Recipe): string {
       const pct = Math.round(Number(p.amount) * 1000) / 10;
       const mode = p.mode === 'chain' ? ' chain' : p.mode === 'log' ? ' log' : '';
       const label = MUTATIONS.find((m) => m.id === p.mutation)?.label ?? String(p.mutation);
+      return `${label} ${pct}%${mode}${b} of id ${r.parents.join('×')}`;
+    }
+    case 'breed': {
+      const pct = Math.round(Number(p.bias) * 1000) / 10;
+      const mode = p.mode === 'gen' ? ' gen' : '';
+      const label = BREED_OPS.find((o) => o.id === p.breed)?.label ?? String(p.breed);
       return `${label} ${pct}%${mode}${b} of id ${r.parents.join('×')}`;
     }
     default:

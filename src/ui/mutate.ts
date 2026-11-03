@@ -1,5 +1,5 @@
-import { mutateBatch, pickMateIndex, type MutateRequest } from '../core/mutateBatch';
-import { MUTATIONS, sweepAmounts, type MutationId, type SweepMode } from '../core/mutations';
+import { mutateBatch, type MutateRequest } from '../core/mutateBatch';
+import { MUTATION_CHOICES, sweepAmounts, type MutationId, type SweepMode } from '../core/mutations';
 import { randomSeed } from '../core/prng';
 import { describeRecipe, type GeneratedTable, type WaveTable } from '../core/table';
 import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
@@ -44,7 +44,6 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   let amount = 0.25;
   let mode: SweepMode = 'lin';
   let seed = randomSeed();
-  let mateVoiceId: number | null = null;
   let evolveTimer: ReturnType<typeof setInterval> | null = null;
 
   // ---- source / preview views ----
@@ -81,7 +80,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   // ---- controls ----
   const opSel = h('select', { id: 'mutate-op', 'aria-label': 'Mutation' });
   const groups = new Map<string, HTMLOptGroupElement>();
-  for (const m of MUTATIONS) {
+  for (const m of MUTATION_CHOICES) {
     let g = groups.get(m.group);
     if (!g) {
       g = h('optgroup', { label: m.group });
@@ -93,7 +92,6 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   opSel.value = mutation;
   opSel.addEventListener('change', () => {
     mutation = opSel.value as MutationId;
-    syncBreed();
   });
   const amountSlider = slider({
     label: 'Amount',
@@ -115,20 +113,6 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   modeField.select.id = 'mutate-mode';
   const stepsLabel = h('div', { id: 'mutate-steps', class: 'steps' });
 
-  // Breed: the mate comes from a voice's window, picked by the seed (one mate per Apply).
-  const mateSel = h('select', { id: 'mutate-mate-voice', 'aria-label': 'Breed mate pool' });
-  mateSel.addEventListener('change', () => {
-    mateVoiceId = Number(mateSel.value);
-    dirty = true;
-  });
-  const mateLabel = h('div', { id: 'mutate-mate', class: 'steps' });
-  const breedRow = h(
-    'div',
-    { class: 'grid2' },
-    h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Mate from window of')), mateSel),
-    h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Mate (2nd parent)')), mateLabel),
-  );
-
   const apply1 = h('button', { id: 'mutate-apply1', class: 'primary grow', onclick: () => applySingle() }, 'Apply');
   const applyN = h('button', { id: 'mutate-applyN', class: 'primary grow', onclick: () => applyBatch() }, `Apply ${opts.count()}`);
   const evolveBtn = h('button', { id: 'mutate-evolve', class: 'grow', 'aria-pressed': 'false', onclick: () => toggleEvolve() }, 'Evolve');
@@ -142,7 +126,6 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     { role: 'tabpanel', id: 'panel-mutate' },
     views,
     h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Mutation')), opSel), amountSlider.el),
-    breedRow,
     h('div', { class: 'grid2' }, modeField.el, h('div', { class: 'field' }, h('div', { class: 'label' }, h('span', {}, 'Steps')), stepsLabel)),
     h('div', { class: 'row' }, apply1, applyN, evolveBtn),
     h(
@@ -156,45 +139,8 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   // ---- state helpers ----
   const source = (): WaveTable | undefined => model.table(model.selectedId);
 
-  /**
-   * Rebuild the mate-voice options only when the voice list or names change (not on
-   * every window move), so an open dropdown isn't closed by table adds / Evolve ticks.
-   */
-  let mateSig = '';
-  const renderMateVoices = () => {
-    const vs = model.voices;
-    if (mateVoiceId === null || !vs.some((v) => v.id === mateVoiceId)) {
-      mateVoiceId = vs.find((v) => model.batchTargets.has(v.id))?.id ?? vs[0]?.id ?? null;
-    }
-    const sig = vs.map((v) => `${v.id}:${v.name}`).join('|');
-    if (sig !== mateSig) {
-      mateSig = sig;
-      mateSel.replaceChildren(...vs.map((v) => h('option', { value: String(v.id) }, v.name)));
-    }
-    if (mateVoiceId !== null && mateSel.value !== String(mateVoiceId)) mateSel.value = String(mateVoiceId);
-  };
-
-  /** Mate for a given seed: pool = the chosen voice's window, index picked by the seed. */
-  const mateFor = (s: number): WaveTable | undefined => {
-    const v = mateVoiceId === null ? undefined : model.voice(mateVoiceId);
-    if (!v) return undefined;
-    const idx = pickMateIndex(s, v.windowEnd - v.windowStart + 1);
-    return idx < 0 ? undefined : model.tableAt(v.wavetableId, v.windowStart + idx);
-  };
-
-  const syncBreed = () => {
-    breedRow.hidden = mutation !== 'breed';
-    syncButtons();
-  };
-
-  /** Breed without a mate (no voice / empty window) would only add near-copies. */
-  const blocked = () => mutation === 'breed' && !mateFor(seed);
-
   const syncButtons = () => {
-    const noMate = blocked();
-    apply1.disabled = applyN.disabled = !source() || noMate;
-    evolveBtn.disabled = noMate && evolveTimer === null;
-    if (noMate && evolveTimer !== null) stopEvolve();
+    apply1.disabled = applyN.disabled = !source();
   };
 
   const updateSteps = () => {
@@ -220,15 +166,11 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   let dirty = true;
 
   const request = (): MutateRequest => ({ mutation, amount, seed, mode: 'single', count: 1 });
-  const currentKey = () => {
-    const src = source();
-    const mate = mutation === 'breed' ? mateFor(seed) : undefined;
-    return `${src?.id ?? 'none'}|${mutation}|${amount}|${seed}|${mate?.id ?? ''}`;
-  };
+  const currentKey = () => `${source()?.id ?? 'none'}|${mutation}|${amount}|${seed}`;
 
   const computePreview = (key: string) => {
     const src = source();
-    pv = src ? mutateBatch(request(), src, mutation === 'breed' ? mateFor(seed) : undefined)[0] : null;
+    pv = src ? mutateBatch(request(), src)[0] : null;
     pvKey = key;
     dirty = true;
   };
@@ -237,11 +179,6 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     const src = source();
     const idx = model.indexOf(model.selectedId);
     srcLabel.textContent = src ? `#${idx + 1} · id ${src.id} · ${describeRecipe(src.recipe)}` : 'Nothing selected';
-    const mate = mutation === 'breed' ? mateFor(seed) : undefined;
-    const mv = mateVoiceId === null ? undefined : model.voice(mateVoiceId);
-    mateLabel.textContent = mate
-      ? `#${model.indexOf(mate.id) + 1} · id ${mate.id} (of #${mv!.windowStart + 1}–#${mv!.windowEnd + 1})`
-      : 'none: no voice window';
     syncButtons();
     const axis = cssColor('--border');
     const cSrc = cssColor('--text');
@@ -263,18 +200,17 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   // ---- actions ----
   const applySingle = () => {
     const src = source();
-    if (!src || blocked()) return;
-    const key = currentKey();
-    const gen = pv && pvKey === key ? pv : mutateBatch(request(), src, mutation === 'breed' ? mateFor(seed) : undefined)[0];
+    if (!src) return;
+    const gen = pv && pvKey === currentKey() ? pv : mutateBatch(request(), src)[0];
     model.addTables([gen], 'single', true);
     newSeed();
   };
 
   const applyBatch = () => {
     const src = source();
-    if (!src || blocked()) return;
+    if (!src) return;
     const req: MutateRequest = { mutation, amount, seed, mode, count: opts.count() };
-    const gen = mutateBatch(req, src, mutation === 'breed' ? mateFor(seed) : undefined);
+    const gen = mutateBatch(req, src);
     model.addTables(gen, 'batch', false);
     newSeed();
   };
@@ -283,11 +219,8 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   const evolveTick = () => {
     const newest = model.timeline.at(-1);
     if (!newest || !opts.active()) return;
-    const s = randomSeed();
-    const mate = mutation === 'breed' ? mateFor(s) : undefined;
-    if (mutation === 'breed' && !mate) return;
-    const req: MutateRequest = { mutation, amount: Math.min(amount, EVOLVE_MAX_AMOUNT), seed: s, mode: 'single', count: 1 };
-    model.addTables(mutateBatch(req, newest, mate), 'single', false);
+    const req: MutateRequest = { mutation, amount: Math.min(amount, EVOLVE_MAX_AMOUNT), seed: randomSeed(), mode: 'single', count: 1 };
+    model.addTables(mutateBatch(req, newest), 'single', false);
   };
 
   const setEvolve = (on: boolean) => {
@@ -300,28 +233,17 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     evolveBtn.textContent = on ? 'Stop evolving' : 'Evolve';
     evolveBtn.setAttribute('aria-pressed', String(on));
     evolveBtn.classList.toggle('active', on);
-    syncButtons();
   };
   const stopEvolve = () => setEvolve(false);
-  const toggleEvolve = () => {
-    if (evolveTimer === null && blocked()) return;
-    setEvolve(evolveTimer === null);
-  };
+  const toggleEvolve = () => setEvolve(evolveTimer === null);
 
   // ---- subscriptions ----
-  model.on('voices', () => {
-    renderMateVoices();
-    dirty = true;
-  });
-  model.on('batchTargets', renderMateVoices);
   // Undo while evolving would be undone again by the next tick: stop instead.
   model.on('undone', stopEvolve);
   model.on('timeline', () => (dirty = true));
   onThemeChange(() => (dirty = true));
   new ResizeObserver(() => (dirty = true)).observe(el);
 
-  renderMateVoices();
-  syncBreed();
   updateSteps();
   newSeed();
 

@@ -8,11 +8,16 @@ const CELL_MIN_W = 56;
 const CELL_H = 42;
 const MAX_VIEW_H = 186;
 const SEL_H = 76;
+/** Touch long-press (ms) toggles a Breed parent; movement beyond LONG_PRESS_SLOP px cancels. */
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_SLOP = 10;
 
 /**
  * Timeline: every table ever generated (up to the cap), as a virtualized grid of
  * thumbnails drawn on one sticky canvas — only visible rows are drawn, and only when
  * something changed. Click selects; the selection is shown larger with its spectrum.
+ * Shift/Ctrl/Cmd-click or a touch long-press toggles a table as a Breed parent
+ * (badged A, B, … in the grid).
  */
 export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model } = ctx;
@@ -28,6 +33,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     h('div', { class: 'row', style: 'margin-bottom:4px' }, selLabel),
     h('div', { class: 'sel-view' }, selWave, selSpec),
     scroller,
+    h('p', { class: 'hint', style: 'margin:6px 0 0' }, 'Shift-click (or Ctrl/⌘-click) or long-press a table to add or remove it as a Breed parent.'),
   );
   watchVisibility(grid);
   watchVisibility(selWave);
@@ -75,6 +81,9 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     const cSelBg = cssColor('--accent-bg');
     const cBorder = cssColor('--border');
     const cLabel = cssColor('--muted');
+    const cParent = cssColor('--accent');
+    const cParentText = cssColor('--surface');
+    const parentIdx = new Map(model.breedParents.map((id, i) => [id, i]));
     const voices = model.voices.filter((v) => v.wavetableId === ALL_WAVETABLE_ID);
     const vColors = voices.map((v) => cssColor(voiceColorVar(v.id - 1)));
     g.font = '9px ui-monospace, monospace';
@@ -100,6 +109,16 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
         });
         g.fillStyle = cLabel;
         g.fillText(String(idx + 1), x + 3, y + 2);
+        const pi = parentIdx.get(t.id);
+        if (pi !== undefined) {
+          g.strokeStyle = cParent;
+          g.lineWidth = 2;
+          g.strokeRect(x + 1.5, y + 1.5, cellW - 3, CELL_H - 3);
+          g.fillStyle = cParent;
+          g.fillRect(x + cellW - 13, y + 2, 11, 11);
+          g.fillStyle = cParentText;
+          g.fillText(String.fromCharCode(65 + pi), x + cellW - 10.5, y + 3.5);
+        }
         voices.forEach((v, k) => {
           if (idx >= v.windowStart && idx <= v.windowEnd) {
             g.fillStyle = vColors[k];
@@ -128,12 +147,55 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   };
 
   scroller.addEventListener('scroll', () => (dirtyGrid = true), { passive: true });
-  grid.addEventListener('click', (e) => {
+  const cellAt = (clientX: number, clientY: number) => {
     const r = grid.getBoundingClientRect();
-    const c = Math.floor((e.clientX - r.left) / cellW);
-    const row = Math.floor((e.clientY - r.top + scroller.scrollTop) / CELL_H);
+    const c = Math.floor((clientX - r.left) / cellW);
+    const row = Math.floor((clientY - r.top + scroller.scrollTop) / CELL_H);
     const idx = row * cols + c;
-    if (c >= 0 && c < cols && idx >= 0 && idx < model.timeline.length) model.select(model.timeline[idx].id);
+    return c >= 0 && c < cols && idx >= 0 && idx < model.timeline.length ? model.timeline[idx] : undefined;
+  };
+  // Touch long-press toggles a Breed parent and swallows the click that follows.
+  let press: { timer: ReturnType<typeof setTimeout>; x: number; y: number } | null = null;
+  let swallowClick = false;
+  const cancelPress = () => {
+    if (press) clearTimeout(press.timer);
+    press = null;
+  };
+  grid.addEventListener('pointerdown', (e) => {
+    cancelPress();
+    swallowClick = false;
+    if (e.pointerType === 'mouse') return;
+    const { clientX: x, clientY: y } = e;
+    press = {
+      x,
+      y,
+      timer: setTimeout(() => {
+        press = null;
+        const t = cellAt(x, y);
+        if (!t) return;
+        swallowClick = true;
+        model.toggleBreedParent(t.id);
+        navigator.vibrate?.(15);
+      }, LONG_PRESS_MS),
+    };
+  });
+  grid.addEventListener('pointermove', (e) => {
+    if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > LONG_PRESS_SLOP) cancelPress();
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave'] as const) grid.addEventListener(ev, cancelPress);
+  // The long-press would otherwise open the context menu on touch devices.
+  grid.addEventListener('contextmenu', (e) => {
+    if (swallowClick || press) e.preventDefault();
+  });
+  grid.addEventListener('click', (e) => {
+    if (swallowClick) {
+      swallowClick = false;
+      return;
+    }
+    const t = cellAt(e.clientX, e.clientY);
+    if (!t) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) model.toggleBreedParent(t.id);
+    else model.select(t.id);
   });
   new ResizeObserver(() => {
     dirtyGrid = dirtySel = true;
@@ -153,6 +215,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     requestAnimationFrame(() => scrollToIndex(model.indexOf(model.selectedId)));
   });
   model.on('voices', () => (dirtyGrid = true));
+  model.on('parents', () => (dirtyGrid = true));
   updateMeta();
 
   return {

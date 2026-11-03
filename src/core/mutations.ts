@@ -36,8 +36,13 @@ export const MUTATIONS = [
   { group: 'Spectral', id: 'odd', label: 'Odd only' },
   { group: 'Random', id: 'jitter', label: 'Jitter' },
   { group: 'Random', id: 'scramble', label: 'Scramble' },
-  { group: 'Random', id: 'breed', label: 'Breed' },
+  // Legacy (M2): superseded by the Breed tab (core/breed.ts); kept so older recipes
+  // re-render. Not offered in the Mutate picker.
+  { group: 'Random', id: 'breed', label: 'Breed', legacy: true },
 ] as const;
+
+/** Mutations offered in the UI (legacy ones only re-render old recipes). */
+export const MUTATION_CHOICES = MUTATIONS.filter((m) => !('legacy' in m));
 
 export type MutationId = (typeof MUTATIONS)[number]['id'];
 

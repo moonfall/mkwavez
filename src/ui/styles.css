@@ -516,3 +516,72 @@ button:disabled {
   opacity: 0.5;
   cursor: default;
 }
+
+/* ---- breed ---- */
+.parents {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 6px;
+  margin: 2px 0 8px;
+}
+.parents-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+.parent-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 4px;
+}
+.parent-card canvas {
+  border: 0;
+  border-radius: 0;
+}
+.pc-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 2px;
+  font-size: 11px;
+}
+.pc-letter {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--surface);
+  font-weight: 700;
+  text-align: center;
+}
+.pc-id {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-weight-field {
+  display: none;
+}
+.parents.show-weights .pc-weight-field {
+  display: block;
+}
+.pc-weight-field .label {
+  font-size: 10px;
+  min-height: 16px;
+}
+.pc-btns {
+  display: flex;
+  gap: 3px;
+  margin-top: 3px;
+}
+.pc-btns button {
+  flex: 1 1 0;
+  padding: 0;
+}

@@ -34,8 +34,16 @@ The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to overr
   preview side by side). Pick a mutation and Amount; the shown seed is used by the
   preview, Apply and every table of Apply N (Linear / Log sweep or Chain). Reroll
   draws a new seed; one is drawn after each Apply. Evolve keeps mutating the newest
-  table on a timer. Breed pulls magnitudes toward a mate picked from a voice's window.
-- **Timeline**: every table, in order (cap 4096). Click to select and inspect.
+  table on a timer.
+- **Generate → Breed**: combine 2–8 parents. Shift-click (or Ctrl/⌘-click) or
+  long-press tables in the Timeline, "Add selected", or "Use window" of a voice; reorder
+  or remove them on their cards. Pick an operator (crossfade, spectral mix, magnitude /
+  phase swaps, envelope transfer, harmonic split, genetic masks, time splice), a Bias
+  (0 = parent A) and how it walks the parents (path, ring, custom weights), and a
+  Mutation rate. Breed adds one child; Breed N sweeps the bias or makes a seeded
+  generation of N children.
+- **Timeline**: every table, in order (cap 4096). Click to select and inspect;
+  Shift-click / long-press toggles Breed parents (badged A, B, …).
 - **Wavetables**: the auto "All" wavetable as an amplitude heat map with voice windows.
 - **Voices**: window, position, LFO, Blend/Step, octave, level, ADSR per voice.
 - **Sequences**: 8-row pentatonic step grids, one per voice by default; shared tempo.

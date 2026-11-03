@@ -17,6 +17,8 @@ src/
     mutations.ts        prototype mutations (identity at amount 0) + sweep amounts
     mutateBatch.ts      Apply / Apply N (lin, log, chain) → tables + recipes; seeding
                         rules; renderMutateRecipe() re-renders from parent tables
+    breed.ts            multi-parent breed operators, bias walks → per-parent weights,
+                        breedBatch (single / sweep / gen), renderBreedRecipe()
     mipmap.ts           per-octave band-limited mip sets, packed in one Float32Array
     table.ts            WaveTable, Recipe, IdAllocator
     timeline.ts         appendWithEviction (oldest-first, pin-aware), index/window remap
@@ -29,7 +31,8 @@ src/
   audio/                protocol.ts (messages), worklet.ts (AudioWorkletProcessor adapter),
                         bridge.ts (AudioContext owner, state → messages, mip building)
   ui/                   Plain DOM + canvas sections (no framework), styles.css tokens;
-                        generate.ts hosts the Seed tab and mutate.ts (Mutate tab)
+                        generate.ts hosts the Seed tab, mutate.ts (Mutate tab) and
+                        breed.ts (Breed tab); timeline.ts toggles Breed parents
   main.ts               initial state, section assembly, frame loop
 tests/                  vitest unit tests (core + AppModel)
 scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
@@ -49,7 +52,18 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   `chainStepSeed(seed, j)` (step 0 = seed, so the first chain table equals the
   preview). A chain table at index i re-renders as i+1 steps from the source, so it
   needs only the source (and mate), not the intermediate tables. Re-rendering needs
-  the parents to still exist (or be re-renderable themselves).
+  the parents to still exist (or be re-renderable themselves). The `breed` mutation
+  is legacy (not offered in the UI since M3) but still re-renders.
+- **Breed recipe** — `op: 'breed'`, `params { breed (operator), bias (this table's),
+  batchBias (B), mode: single|sweep|gen, walk: path|ring|weights, weights ('' or
+  comma-separated per parent), rate }`, `seed` (the Apply's seed), `parents` (all
+  parent ids, A first), `batch {index, count}`. Sweep table i uses bias `B·(i+1)/N`
+  and the seed; generation child j uses `childSeed(seed, j)` (child 0 = seed = the
+  preview). Weights come from `breedWeights(P, bias, walk, weights)`; bias 0 is
+  always `[1, 0, …]`, so every operator returns shape(A) there.
+- **Breed parents** — `AppModel.breedParents`: ordered ids (≤ 8) of timeline tables,
+  topic `parents`. Filtered whenever the timeline changes (eviction, undo); not part
+  of undo snapshots.
 - **Timeline** — ordered `WaveTable[]`, cap 4096. Eviction is oldest-first and skips
   tables referenced by any non-auto wavetable (`pinnedIds`). If everything is pinned
   the timeline may exceed the cap.
@@ -98,8 +112,10 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   one sticky canvas (only visible rows drawn); the wavetable overview is a cached
   heat-map bitmap with overlays. The Mutate preview is computed in the frame loop,
   not in input handlers: only while the tab is showing and on screen, only when its
-  key (source id, mutation, amount, seed, mate id) changed, and at most every 50 ms
-  while a control is dragged. Apply reuses the preview table when the key matches.
+  key (source id, mutation, amount, seed) changed, and at most every 50 ms while a
+  control is dragged. Apply reuses the preview table when the key matches. The Breed
+  preview follows the same rules (key: parent ids, operator, bias, walk, weights,
+  rate, seed); parent spectra are cached per table data array.
 
 ## Playback semantics
 

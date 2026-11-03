@@ -1,0 +1,458 @@
+/**
+ * Breeding: combine 2..MAX_PARENTS parent tables into a child (UI: ui/breed.ts).
+ *
+ * Every operator takes per-parent weights w (sum 1) derived from one Bias control:
+ *  - walk 'path':    bias 0..1 walks A → B → C → … → last parent (pairwise crossfade);
+ *  - walk 'ring':    bias 0..1 walks A → B → … → last → A;
+ *  - walk 'weights': bias 0..1 moves from A alone to the user's per-parent weights.
+ * At bias 0 the weights are exactly [1, 0, …], and every operator then returns
+ * shape(A) (tested). Parents are shaped, so their fundamentals are phase-aligned and
+ * time-domain and per-harmonic combinations are clean.
+ *
+ * Operators read the weights in one of two ways: as mix amounts (Crossfade, Spectral
+ * mix, the swaps, Envelope) or as shares — each harmonic / band / time segment is
+ * taken whole from one parent, picked by cumulative weight (Split, Genetic, Splice).
+ * Seeded picks use one uniform per harmonic (or band / segment) that doesn't depend
+ * on the bias, so a bias sweep with one seed hands harmonics over monotonically.
+ *
+ * Optional mutation: seeded Jitter at rate · min(1, 2·(1 − max w)), i.e. zero at any
+ * pure parent and full at an even two-way mix.
+ *
+ * Batches (recipe op 'breed'):
+ *   params  { breed, bias (this table's), batchBias (B), mode: single|sweep|gen,
+ *             walk, weights ('' or comma-separated per-parent weights), rate }
+ *   seed    the Apply's seed (gen child j uses childSeed(seed, j); child 0 = seed)
+ *   parents every parent id, in order (A first)
+ *   batch   { index, count }
+ * Sweep table i (0-based) of N uses bias B·(i+1)/N and the Apply's seed.
+ */
+import { KMAX, TABLE_SIZE } from './constants';
+import { fft } from './fft';
+import { mutate } from './mutations';
+import { deriveSeed, Prng } from './prng';
+import { shape } from './shape';
+import type { GeneratedTable, Recipe, TableId, WaveTable } from './table';
+
+const N = TABLE_SIZE;
+export const MAX_PARENTS = 8;
+
+export const BREED_OPS = [
+  { group: 'Blend', id: 'mix', label: 'Crossfade', seeded: false },
+  { group: 'Blend', id: 'spectral', label: 'Spectral mix', seeded: false },
+  { group: 'Swap', id: 'magsA', label: 'A mags + others’ phases', seeded: false },
+  { group: 'Swap', id: 'phasesA', label: 'A phases + others’ mags', seeded: false },
+  { group: 'Swap', id: 'envelope', label: 'Envelope transfer', seeded: false },
+  { group: 'Crossover', id: 'split', label: 'Harmonic split', seeded: false },
+  { group: 'Crossover', id: 'genetic', label: 'Genetic (harmonics)', seeded: true },
+  { group: 'Crossover', id: 'bands', label: 'Genetic (bands)', seeded: true },
+  { group: 'Crossover', id: 'splice', label: 'Time splice', seeded: true },
+] as const;
+
+export type BreedOpId = (typeof BREED_OPS)[number]['id'];
+export type BiasWalk = 'path' | 'ring' | 'weights';
+export type BreedMode = 'single' | 'sweep' | 'gen';
+
+export interface BreedParams {
+  op: BreedOpId;
+  /** 0 = parent A exactly. */
+  bias: number;
+  walk: BiasWalk;
+  /** Per-parent weights for walk 'weights' (missing entries count as 1). */
+  weights?: readonly number[];
+  /** Mutation (Jitter) rate, 0..1. */
+  rate: number;
+  seed: number;
+}
+
+/** Splice: number of time segments and crossfade width (samples, raised cosine). */
+export const SPLICE_SEGMENTS = 8;
+export const SPLICE_FADE = 64;
+/** Envelope: Gaussian smoothing width (harmonics) and floor relative to the envelope peak. */
+const ENV_SIGMA = 2;
+const ENV_FLOOR = 1e-3;
+/** A harmonic below this fraction of its table's strongest has no meaningful phase. */
+const PHASE_EPS = 1e-4;
+/** Stream index for the mutation seed (independent of the mask draws). */
+const MUTATION_STREAM = 0x6a17;
+
+export const isSeededOp = (op: BreedOpId): boolean => BREED_OPS.find((o) => o.id === op)?.seeded ?? false;
+
+/** Per-parent weights (sum 1) for a bias walk. Bias 0 is always [1, 0, …]. */
+export function breedWeights(count: number, bias: number, walk: BiasWalk, custom?: readonly number[]): number[] {
+  const w = new Array<number>(count).fill(0);
+  if (count <= 0) return w;
+  const t = Math.max(0, Math.min(1, bias));
+  if (count === 1) {
+    w[0] = 1;
+    return w;
+  }
+  if (walk === 'weights') {
+    const c = Array.from({ length: count }, (_, i) => Math.max(0, custom?.[i] ?? 1));
+    const sum = c.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < count; i++) w[i] = t * (sum > 0 ? c[i] / sum : 1 / count);
+    w[0] += 1 - t;
+    return w;
+  }
+  const segs = walk === 'ring' ? count : count - 1;
+  const s = t * segs;
+  const i = Math.min(Math.floor(s), segs - 1);
+  const f = s - i;
+  w[i % count] += 1 - f;
+  w[(i + 1) % count] += f;
+  return w;
+}
+
+/** Jitter amount for these weights: 0 at a pure parent, full at an even two-way mix. */
+export function mutationAmount(rate: number, w: readonly number[]): number {
+  return Math.max(0, rate) * Math.min(1, 2 * (1 - Math.max(...w)));
+}
+
+// ---- spectra ----
+
+interface Spec {
+  re: Float64Array;
+  im: Float64Array;
+  mag: Float64Array;
+  maxMag: number;
+}
+
+const specCache = new WeakMap<Float32Array, Spec>();
+
+/** Harmonics 1..KMAX of a (shaped) table; cached per data array (tables are immutable). */
+function spec(x: Float32Array): Spec {
+  let s = specCache.get(x);
+  if (s) return s;
+  const R = Float64Array.from(x);
+  const I = new Float64Array(N);
+  fft(R, I, false);
+  const re = new Float64Array(KMAX + 1);
+  const im = new Float64Array(KMAX + 1);
+  const mag = new Float64Array(KMAX + 1);
+  let maxMag = 0;
+  for (let k = 1; k <= KMAX; k++) {
+    re[k] = R[k];
+    im[k] = I[k];
+    mag[k] = Math.hypot(R[k], I[k]);
+    maxMag = Math.max(maxMag, mag[k]);
+  }
+  s = { re, im, mag, maxMag };
+  specCache.set(x, s);
+  return s;
+}
+
+/** Harmonics 1..KMAX → time domain → shape(). */
+function fromHarmonics(re: Float64Array, im: Float64Array): Float32Array {
+  const R = new Float64Array(N);
+  const I = new Float64Array(N);
+  for (let k = 1; k <= KMAX; k++) {
+    R[k] = re[k];
+    I[k] = im[k];
+    R[N - k] = re[k];
+    I[N - k] = -im[k];
+  }
+  fft(R, I, true);
+  return shape(R);
+}
+
+/** Index of the parent whose cumulative-weight interval contains u (0 <= u < 1). */
+function pickByShare(w: readonly number[], u: number): number {
+  let c = 0;
+  for (let p = 0; p < w.length; p++) {
+    c += w[p];
+    if (u < c) return p;
+  }
+  // Rounding: fall back to the last parent with weight.
+  for (let p = w.length - 1; p >= 0; p--) if (w[p] > 0) return p;
+  return 0;
+}
+
+const hasPhase = (s: Spec, k: number) => s.mag[k] > s.maxMag * PHASE_EPS;
+
+/** Weighted circular mean of the parents' phases at k (unit phasors; undefined phases skipped). */
+function meanPhase(S: readonly Spec[], w: readonly number[], k: number, fallback: number): number {
+  let x = 0;
+  let y = 0;
+  let best = -1;
+  let bestW = 0;
+  for (let p = 0; p < S.length; p++) {
+    if (!w[p] || !hasPhase(S[p], k)) continue;
+    const m = S[p].mag[k];
+    x += (w[p] * S[p].re[k]) / m;
+    y += (w[p] * S[p].im[k]) / m;
+    if (w[p] > bestW) {
+      bestW = w[p];
+      best = p;
+    }
+  }
+  if (best < 0) return fallback;
+  if (Math.hypot(x, y) < 1e-9 * bestW) return Math.atan2(S[best].im[k], S[best].re[k]);
+  return Math.atan2(y, x);
+}
+
+/** Gaussian-smoothed magnitude envelope, normalised to peak 1, floored, as log. */
+function logEnvelope(s: Spec): Float64Array {
+  const e = new Float64Array(KMAX + 1);
+  const r = Math.ceil(3 * ENV_SIGMA);
+  let peak = 0;
+  for (let k = 1; k <= KMAX; k++) {
+    let a = 0;
+    let ws = 0;
+    for (let j = Math.max(1, k - r); j <= Math.min(KMAX, k + r); j++) {
+      const g = Math.exp(-0.5 * ((j - k) / ENV_SIGMA) ** 2);
+      a += g * s.mag[j];
+      ws += g;
+    }
+    e[k] = a / ws;
+    peak = Math.max(peak, e[k]);
+  }
+  for (let k = 1; k <= KMAX; k++) e[k] = Math.log(peak > 0 ? Math.max(e[k] / peak, ENV_FLOOR) : 1);
+  return e;
+}
+
+/** Third-octave band of harmonic k (k=1 → 0 … k=72 → 18). */
+const bandOf = (k: number) => Math.floor(3 * Math.log2(k));
+
+function circularGates(assign: Int32Array, parents: number): Float64Array[] {
+  // Raised-cosine kernel, normalised; gates sum to 1 because the indicators do.
+  const W = SPLICE_FADE;
+  const ker = new Float64Array(W + 1);
+  let ks = 0;
+  for (let j = 0; j <= W; j++) {
+    ker[j] = 0.5 - 0.5 * Math.cos((2 * Math.PI * (j + 0.5)) / (W + 1));
+    ks += ker[j];
+  }
+  const gates: Float64Array[] = [];
+  for (let p = 0; p < parents; p++) {
+    const g = new Float64Array(N);
+    let any = false;
+    for (let i = 0; i < N; i++) if (assign[i] === p) any = true;
+    if (any) {
+      for (let i = 0; i < N; i++) {
+        let a = 0;
+        for (let j = 0; j <= W; j++) if (assign[(i + j - W / 2 + N) % N] === p) a += ker[j];
+        g[i] = a / ks;
+      }
+    }
+    gates.push(g);
+  }
+  return gates;
+}
+
+/** One child from parent data (A first). Deterministic in (op, weights, rate, seed). */
+export function breed(parents: readonly Float32Array[], params: BreedParams): Float32Array {
+  if (!parents.length) throw new Error('breed: no parents');
+  const P = parents.length;
+  const w = breedWeights(P, params.bias, params.walk, params.weights);
+  const seed = params.seed >>> 0;
+  let y = breedRaw(params.op, parents, w, seed);
+  const amt = mutationAmount(params.rate, w);
+  if (amt > 0) y = mutate('jitter', y, amt, deriveSeed(seed, MUTATION_STREAM));
+  return y;
+}
+
+function breedRaw(op: BreedOpId, X: readonly Float32Array[], w: readonly number[], seed: number): Float32Array {
+  const P = X.length;
+  const rand = new Prng(seed);
+  const re = new Float64Array(KMAX + 1);
+  const im = new Float64Array(KMAX + 1);
+  switch (op) {
+    case 'mix': {
+      const y = new Float64Array(N);
+      for (let p = 0; p < P; p++) {
+        if (!w[p]) continue;
+        const x = X[p];
+        for (let i = 0; i < N; i++) y[i] += w[p] * x[i];
+      }
+      return shape(y);
+    }
+    case 'spectral': {
+      // Magnitudes and phases interpolated separately: no cancellation.
+      const S = X.map(spec);
+      for (let k = 1; k <= KMAX; k++) {
+        let m = 0;
+        let fb = 0;
+        let fbW = -1;
+        for (let p = 0; p < P; p++) {
+          m += w[p] * S[p].mag[k];
+          if (w[p] * S[p].mag[k] > fbW) {
+            fbW = w[p] * S[p].mag[k];
+            fb = Math.atan2(S[p].im[k], S[p].re[k]);
+          }
+        }
+        const ph = meanPhase(S, w, k, fb);
+        re[k] = m * Math.cos(ph);
+        im[k] = m * Math.sin(ph);
+      }
+      return fromHarmonics(re, im);
+    }
+    case 'magsA': {
+      // A's magnitudes; phases walk toward the others' (A's where a donor has none).
+      const S = X.map(spec);
+      for (let k = 1; k <= KMAX; k++) {
+        const pa = Math.atan2(S[0].im[k], S[0].re[k]);
+        let x = 0;
+        let y = 0;
+        for (let p = 0; p < P; p++) {
+          if (!w[p]) continue;
+          const ph = hasPhase(S[p], k) ? Math.atan2(S[p].im[k], S[p].re[k]) : pa;
+          x += w[p] * Math.cos(ph);
+          y += w[p] * Math.sin(ph);
+        }
+        const ph = Math.hypot(x, y) < 1e-9 ? pa : Math.atan2(y, x);
+        re[k] = S[0].mag[k] * Math.cos(ph);
+        im[k] = S[0].mag[k] * Math.sin(ph);
+      }
+      return fromHarmonics(re, im);
+    }
+    case 'phasesA': {
+      // A's phases; magnitudes walk toward the others' (where A has no phase, the donors').
+      const S = X.map(spec);
+      const donors = w.map((v, p) => (p === 0 ? 0 : v));
+      for (let k = 1; k <= KMAX; k++) {
+        let m = 0;
+        for (let p = 0; p < P; p++) m += w[p] * S[p].mag[k];
+        const pa = Math.atan2(S[0].im[k], S[0].re[k]);
+        const ph = hasPhase(S[0], k) ? pa : meanPhase(S, donors, k, pa);
+        re[k] = m * Math.cos(ph);
+        im[k] = m * Math.sin(ph);
+      }
+      return fromHarmonics(re, im);
+    }
+    case 'envelope': {
+      // A's harmonics, re-weighted from A's smoothed envelope toward the weighted
+      // (geometric) mix of all parents' envelopes. A's phases.
+      const S = X.map(spec);
+      const E = X.map((_, p) => (w[p] || p === 0 ? logEnvelope(S[p]) : null));
+      for (let k = 1; k <= KMAX; k++) {
+        let le = 0;
+        for (let p = 0; p < P; p++) if (w[p]) le += w[p] * E[p]![k];
+        const g = Math.exp(le - E[0]![k]);
+        re[k] = S[0].re[k] * g;
+        im[k] = S[0].im[k] * g;
+      }
+      return fromHarmonics(re, im);
+    }
+    case 'split': {
+      // Contiguous bands on a log-harmonic axis, A lowest, sized by the weights.
+      const S = X.map(spec);
+      const L = Math.log(KMAX + 1);
+      for (let k = 1; k <= KMAX; k++) {
+        const p = pickByShare(w, Math.log(k) / L);
+        re[k] = S[p].re[k];
+        im[k] = S[p].im[k];
+      }
+      return fromHarmonics(re, im);
+    }
+    case 'genetic':
+    case 'bands': {
+      const S = X.map(spec);
+      const nu = op === 'bands' ? bandOf(KMAX) + 1 : KMAX + 1;
+      const u = new Float64Array(nu);
+      for (let j = 0; j < nu; j++) u[j] = rand.next();
+      for (let k = 1; k <= KMAX; k++) {
+        const p = pickByShare(w, u[op === 'bands' ? bandOf(k) : k]);
+        re[k] = S[p].re[k];
+        im[k] = S[p].im[k];
+      }
+      return fromHarmonics(re, im);
+    }
+    case 'splice': {
+      // Seeded segment boundaries (stratified), each segment from one parent, joined
+      // by circular raised-cosine crossfades (no seams, including at the loop point).
+      const Sg = SPLICE_SEGMENTS;
+      const b: number[] = [];
+      for (let j = 0; j < Sg; j++) b.push(Math.floor(((j + 0.15 + 0.7 * rand.next()) / Sg) * N));
+      const pick: number[] = [];
+      for (let j = 0; j < Sg; j++) pick.push(pickByShare(w, rand.next()));
+      const assign = new Int32Array(N);
+      for (let j = 0; j < Sg; j++) {
+        const end = j + 1 < Sg ? b[j + 1] : b[0] + N;
+        for (let i = b[j]; i < end; i++) assign[i % N] = pick[j];
+      }
+      const gates = circularGates(assign, P);
+      const y = new Float64Array(N);
+      for (let p = 0; p < P; p++) {
+        const g = gates[p];
+        const x = X[p];
+        for (let i = 0; i < N; i++) if (g[i]) y[i] += g[i] * x[i];
+      }
+      return shape(y);
+    }
+  }
+}
+
+// ---- batches and recipes ----
+
+export interface BreedRequest extends BreedParams {
+  mode: BreedMode;
+  /** Number of children (forced to 1 for 'single'). */
+  count: number;
+}
+
+/** Seed for generation child j (0-based); child 0 uses the Apply's seed, so it equals the preview. */
+export function childSeed(seed: number, j: number): number {
+  return j === 0 ? seed >>> 0 : deriveSeed(seed, j);
+}
+
+/** Sweep biases B·(i+1)/N, i = 0..N−1 (ends at B, excludes 0 = parent A). */
+export function sweepBiases(n: number, bias: number): number[] {
+  return Array.from({ length: n }, (_, i) => (bias * (i + 1)) / n);
+}
+
+const weightsParam = (walk: BiasWalk, weights?: readonly number[]) =>
+  walk === 'weights' && weights ? weights.join(',') : '';
+
+export function parseWeights(s: unknown): number[] | undefined {
+  if (typeof s !== 'string' || !s) return undefined;
+  return s.split(',').map(Number);
+}
+
+/** Generate the children for one Apply. Parents in order, A first (>= 1). */
+export function breedBatch(req: BreedRequest, parents: readonly WaveTable[]): GeneratedTable[] {
+  const count = req.mode === 'single' ? 1 : Math.max(1, Math.round(req.count));
+  const seed = req.seed >>> 0;
+  const data = parents.map((p) => p.data);
+  const ids: TableId[] = parents.map((p) => p.id);
+  const biases = req.mode === 'sweep' ? sweepBiases(count, req.bias) : new Array<number>(count).fill(req.bias);
+  const weights = req.walk === 'weights' ? Array.from({ length: parents.length }, (_, i) => req.weights?.[i] ?? 1) : undefined;
+  const out: GeneratedTable[] = [];
+  for (let i = 0; i < count; i++) {
+    const s = req.mode === 'gen' ? childSeed(seed, i) : seed;
+    const recipe: Recipe = {
+      op: 'breed',
+      params: {
+        breed: req.op,
+        bias: biases[i],
+        batchBias: req.bias,
+        mode: req.mode,
+        walk: req.walk,
+        weights: weightsParam(req.walk, weights),
+        rate: req.rate,
+      },
+      seed,
+      parents: ids,
+      batch: { index: i, count },
+    };
+    out.push({ data: breed(data, { op: req.op, bias: biases[i], walk: req.walk, weights, rate: req.rate, seed: s }), recipe });
+  }
+  return out;
+}
+
+/** Re-render a 'breed' recipe; `resolve` supplies parent data by id. */
+export function renderBreedRecipe(r: Recipe, resolve: (id: TableId) => Float32Array | undefined): Float32Array {
+  const data = r.parents.map((id) => {
+    const d = resolve(id);
+    if (!d) throw new Error(`renderBreedRecipe: parent ${id} unavailable`);
+    return d;
+  });
+  const p = r.params;
+  const index = r.batch?.index ?? 0;
+  return breed(data, {
+    op: p.breed as BreedOpId,
+    bias: Number(p.bias),
+    walk: p.walk as BiasWalk,
+    weights: parseWeights(p.weights),
+    rate: Number(p.rate),
+    seed: p.mode === 'gen' ? childSeed(r.seed, index) : r.seed,
+  });
+}
