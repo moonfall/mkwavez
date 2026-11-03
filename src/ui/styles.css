@@ -988,6 +988,9 @@ input.seed-expr:focus-visible {
   font-size: 12px;
   color: var(--new);
 }
+.seed-status.warn {
+  color: var(--danger);
+}
 .seed-status:empty {
   display: none;
 }
@@ -1025,6 +1028,16 @@ button.seed-card[aria-pressed='true'] {
 }
 button.seed-card[aria-pressed='true'] .seed-card-label {
   color: var(--accent-text);
+}
+button.seed-card.failed {
+  border-color: var(--danger);
+}
+button.seed-card.failed .seed-card-label,
+button.seed-card.failed[aria-pressed='true'] .seed-card-label {
+  color: var(--danger);
+}
+button.seed-card.failed .seed-card-label::after {
+  content: ' · error';
 }
 
 /* phone: library collapses to ▲ · Category › Name (pos) · ▼; list opens inline */

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { compileFormula } from '../src/browser/formulaEval';
 import { TABLE_SIZE } from '../src/core/constants';
 import {
+  FormulaAborted,
+  FormulaError,
   FORMULA_PRESETS,
   generateBasic,
   renderRecipe,
@@ -103,6 +105,17 @@ describe('Seed library', () => {
       for (let i = 0; i < TABLE_SIZE; i++) err = Math.max(err, Math.abs(f.data[i] - b.data[i]));
       expect(err, e.id).toBeLessThan(1e-4);
     }
+  });
+
+  it('a runaway formula can be aborted; errors are per table', () => {
+    const blank = seedEntry('blank-formula')!;
+    const r = req(blank, { expr: 'sin(p)/u', count: 3 });
+    const fn = compileFormula(r.expr);
+    expect(() => seedTable(r, 0, fn)).toThrow(FormulaError); // u = 0 → non-finite
+    expect(seedTable(r, 1, fn).data.every(Number.isFinite)).toBe(true);
+    let calls = 0;
+    expect(() => seedTable(r, 1, fn, () => ++calls > 3)).toThrow(FormulaAborted);
+    expect(calls).toBe(4);
   });
 
   it('seedParams merges overrides into defaults', () => {

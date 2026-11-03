@@ -154,9 +154,11 @@ export interface SeedRequest {
 
 /**
  * Table `index` of a Seed batch. Formula entries need the compiled expression (the core
- * never parses expressions). Throws FormulaError on non-finite formula output.
+ * never parses expressions). Throws FormulaError on non-finite formula output and
+ * FormulaAborted when `abort()` returns true (polled during formula evaluation only;
+ * the other modes are bounded).
  */
-export function seedTable(req: SeedRequest, index: number, fn?: FormulaFn): GeneratedTable {
+export function seedTable(req: SeedRequest, index: number, fn?: FormulaFn, abort?: () => boolean): GeneratedTable {
   const { entry, count } = req;
   const seed = req.seed >>> 0;
   const batch = { index, count };
@@ -179,7 +181,7 @@ export function seedTable(req: SeedRequest, index: number, fn?: FormulaFn): Gene
     case 'formula': {
       if (!fn) throw new Error('seedTable: formula entries need a compiled expression');
       return {
-        data: formulaTable(fn, seed, index, count),
+        data: formulaTable(fn, seed, index, count, abort),
         recipe: recipe('formula', { expr: req.expr, name: entry.name, edited: req.expr !== entry.expr }),
       };
     }

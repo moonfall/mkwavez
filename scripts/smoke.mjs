@@ -199,9 +199,16 @@ async function seedChecks(page, tlCount) {
   await page.click('#seed-up');
   assert((await title()) === 'Perlin › Noisy FM', '▲ steps within the results');
   assert(await page.isVisible('#seed-reroll'), 'seed / Reroll shown for pnoise formulas');
+  await page.press('#seed-search', 'Enter');
+  assert(
+    (await title()) === 'Perlin › Noisy FM' && !(await page.isVisible('#seed-list')) && (await focusedId()) === 'seed-current',
+    'Enter keeps a matching selection and closes the phone list',
+  );
+  await page.click('#seed-current');
   await page.fill('#seed-search', 'gray');
   await page.press('#seed-search', 'Enter');
   assert((await title()) === 'Bits › Gray code', 'Enter selects the first match');
+  await page.click('#seed-current');
   await page.press('#seed-search', 'Escape');
   const scrolled = await page.$eval('#seed-list', (l) => {
     const b = l.querySelector('.seed-entry[aria-current="true"]');
@@ -220,6 +227,28 @@ async function seedChecks(page, tlCount) {
   await page.fill('#seed-expr', 'q*sin(p)');
   await page.waitForFunction(() => document.querySelector('#seed-error').textContent.startsWith('Error'), null, { timeout: 3000 });
   assert(true, 'runtime error (unknown name) shown inline');
+
+  // Errors are per table: sin(p)/u fails only at u = 0 (#1).
+  await page.fill('#seed-expr', 'sin(p)/u');
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('#seed-strip .seed-card.failed').length === 1 &&
+      document.querySelector('#seed-strip .seed-card:nth-child(1)').classList.contains('failed') &&
+      document.querySelector('#seed-error').textContent.startsWith('Error at #1'),
+    null,
+    { timeout: 3000 },
+  );
+  assert((await page.isDisabled('#seed-add-shown')) && (await page.isDisabled('#seed-add-batch')), 'failing card marked; Add shown (on it) and Add batch disabled');
+  await page.click('#seed-strip .seed-card:nth-child(3)');
+  await page.waitForFunction(() => !document.querySelector('#seed-add-shown').disabled, null, { timeout: 3000 });
+  assert((await canvasInk(page, '#seed-strip .seed-card:nth-child(8) canvas')).n > 0, 'the other tables still compute; Add shown allowed on them');
+  await page.click('#seed-strip .seed-card:nth-child(1)');
+
+  // A runaway formula is aborted instead of freezing the page.
+  const t0 = Date.now();
+  await page.fill('#seed-expr', '[...Array(3000000)].reduce((s)=>s+1,0)*0+sin(p)');
+  await page.waitForFunction(() => document.querySelector('#seed-error').textContent.startsWith('Stopped'), null, { timeout: 5000 });
+  assert((await page.isDisabled('#seed-add-batch')) && Date.now() - t0 < 4000, `runaway formula stopped (${Date.now() - t0} ms)`);
   await page.click('#seed-revert');
   assert(
     (await page.inputValue('#seed-expr')) === preset && !(await page.isVisible('#seed-edited')) && !(await page.isDisabled('#seed-add-batch')),
@@ -228,7 +257,7 @@ async function seedChecks(page, tlCount) {
   const edited = '(1-u)*sin(p) + u*sin(3*p)';
   await page.fill('#seed-expr', edited);
   assert((await page.isVisible('#seed-edited')) && (await page.isVisible('#seed-revert')), 'editing marks it edited');
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(500);
 
   // Batch strip: arrow keys move the shown table.
   assert((await page.$$('#seed-strip .seed-card')).length === 8, 'strip shows N = 8 cards');
@@ -298,8 +327,6 @@ async function seedChecks(page, tlCount) {
   await page.click('#seed-current');
   await page.fill('#seed-search', 'cellular');
   await page.press('#seed-search', 'Enter');
-  await page.press('#seed-search', 'Escape');
-  await page.click('#seed-current');
   assert(
     (await title()) === 'Noise & automata › Cellular automaton' && (await page.textContent('#seed-kind')) === 'Parameters',
     'CA shows parameters',
@@ -340,9 +367,23 @@ async function seedChecks(page, tlCount) {
   await page.click('#seed-current');
   await page.fill('#seed-search', 'saw');
   await page.press('#seed-search', 'Enter');
-  await page.press('#seed-search', 'Escape');
-  await page.click('#seed-current');
   assert((await title()) === 'Basic › Saw' && (await page.textContent('#seed-kind')) === 'Basic wave', 'Saw is a basic (additive) wave');
+  await page.click('#seed-as-formula');
+  assert(
+    (await title()) === 'Custom › Blank formula' && (await page.inputValue('#seed-expr')).includes('reduce') && (await page.isVisible('#seed-edited')),
+    'Edit as formula copies the additive series into Blank formula',
+  );
+  await page.fill('#seed-expr', 'sin(p)*0.5');
+  await page.click('#seed-current');
+  await page.fill('#seed-search', 'saw');
+  await page.press('#seed-search', 'Enter');
+  let dialog = '';
+  page.once('dialog', async (d) => {
+    dialog = d.message();
+    await d.dismiss();
+  });
+  await page.click('#seed-as-formula');
+  assert(dialog.includes('Replace') && (await title()) === 'Basic › Saw', 'Edit as formula asks before replacing Blank formula edits (cancel keeps them)');
   const ov = await M(() => document.documentElement.scrollWidth > window.innerWidth);
   assert(!ov, 'Seed: no horizontal overflow at 390px');
 

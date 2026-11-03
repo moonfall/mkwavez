@@ -2,6 +2,7 @@ import type { AppModel } from '../app/model';
 import { compileFormula } from '../browser/formulaEval';
 import {
   batchU,
+  FormulaAborted,
   SEED_LIBRARY,
   seedParams,
   seedTable,
@@ -22,6 +23,10 @@ export const MAX_BATCH = 64;
 const PREVIEW_MS = 50;
 /** Main-thread time per frame spent computing preview tables and thumbnails. */
 const BUDGET_MS = 8;
+/** Formula edits restart the preview only after this long without typing. */
+const TYPING_MS = 300;
+/** A formula table taking longer than this is aborted (runaway expression). */
+const TABLE_CAP_MS = 150;
 const THUMB_W = 44;
 const THUMB_H = 18;
 const CARD_W = 112;
@@ -75,8 +80,11 @@ interface Job {
   req: SeedRequest;
   fn?: FormulaFn;
   tables: (GeneratedTable | undefined)[];
+  /** Per-table runtime errors (the other tables still compute). */
+  errors: (string | undefined)[];
   next: number;
-  error: string;
+  /** Set when a table was aborted as too slow: the whole preview stops. */
+  fatal: string;
 }
 
 /**
@@ -124,6 +132,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     }
     return compiled;
   };
+
+  /** Last formula keystroke (the preview restarts TYPING_MS after it). */
+  let lastTypedAt = -Infinity;
 
   // Dirty flags (drawn in the frame loop).
   let mainDirty = true;
@@ -233,7 +244,12 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   search.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') {
       ev.preventDefault();
-      if (filtered.length) selectEntry(filtered[0], false);
+      if (!filtered.length) return;
+      if (!filtered.includes(sel)) selectEntry(filtered[0], false);
+      if (libOpen && narrowMq.matches) {
+        setOpen(false);
+        currentBtn.focus();
+      }
     } else if (ev.key === 'ArrowDown') {
       ev.preventDefault();
       if (filtered.length) selectEntry(filtered.includes(sel) ? sel : filtered[0], true);
@@ -387,6 +403,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         autocomplete: 'off',
       });
       input.addEventListener('input', () => {
+        lastTypedAt = performance.now();
         if (input.value === e.expr) edits.delete(e.id);
         else edits.set(e.id, input.value);
         onEdit();
@@ -412,6 +429,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
           class: 'small',
           onclick: () => {
             const ci = SEED_LIBRARY.findIndex((x) => x.id === CUSTOM_ENTRY);
+            const prev = edits.get(CUSTOM_ENTRY);
+            if (prev !== undefined && prev !== e.asFormula && !confirm(`Replace your Blank formula edits with the ${e.name} formula?`))
+              return;
             edits.set(CUSTOM_ENTRY, e.asFormula!);
             selectEntry(ci, false);
             onEdit();
@@ -603,7 +623,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const setShown = (i: number, focus: boolean) => {
     if (i !== shown) {
       shown = i;
-      mainDirty = true;
+      mainDirty = statusDirty = true;
     }
     syncCards();
     scrollCardIntoView(i);
@@ -617,8 +637,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   };
 
   let flashTimer: ReturnType<typeof setTimeout> | undefined;
-  const flash = (msg: string) => {
+  const flash = (msg: string, warn = false) => {
     status.textContent = msg;
+    status.classList.toggle('warn', warn);
     clearTimeout(flashTimer);
     if (msg) flashTimer = setTimeout(() => (status.textContent = ''), 4000);
   };
@@ -635,7 +656,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       fn = compile(req.expr).fn;
       if (!fn) return null;
     }
-    job = { key: keyOf(req), req, fn, tables: new Array(req.count), next: 0, error: '' };
+    job = { key: keyOf(req), req, fn, tables: new Array(req.count), errors: new Array(req.count), next: 0, fatal: '' };
     cardsDirty = mainDirty = statusDirty = true;
     return job;
   };
@@ -647,15 +668,20 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     return startJob();
   };
 
-  /** Compute table i of the job if missing; false on a formula runtime error. */
+  /**
+   * Compute table i of the job if missing; false if it failed. A runtime error marks
+   * only that table; a table over TABLE_CAP_MS aborts and stops the whole job.
+   */
   const computeOne = (j: Job, i: number): boolean => {
-    if (j.error) return false;
+    if (j.fatal || j.errors[i]) return false;
     if (j.tables[i]) return true;
+    const stopAt = performance.now() + TABLE_CAP_MS;
     try {
-      j.tables[i] = seedTable(j.req, i, j.fn);
+      j.tables[i] = seedTable(j.req, i, j.fn, () => performance.now() > stopAt);
     } catch (e) {
-      j.error = errText(e);
-      statusDirty = true;
+      if (e instanceof FormulaAborted) j.fatal = `too slow (one table took over ${TABLE_CAP_MS} ms); simplify the formula`;
+      else j.errors[i] = errText(e);
+      statusDirty = cardsDirty = mainDirty = true;
       return false;
     }
     cardsDirty = true;
@@ -665,7 +691,14 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
 
   const work = (j: Job, deadline: number) => {
     if (shown < j.req.count) computeOne(j, shown);
-    while (!j.error && j.next < j.req.count && performance.now() < deadline) computeOne(j, j.next++);
+    while (!j.fatal && j.next < j.req.count && performance.now() < deadline) computeOne(j, j.next++);
+  };
+
+  /** Indices of the job's failed tables (so far). */
+  const failedOf = (j: Job): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < j.req.count; i++) if (j.errors[i]) out.push(i);
+    return out;
   };
 
   /**
@@ -674,24 +707,25 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
    */
   const finalTable = (j: Job, i: number): GeneratedTable | undefined => j.tables[i];
 
-  const currentError = (): string => {
-    const e = entry();
-    if (e.mode === 'formula') {
-      const c = compile(exprOf(e));
-      if (c.err) return `Syntax: ${c.err}`;
-    }
-    if (job && job.key === keyOf(request()) && job.error) return `Error: ${job.error}`;
-    return '';
-  };
-
   const updateStatus = () => {
     statusDirty = false;
-    const err = currentError();
-    errEl.textContent = err;
-    exprInput?.classList.toggle('invalid', !!err);
-    addShownBtn.disabled = addBatchBtn.disabled = !!err;
-    el.classList.toggle('seed-stale', !!err);
     const e = entry();
+    const syntax = e.mode === 'formula' ? compile(exprOf(e)).err : undefined;
+    const j = job && job.key === keyOf(request()) ? job : null;
+    const failed = j ? failedOf(j) : [];
+    // Syntax errors and aborted (too slow) formulas invalidate the whole preview.
+    const blocking = syntax ? `Syntax: ${syntax}` : j?.fatal ? `Stopped: ${j.fatal}` : '';
+    let err = blocking;
+    if (!err && j && failed.length) {
+      const first = failed.includes(shown) ? shown : failed[0];
+      err = `Error at #${first + 1}: ${j.errors[first]}${failed.length > 1 ? ` (${failed.length} tables failed)` : ''}`;
+    }
+    errEl.textContent = err;
+    exprInput?.classList.toggle('invalid', !!blocking);
+    addShownBtn.disabled = !!blocking || !!j?.errors[shown];
+    addBatchBtn.disabled = !!blocking || failed.length > 0;
+    addBatchBtn.title = failed.length ? 'Every table of the batch must evaluate; Add shown still works for the others' : '';
+    el.classList.toggle('seed-stale', !!blocking);
     seedBox.hidden = !seedUsesRandomness(e, exprOf(e));
   };
 
@@ -706,7 +740,14 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const addBatch = () => {
     const j = currentJob();
     if (!j) return updateStatus();
-    for (let i = 0; i < j.req.count; i++) if (!computeOne(j, i)) return updateStatus();
+    for (let i = 0; i < j.req.count && !j.fatal; i++) computeOne(j, i);
+    const failed = failedOf(j);
+    if (j.fatal || failed.length) {
+      updateStatus();
+      if (failed.length)
+        flash(`Batch not added: ${failed.length} of ${j.req.count} tables failed (first #${failed[0] + 1}). Fix the formula, or Add shown for single tables.`, true);
+      return;
+    }
     model.addTables(
       j.tables.map((_, i) => finalTable(j, i)!),
       'batch',
@@ -721,11 +762,17 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
 
   // ---- drawing ----
   // While a restarted preview is computing, the previous tables stay drawn (no flicker).
+  // Only the selected entry's tables are drawn: a different entry (e.g. one whose edited
+  // formula doesn't compile) or a failed table clears the view.
   let lastMain: GeneratedTable | undefined;
+  const currentEntryJob = () => (job && job.req.entry === entry() ? job : null);
   const drawMain = () => {
     mainDirty = false;
     const narrow = narrowMq.matches;
-    const t = (job && finalTable(job, Math.min(shown, job.req.count - 1))) || lastMain;
+    const cur = currentEntryJob();
+    const i = cur ? Math.min(shown, cur.req.count - 1) : 0;
+    const failed = !cur || !!cur.errors[i] || !!cur.fatal;
+    const t = (cur && finalTable(cur, i)) || (failed ? undefined : lastMain);
     lastMain = t;
     const axisC = cssColor('--border');
     const grid = cssColor('--surface-2');
@@ -755,9 +802,14 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const cw = cssColor('--wave');
     const cs = cssColor('--accent');
     const axisC = cssColor('--border');
+    const cur = currentEntryJob();
     cards.forEach((c, i) => {
-      const t = job && i < job.req.count ? finalTable(job, i) : undefined;
-      if (c.drawn === t || (!t && c.drawn)) return;
+      const err = cur && i < cur.req.count ? cur.errors[i] : undefined;
+      c.el.classList.toggle('failed', !!err);
+      c.el.title = err ? `Error: ${err}` : '';
+      const t = cur && i < cur.req.count ? finalTable(cur, i) : undefined;
+      // Keep the previous drawing while a restarted job computes this card.
+      if (c.drawn === t || (!t && c.drawn && cur && !err && !cur.fatal)) return;
       c.drawn = t;
       const g = fitFixed(c.wave, CARD_W - 10, CARD_WAVE_H);
       const gs = fitFixed(c.spec, CARD_W - 10, CARD_SPEC_H);
@@ -778,7 +830,10 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
 
   /** Draw visible thumbnails whose colour changed; compute missing ones within the budget. */
   const drawThumbs = (deadline: number) => {
-    if (libBody.offsetParent === null) return;
+    if (libBody.offsetParent === null) {
+      thumbsDirty = false;
+      return;
+    }
     let pending = false;
     const normal = cssColor('--text-2');
     const current = cssColor('--accent-text');
@@ -836,7 +891,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;
         const key = keyOf(request());
-        if (job?.key !== key && now - lastStart >= PREVIEW_MS) {
+        const typing = entry().mode === 'formula' && performance.now() - lastTypedAt < TYPING_MS;
+        if (job?.key !== key && !typing && now - lastStart >= PREVIEW_MS) {
           lastStart = now;
           startJob();
           statusDirty = true;

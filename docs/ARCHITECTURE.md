@@ -130,7 +130,11 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   whole batch: on a key change (entry, formula / params, seed, N; restarted at most every
   50 ms) it is recomputed incrementally, ≤ 8 ms of main-thread work per frame, shown
   table first, through the same `seedTable()` as Add (which reuses the preview tables
-  and finishes any missing ones synchronously). Library thumbnails are rendered once
+  and finishes any missing ones synchronously). Formula edits restart it only after
+  300 ms without typing, and any formula table over 150 ms is aborted (`abort()` hook
+  polled by `formulaTable`) and stops the preview with an error. Runtime errors are
+  per table: the failing card is marked, the rest still compute and can be added with
+  Add shown; Add batch refuses until every table evaluates. Library thumbnails are rendered once
   (lazily, within the same budget) and redrawn only on selection / theme change; the
   previous tables stay drawn while a restarted batch computes. A planned Edit layer
   (draw / edit harmonics) slots in at `finalTable()` between the generated table and

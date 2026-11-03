@@ -25,8 +25,23 @@ export type FormulaCompiler = (expr: string) => FormulaFn;
 
 export class FormulaError extends Error {}
 
-/** Evaluate one table of a formula batch. Throws FormulaError on non-finite output. */
-export function formulaTable(fn: FormulaFn, seed: number, index: number, count: number): Float32Array {
+/** Thrown when `abort()` asked a formula evaluation to stop (runaway expression). */
+export class FormulaAborted extends FormulaError {}
+
+/** Samples between `abort()` checks. */
+const ABORT_STRIDE = 16;
+
+/**
+ * Evaluate one table of a formula batch. Throws FormulaError on non-finite output, and
+ * FormulaAborted when the optional `abort()` (polled every few samples) returns true.
+ */
+export function formulaTable(
+  fn: FormulaFn,
+  seed: number,
+  index: number,
+  count: number,
+  abort?: () => boolean,
+): Float32Array {
   const field = noiseField(seed);
   let phase = 0;
   const pnoise: PNoise = (freq = 2, z = 0, octaves = 4, persistence = 0.5) =>
@@ -34,6 +49,7 @@ export function formulaTable(fn: FormulaFn, seed: number, index: number, count: 
   const u = batchU(index, count);
   const x = new Float64Array(TABLE_SIZE);
   for (let i = 0; i < TABLE_SIZE; i++) {
+    if (abort && i % ABORT_STRIDE === 0 && abort()) throw new FormulaAborted(`stopped at sample ${i}`);
     phase = (2 * Math.PI * i) / TABLE_SIZE;
     const v = +fn(phase, i / TABLE_SIZE, index, u, pnoise, noise3);
     if (!Number.isFinite(v)) throw new FormulaError(`non-finite value at sample ${i}`);
