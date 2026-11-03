@@ -573,19 +573,25 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   (two ZDF SVF cores; LP24 = Butterworth first stage + resonant second), saturation, amp,
   width (mid / side), soft limiter (linear to ±1, < ±2). While unison copies are spread the
   voice is stereo (a second filter, which starts from the first one's state; back to mono
-  once the copies are gone and both filters agree). Unison copies have fixed places (copy 0
-  at the centre pitch and pan, then +detune / left, −detune / right, +½ detune): a count
-  change never moves the copies that stay, and copies fade in / out over 10 ms (weights
-  towards 1/√n). Hard sync: copy 0 of B (the centre copy) restarts A's copies at the
-  fraction of the sample past its wrap (and A isn't advanced again that sample).
-  Tempo-synced LFOs that don't retrigger are locked to the transport position (cycles from
-  beat 0) while it plays. Denormal-range filter / pink state is flushed per block.
+  once the copies are gone and both filters agree). Unison places are symmetric for every
+  count (1: centre; 2: ±½ detune, hard left / right; 3: centre, ±1; 4: ±⅓, ±1 — detune
+  and spread alike); when the count changes, copies glide to their new places (~30 ms) and
+  fade in / out over 10 ms (weights towards 1/√n). The pitch reference is a virtual centre
+  copy per oscillator (ratio 1, its own phase): its wraps drive Step-mode table switches
+  and hard sync (B's centre restarts A's copies at the fraction of the sample past its
+  wrap; A isn't advanced again that sample), and B's centre is the FM source.
+  Tempo-synced LFOs that don't retrigger steer into lock with the transport position
+  (cycles from beat 0) while it plays, at up to ±½ of their own speed — so Play never makes
+  them jump; LFO-rate modulation multiplies their speed (unlocked while it is non-zero,
+  then they glide back into lock). Denormal-range filter / pink state is flushed per block.
 - CPU guard: per control block the engine counts the unison copies of Synth voices holding
-  a note (release tails don't count); over `UNISON_BUDGET` (32) it limits — copies are
-  scaled to ¾ of the budget (≥ 1 per oscillator; they fade, never cut) until the count
-  falls to ¾ of it (hysteresis) — and `status.unisonLimited` is set. Bench (`npm run bench`, node, this machine): 8 Synth
+  a note (release tails don't count); over `UNISON_BUDGET` (32) it limits — each voice's
+  copies are scaled by budget / count (floor, ≥ 1 per oscillator: 8 voices at 4 + 4 →
+  2 + 2; they fade, never cut) until the count falls to ¾ of the budget (hysteresis) — and
+  `status.unisonLimited` is set. Bench (`npm run bench`, node, this machine): 8 Synth
   voices ≈ 0.24 ms per 128-sample quantum (9% of real time at 48 kHz); the worst case
-  (unison 4 + 4 on all 8, FM, sync, spread; guarded) ≈ 0.27 ms (10%).
+  (unison 4 + 4 on all 8, FM, sync, spread; guarded to 2 + 2) ≈ 0.44 ms (17%).
+
 
 - Determinism: noise and modulation randomness (S&H, smooth random, per-note random) come
   from per-voice PRNGs seeded from the voice id.

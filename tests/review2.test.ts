@@ -134,13 +134,28 @@ describe('3: unison copies fade, copy 0 stays put, the guard has hysteresis', ()
     expect(maxStep(joined(joined(l0, l1), l2), joined(joined(r0, r1), r2))).toBeLessThan(base * 2.5);
   });
 
-  it('copy 0 keeps the centre pitch whatever the count or detune', () => {
+  it('unison is symmetric around the centre pitch and pan for every count; copies glide to new places', () => {
     const c: SynthControl = { bend: 0, blockLen: 64, tables: new Map(), wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1, beat: -1 };
     const s = new SynthVoice(SR, 1, 64);
-    for (const n of [1, 2, 3, 4]) {
-      const p = sv(1, { aUnison: n, aDetune: 40 });
+    const priv = s as unknown as { ratA: Float64Array; gAL: Float64Array; gAR: Float64Array };
+    let prev = 1;
+    for (const n of [1, 2, 3, 4, 2]) {
+      const p = sv(1, { aUnison: n, aDetune: 40, aSpread: 1 });
       s.control(p, c);
-      expect((s as unknown as { ratA: Float64Array }).ratA[0]).toBe(1);
+      // The first block after a count change moves a copy only a little (a glide, not a jump).
+      expect(Math.abs(1200 * Math.log2(priv.ratA[0] / prev))).toBeLessThan(15);
+      for (let k = 0; k < 300; k++) s.control(p, c);
+      prev = priv.ratA[0];
+      let cents = 0;
+      let left = 0;
+      let right = 0;
+      for (let i = 0; i < n; i++) {
+        cents += 1200 * Math.log2(priv.ratA[i]);
+        left += priv.gAL[i];
+        right += priv.gAR[i];
+      }
+      expect(Math.abs(cents / n)).toBeLessThan(0.01);
+      expect(left).toBeCloseTo(right, 4);
     }
   });
 
@@ -207,15 +222,36 @@ describe('4: mod wheel / pressure resets', () => {
 });
 
 describe('5–7', () => {
-  it('a tempo-synced free-running LFO locks to the transport position', () => {
+  it('a tempo-synced free-running LFO glides into lock with the transport (no jump at Play); rate modulation scales it', () => {
     const c: SynthControl = { bend: 0, blockLen: 64, tables: new Map(), wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1, beat: 0 };
-    const p = sv(1, { lfos: [{ ...DEFAULT_LFO, sync: true, div: '1/1', phase: 0.25 }, DEFAULT_LFO, DEFAULT_LFO] });
+    const p = sv(1, { lfos: [{ ...DEFAULT_LFO, sync: true, div: '1/4', phase: 0.25 }, DEFAULT_LFO, DEFAULT_LFO] });
     const s = new SynthVoice(SR, 1, 64);
-    s.control(p, { ...c, beat: 6 }); // bar 2, beat 3: half way through a whole-note cycle
-    expect(s.lfoPhase[0]).toBeCloseTo(0.75, 12);
-    s.control(p, { ...c, beat: -1 }); // stopped: free-runs from there
-    expect(s.lfoPhase[0]).toBeGreaterThan(0.75);
+    const inc = (2 * 64) / SR; // one cycle per beat at 120 BPM
+    const dBeat = (2 * 64) / SR;
+    let beat = 6.4; // Play pressed with the LFO elsewhere: it doesn't jump there
+    let last = s.lfoPhase[0];
+    for (let k = 0; k < 2000; k++) {
+      s.control(p, { ...c, beat });
+      beat += dBeat;
+      let step = s.lfoPhase[0] - last;
+      step -= Math.floor(step);
+      expect(step).toBeLessThan(inc * 1.5 + 1e-12);
+      last = s.lfoPhase[0];
+    }
+    const want = beat - dBeat + 0.25;
+    let d = s.lfoPhase[0] - (want - Math.floor(want));
+    d -= Math.round(d);
+    expect(Math.abs(d)).toBeLessThan(1e-6);
+    // Rate modulation (velocity → LFO 1 rate, ×2): runs at twice the speed while it lasts.
+    const q = sv(1, { lfos: p.synth.lfos, mods: [{ src: 'vel', dst: 'lfo1Rate', amt: 0.25 }] });
+    s.control(q, { ...c, beat });
+    const a = s.lfoPhase[0];
+    s.control(q, { ...c, beat: beat + dBeat });
+    let step = s.lfoPhase[0] - a;
+    step -= Math.floor(step);
+    expect(step).toBeCloseTo(2 * inc, 9);
   });
+
 
   it('hard sync with unison and FM stays finite and bounded', () => {
     const e = engine();

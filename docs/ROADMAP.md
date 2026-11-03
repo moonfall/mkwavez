@@ -259,10 +259,14 @@ Known gaps:
   Wavetables panel's "used by" lists voices by osc A.
 - No oversampling: hard sync and drive / saturation alias somewhat at high notes (ring mod
   drops one mip level; FM drops harmonics by its sideband width).
-- With an even unison count the copies' average pitch / pan sit slightly off centre (copy
-  0 stays at the centre so a count change never moves it).
-- The CPU guard reduces every limited voice's copies alike (to ¾ of the budget), not
-  per-voice priorities.
+- Unison places are symmetric for every count; a count change glides the copies to their
+  new places (~30 ms, heard as a brief detune move). Hard sync, Step-mode switches and FM
+  follow a virtual centre copy, so they don't depend on the count.
+- The CPU guard reduces every limited voice's copies alike (budget / count), not by
+  per-voice priority.
+- Tempo-synced, non-retriggering LFOs glide into lock with the transport (no jump at Play);
+  LFO-rate modulation unlocks them while it is non-zero.
+
 
 - Presets don't include the voice's sequence or the Simple-voice LFOs; "copy voice" copies
   everything but id, name and mute (undoable when the target is a Synth voice).

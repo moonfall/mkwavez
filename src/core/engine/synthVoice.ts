@@ -81,8 +81,17 @@ const UNISON_PHASE = 0.381966;
  * stereo spread: copy 0 stays at the centre pitch and pan, the others take the outer
  * places, so a copy never moves when the count changes.
  */
-const UNISON_PLACE = [0, 1, -1, 0.5] as const;
-const UNISON_PAN = [0, -1, 1, 0.5] as const;
+/**
+ * Unison places for n copies, as a fraction of the detune (± cents) and of the stereo
+ * spread: symmetric around the centre for every count. When the count changes, copies glide
+ * to their new places (UNISON_GLIDE_SEC) rather than jump. Pitch references (Step-mode
+ * switches, hard sync, the FM source) use a virtual centre copy (ratio 1), so they don't
+ * depend on the count either.
+ */
+const UNISON_PLACES: readonly (readonly number[])[] = [[0], [0], [-0.5, 0.5], [0, -1, 1], [-1, -1 / 3, 1 / 3, 1]];
+const UNISON_PANS: readonly (readonly number[])[] = [[0], [0], [-1, 1], [0, -1, 1], [-1, -1 / 3, 1 / 3, 1]];
+/** Copies move to new unison places (a count change) over about this long. */
+export const UNISON_GLIDE_SEC = 0.03;
 /** Unison copies fade in / out over this long (count changes, CPU guard). */
 export const UNISON_FADE_SEC = 0.01;
 
@@ -160,6 +169,16 @@ export class SynthVoice {
   stereo = false;
   /** Copy weights' largest change per block. */
   private readonly uniStep: number;
+  /** One-pole coefficient per block for copies gliding to new places. */
+  private readonly uniGlide: number;
+  /** Current unison places (detune fraction, pan) per copy, gliding towards the targets. */
+  private readonly plA = new Float64Array(MAX_UNISON);
+  private readonly plB = new Float64Array(MAX_UNISON);
+  private readonly pnA = new Float64Array(MAX_UNISON);
+  private readonly pnB = new Float64Array(MAX_UNISON);
+  /** Virtual centre copies' phases (ratio 1): the pitch reference for Step mode, sync and FM. */
+  phCA = 0;
+  phCB = 0;
   /** Stereo output of the last render() (before pan). */
   outL = 0;
   outR = 0;
@@ -228,6 +247,7 @@ export class SynthVoice {
     this.modRng = new Prng(deriveSeed(MOD_SEED, voiceId));
     this.smooth = 1 - Math.exp(-blockLen / (CONTROL_SMOOTH_SEC * sampleRate));
     this.uniStep = blockLen / (UNISON_FADE_SEC * sampleRate);
+    this.uniGlide = 1 - Math.exp(-blockLen / (UNISON_GLIDE_SEC * sampleRate));
     this.wA0[0] = this.wA1[0] = this.wB0[0] = this.wB1[0] = 1;
     for (let i = 0; i < LFO_COUNT; i++) {
       this.lfoPhase[i] = lfoPhases?.[i] ?? 0;
@@ -392,28 +412,28 @@ export class SynthVoice {
     const dt = blockLen / this.sampleRate;
     for (let i = 0; i < LFO_COUNT; i++) {
       const l = s.lfos[i];
-      let ph: number;
-      if (l.sync && !l.retrig && beat >= 0) {
-        // Tempo-synced, free-running, transport playing: locked to the bar clock (the
-        // cycle starts on the transport's beat 0, offset by the start phase).
+      // Rate modulation uses the previous block's matrix (an LFO may modulate another's
+      // rate), clamped to ±MOD_LFO_RATE_OCTAVES and the LFO rate range.
+      const m = Math.max(-1, Math.min(1, this.dst[D.lfo1Rate + i]));
+      const mult = m === 0 ? 1 : Math.pow(2, m * MOD_LFO_RATE_OCTAVES);
+      const inc = Math.min(LFO_RATE_MAX_HZ * 2, Math.max(0, lfoRateHz(l, bpm) * mult)) * dt;
+      let ph = this.lfoPhase[i] + inc;
+      if (l.sync && !l.retrig && beat >= 0 && m === 0) {
+        // Tempo-synced, free-running, transport playing, no rate modulation: steer towards
+        // the bar clock's phase (cycles from the transport's beat 0, offset by the start
+        // phase) at up to ±½ of its own speed, so it locks without a jump (at Play, or when
+        // rate modulation stops). Rate modulation runs it at the modulated speed meanwhile.
         const t = beat / LFO_DIV_BEATS[l.div] + l.phase;
-        ph = t - Math.floor(t);
-        if (ph < this.lfoPhase[i]) {
-          this.lfoPrev[i] = this.lfoCur[i];
-          this.lfoCur[i] = this.modRng.bipolar();
-        }
-      } else {
-        // Rate modulation uses the previous block's matrix (an LFO may modulate another's
-        // rate), clamped to ±MOD_LFO_RATE_OCTAVES and the LFO rate range.
-        const m = Math.max(-1, Math.min(1, this.dst[D.lfo1Rate + i]));
-        const rate = Math.min(LFO_RATE_MAX_HZ * 2, Math.max(0, lfoRateHz(l, bpm) * Math.pow(2, m * MOD_LFO_RATE_OCTAVES)));
-        ph = this.lfoPhase[i] + rate * dt;
-        if (ph >= 1) {
-          ph -= Math.floor(ph);
-          this.lfoPrev[i] = this.lfoCur[i];
-          this.lfoCur[i] = this.modRng.bipolar();
-        }
+        let d = t - Math.floor(t) - ph;
+        d -= Math.round(d);
+        ph += Math.max(-0.5 * inc, Math.min(0.5 * inc, d));
       }
+      if (ph >= 1 || ph < 0) {
+        ph -= Math.floor(ph);
+        this.lfoPrev[i] = this.lfoCur[i];
+        this.lfoCur[i] = this.modRng.bipolar();
+      }
+
       this.lfoPhase[i] = ph;
       const age = this.lfoAge[i];
       const fade = l.fade > 0 ? Math.min(1, age / l.fade) : 1;
@@ -515,16 +535,17 @@ export class SynthVoice {
 
   /**
    * Unison per oscillator: the copies wanted (after the CPU guard), their weights (fading
-   * towards 1/√n or 0, never jumping), detune ratios and stereo gains. Every copy has a
-   * fixed place (UNISON_PLACE): copy 0 stays at the centre pitch and pan, so changing the
-   * count never moves the copies that keep playing.
+   * towards 1/√n or 0, never jumping), places (symmetric for the count; gliding there),
+   * detune ratios and stereo gains.
    */
   private unison(s: SynthParams, scale: number): void {
     const want = (n: number) => (scale >= 1 ? n : Math.max(1, Math.floor(n * scale)));
-    this.uA = this.copies(want(s.aUnison), this.wA0, this.wA1, this.phA);
-    this.uB = this.copies(want(s.bUnison), this.wB0, this.wB1, this.phB);
-    this.maxRatA = this.place(this.uA, s.aDetune, s.aSpread, this.ratA, this.gAL, this.gAR);
-    this.maxRatB = this.place(this.uB, s.bDetune, s.bSpread, this.ratB, this.gBL, this.gBR);
+    const nA = want(s.aUnison);
+    const nB = want(s.bUnison);
+    this.uA = this.copies(nA, this.wA0, this.wA1, this.phA, this.phCA, this.plA, this.pnA);
+    this.uB = this.copies(nB, this.wB0, this.wB1, this.phB, this.phCB, this.plB, this.pnB);
+    this.maxRatA = this.place(this.uA, nA, s.aDetune, s.aSpread, this.plA, this.pnA, this.ratA, this.gAL, this.gAR);
+    this.maxRatB = this.place(this.uB, nB, s.bDetune, s.bSpread, this.plB, this.pnB, this.ratB, this.gBL, this.gBR);
     const spread = (this.uA > 1 && s.aSpread > 0) || (this.uB > 1 && s.bSpread > 0);
     if (spread && !this.stereo) {
       // The right channel takes over the left filter's state: no transient.
@@ -536,30 +557,47 @@ export class SynthVoice {
     }
   }
 
-  /** Fade copy weights towards 1/√n (the first n) or 0; returns how many copies to render. */
-  private copies(n: number, w0: Float64Array, w1: Float64Array, ph: Float64Array): number {
+  /**
+   * Fade copy weights towards 1/√n (the first n) or 0; returns how many copies to render.
+   * A copy starting from silence takes its place at once, at a deterministic phase offset
+   * from the centre.
+   */
+  private copies(n: number, w0: Float64Array, w1: Float64Array, ph: Float64Array, centre: number, pl: Float64Array, pn: Float64Array): number {
     const target = 1 / Math.sqrt(n);
+    const places = UNISON_PLACES[n];
+    const pans = UNISON_PANS[n];
     let count = 1;
     for (let i = 0; i < MAX_UNISON; i++) {
       const was = w1[i];
       w0[i] = was;
       const t = i < n ? target : 0;
-      // New copies start spread out from copy 0 (deterministic phases).
-      if (was === 0 && t > 0) ph[i] = (ph[0] + i * UNISON_PHASE) % 1;
+      if (was === 0 && t > 0) {
+        ph[i] = (centre + (n > 1 ? i * UNISON_PHASE : 0)) % 1;
+        pl[i] = places[i];
+        pn[i] = pans[i];
+      }
       w1[i] = was + Math.max(-this.uniStep, Math.min(this.uniStep, t - was));
       if (w0[i] > 0 || w1[i] > 0) count = i + 1;
     }
     return count;
   }
 
-  /** Detune ratios and pan gains for copies 0..n−1 (fixed places); returns the highest ratio. */
-  private place(n: number, cents: number, spread: number, rat: Float64Array, gl: Float64Array, gr: Float64Array): number {
+  /**
+   * Places glide towards the count's symmetric layout (copies fading out keep theirs);
+   * detune ratios and pan gains from them. Returns the highest ratio.
+   */
+  private place(count: number, n: number, cents: number, spread: number, pl: Float64Array, pn: Float64Array, rat: Float64Array, gl: Float64Array, gr: Float64Array): number {
+    const places = UNISON_PLACES[n];
+    const pans = UNISON_PANS[n];
     let max = 1;
-    for (let i = 0; i < n; i++) {
-      const x = UNISON_PLACE[i];
-      rat[i] = Math.pow(2, (x * cents) / 1200);
+    for (let i = 0; i < count; i++) {
+      if (i < n) {
+        pl[i] += (places[i] - pl[i]) * this.uniGlide;
+        pn[i] += (pans[i] - pn[i]) * this.uniGlide;
+      }
+      rat[i] = Math.pow(2, (pl[i] * cents) / 1200);
       if (rat[i] > max) max = rat[i];
-      const p = UNISON_PAN[i] * spread;
+      const p = pn[i] * spread;
       gl[i] = p > 0 ? 1 - p : 1;
       gr[i] = p < 0 ? 1 + p : 1;
     }
@@ -595,9 +633,10 @@ export class SynthVoice {
       let sbR = 0;
       let b0 = 0;
       if (this.b.n > 0 && (lb > 0 || lr > 0 || s.fm > 0)) {
+        // FM source: B at its centre pitch (with one copy, that copy).
+        if (s.fm > 0) b0 = this.b.read(this.uB === 1 ? this.phB[0] : this.phCB, t);
         for (let i = 0; i < this.uB; i++) {
           const raw = this.b.read(this.phB[i], t);
-          if (i === 0) b0 = raw;
           const v = raw * (this.wB0[i] + (this.wB1[i] - this.wB0[i]) * t);
           sbL += v * this.gBL[i];
           sbR += v * this.gBR[i];
@@ -662,37 +701,40 @@ export class SynthVoice {
       yL = softLimit(yL);
       if (!stereo) yR = yL;
     }
-    // Advance: unison copies. Copy 0 (the centre copy, ratio 1) is the master: its wrap
-    // drives Step-mode table switches and hard sync.
+    // Advance. The virtual centre copies (ratio 1) are the masters: their wraps drive
+    // Step-mode table switches and hard sync, whatever the unison count.
     let synced = false;
-    for (let i = 0; i < this.uB; i++) {
-      const step = incB * this.ratB[i];
-      let ph = this.phB[i] + step;
-      if (ph >= 1) {
-        ph -= Math.floor(ph);
-        if (i === 0) {
-          this.b.wrapped(tables);
-          if (s.sync) {
-            // Restart A where it would be had it started at B's wrap (less aliasing than
-            // 0): the fraction of this sample after the wrap, at A's own increments.
-            const frac = step > 0 ? ph / step : 0;
-            for (let j = 0; j < this.uA; j++) this.phA[j] = (frac * incA * this.ratA[j]) % 1;
-            this.a.wrapped(tables);
-            synced = true;
-          }
-        }
+    this.phCB += incB;
+    if (this.phCB >= 1) {
+      this.phCB -= Math.floor(this.phCB);
+      this.b.wrapped(tables);
+      if (s.sync) {
+        // Restart A where it would be had it started at B's wrap (less aliasing than 0):
+        // the fraction of this sample after the wrap, at A's own increments.
+        const frac = incB > 0 ? this.phCB / incB : 0;
+        this.phCA = (frac * incA) % 1;
+        for (let j = 0; j < this.uA; j++) this.phA[j] = (frac * incA * this.ratA[j]) % 1;
+        this.a.wrapped(tables);
+        synced = true;
       }
-      this.phB[i] = ph;
+    }
+    for (let i = 0; i < this.uB; i++) {
+      const ph = this.phB[i] + incB * this.ratB[i];
+      this.phB[i] = ph >= 1 ? ph - Math.floor(ph) : ph;
     }
     // After a sync reset A's phases already hold this sample's advance.
-    for (let i = 0; i < this.uA && !synced; i++) {
-      let ph = this.phA[i] + incA * this.ratA[i];
-      if (ph >= 1) {
-        ph -= Math.floor(ph);
-        if (i === 0) this.a.wrapped(tables);
+    if (!synced) {
+      this.phCA += incA;
+      if (this.phCA >= 1) {
+        this.phCA -= Math.floor(this.phCA);
+        this.a.wrapped(tables);
       }
-      this.phA[i] = ph;
+      for (let i = 0; i < this.uA; i++) {
+        const ph = this.phA[i] + incA * this.ratA[i];
+        this.phA[i] = ph >= 1 ? ph - Math.floor(ph) : ph;
+      }
     }
+
     this.subPhase += incS;
     if (this.subPhase >= 1) this.subPhase -= Math.floor(this.subPhase);
     this.outL = yL;
