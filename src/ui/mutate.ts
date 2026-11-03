@@ -58,7 +58,8 @@ interface Job {
 /**
  * Generate → Mutate: mutation library (search, ▲/▼, thumbnails of each mutation applied
  * to the source), source + parameters, the shown table large over the source, and the
- * batch strip. The source is the Timeline selection. Preview tables are computed in the
+ * batch strip. The source is the Timeline selection; Add shown / Add +N select the last
+ * table added, so the next mutation continues from it. Preview tables are computed in the
  * frame loop (only while the tab is visible, restarted at most every PREVIEW_MS, BUDGET_MS
  * per frame) through the same mutateBatchTable() as Add, with the same seed / amount /
  * mode / N, so Add appends exactly what is shown.
@@ -307,8 +308,9 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     const j = currentJob();
     if (!j) return;
     const tables = Array.from({ length: j.req.count }, (_, i) => finalTable(j, i));
-    model.addTables(tables, 'batch', false);
-    afterAdd(`Added ${tables.length} table${tables.length > 1 ? 's' : ''} to the Timeline`);
+    // Select the last added table (the end of the batch): it becomes the next source.
+    model.addTables(tables, 'batch', true);
+    afterAdd(`Added ${tables.length} table${tables.length > 1 ? 's' : ''} to the Timeline (the last is now the source)`);
   };
 
   // ---- drawing ----

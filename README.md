@@ -68,7 +68,8 @@ switches (the choice is remembered).
   (`A·i/N`), Log (`A·64^((i−N)/(N−1))`) or Chain (each table mutates the previous one
   at A); the strip shows all N (click, or ←/→ when focused), the last one by default
   (= a single mutation at A). "Add shown" adds that table and selects it (so it becomes
-  the next source); "Add +N" adds the batch and sets the window of the ticked voices.
+  the next source); "Add +N" adds the batch, sets the window of the ticked voices and
+  selects the last table added (likewise the next source; Undo restores the selection).
   The previews are exactly what gets added; a seeded mutation draws a new seed after
   each Add.
 - **Generate → Breed**: combine 2–8 parents. Shift-click (or ⌘-click) or
