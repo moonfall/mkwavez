@@ -36,15 +36,15 @@ export const MUTATIONS = [
   { group: 'Time', id: 'reverse', label: 'Reverse', hint: 'Blend (1−a)·x + a·x reversed' },
   { group: 'Time', id: 'halfSwap', label: 'Half-cycle swap', hint: 'Blend toward −x(t+½): halves swapped and inverted (even harmonics flip)' },
   { group: 'Time', id: 'repeat', label: 'Window & repeat', hint: 'First 1/n repeated n times, n = 1 + 7a (blended between whole n)' },
-  { group: 'Time', id: 'slew', label: 'Slew limit', hint: 'Step per sample limited to 2·0.0005^√a' },
+  { group: 'Time', id: 'slew', label: 'Slew limit', hint: 'Step per sample limited to 0.03^a × the source’s steepest step' },
   { group: 'Time', id: 'decimate', label: 'Decimate', hint: 'Sample-and-hold to 2048 / 2^(7a) steps, then band-limited' },
   { group: 'Time', id: 'window', label: 'Window impose', hint: 'Cycle squeezed into W = 1 − 0.9a (silence after), Hann-shaped by a' },
   { group: 'Time', id: 'grains', label: 'Granular shuffle', hint: 'Each of 16 segments swapped with a seeded one with probability a', seeded: true },
   { group: 'Time', id: 'stutter', label: 'Stutter', hint: 'A seeded 1/16 segment repeated over the next a·½ cycle', seeded: true },
-  { group: 'Nonlinear', id: 'logisticShape', label: 'Logistic shaper', hint: 'Blend by a toward 3 logistic-map steps on (x+1)/2, r = 3.5 + 0.5a' },
+  { group: 'Nonlinear', id: 'logisticShape', label: 'Logistic shaper', hint: 'Blend by 0.75a toward 3 logistic-map steps on (x+1)/2, r = 3.5 + 0.5a' },
   { group: 'Nonlinear', id: 'sineShape', label: 'Sine-map shaper', hint: 'x → sin(g·x)/g, g = 3π·a^1.5 (folds as a grows)' },
   { group: 'Nonlinear', id: 'asym', label: 'Asymmetric saturation', hint: 'tanh(g·(x + b)), g = 6a, bias b = 0.5a (adds even harmonics)' },
-  { group: 'Nonlinear', id: 'cheby', label: 'Chebyshev mix', hint: 'Blend (1−a)·x + a·T_n(x), n = 2–8 seeded', seeded: true },
+  { group: 'Nonlinear', id: 'cheby', label: 'Chebyshev mix', hint: 'Blend by 0.75a toward T_n(x), n = 2–8 seeded (the source stays in)', seeded: true },
   { group: 'Spectral', id: 'smooth', label: 'Smooth', hint: 'Gaussian low-pass at harmonic 2 / a^1.5' },
   { group: 'Spectral', id: 'spread', label: 'Spread up', hint: 'Harmonic k gains a·(k−1)/k of harmonic k−1' },
   { group: 'Spectral', id: 'stretch', label: 'Stretch', hint: 'Harmonic k moves to round(k·(1 + 0.6a))' },
@@ -337,8 +337,13 @@ export function mutate(
       const f = nf - n0;
       return shapeFrom((i) => (1 - f) * repeatAt(x, n0, i) + (f > 0 ? f * repeatAt(x, n0 + 1, i) : 0));
     }
-    case 'slew':
-      return a <= 0 ? shape(x) : slewLimit(x, 2 * Math.pow(0.0005, Math.sqrt(a)));
+    case 'slew': {
+      // Relative to the source's own steepest step, so it acts from the start on any wave.
+      if (a <= 0) return shape(x);
+      let steep = 0;
+      for (let i = 0; i < N; i++) steep = Math.max(steep, Math.abs(x[i] - x[(i - 1 + N) % N]));
+      return slewLimit(x, steep * Math.pow(0.03, a));
+    }
     case 'decimate': {
       const hold = Math.pow(2, 7 * a);
       return shapeFrom((i) => x[Math.min(N - 1, Math.floor(Math.floor(i / hold) * hold))]);
@@ -356,7 +361,8 @@ export function mutate(
       return shaper(x, (v) => {
         let u = Math.min(1, Math.max(0, (v + 1) / 2));
         for (let j = 0; j < 3; j++) u = r * u * (1 - u);
-        return (1 - a) * v + a * (2 * u - 1);
+        // At most 75%: the source's fundamental stays, so a sweep doesn't jump in pitch.
+        return (1 - 0.75 * a) * v + 0.75 * a * (2 * u - 1);
       });
     }
     case 'sineShape': {
@@ -371,7 +377,8 @@ export function mutate(
     case 'cheby': {
       const n = 2 + rand.int(7);
       if (a <= 0) return shape(x);
-      return shaper(x, (v) => (1 - a) * v + a * Math.cos(n * Math.acos(Math.max(-1, Math.min(1, v)))));
+      const w = 0.75 * a; // the source stays in (no octave jump at a = 1)
+      return shaper(x, (v) => (1 - w) * v + w * Math.cos(n * Math.acos(Math.max(-1, Math.min(1, v)))));
     }
     case 'grains': {
       const S = 16;

@@ -9,6 +9,11 @@ import {
   glyphTable,
   parseContour,
   DEFAULT_RD,
+  RD_CUSTOM,
+  RD_PRESETS,
+  StepCache,
+  type Board,
+  type RdState,
   lifeBoard,
   lifeLine,
   parseRule,
@@ -38,6 +43,7 @@ const req = (id: string, params: Record<string, number> = {}, count = 4, seed = 
   return { entry, expr: '', params, seed, count };
 };
 
+const peak = (x: Float32Array) => x.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
 const SQUARE = '0.2,0.2 0.8,0.2 0.8,0.8 0.2,0.8';
 
 describe('parameter modes', () => {
@@ -117,18 +123,34 @@ describe('parameter modes', () => {
     expect(v({ source: 4, steps: 8, pulses: 3 }).reduce((s, x) => s + x, 0)).toBe(3);
     expect(v({ source: 4, steps: 8, pulses: 3 }, 2).reduce((s, x) => s + x, 0)).toBe(5);
     expect(euclid(5, 16).reduce((s, x) => s + x, 0)).toBe(5);
+    // Constant windows move on until they vary: π has "999999" at 762.
+    const nines = v({ source: 0, steps: 6, offset: 762 });
+    expect(new Set(nines).size).toBeGreaterThan(1);
+    expect(new Set(v({ source: 3, steps: 2, offset: 1 })).size).toBeGreaterThan(1);
   });
 
   it('reaction-diffusion: checkpointed stepping equals stepping from scratch; seeded', () => {
     const p = { ...DEFAULT_RD, cells: 64 };
-    rdState({ ...p, spots: 2 }, 3, 0); // a different simulation: the cache starts afresh
-    rdState(p, 3, 300);
-    const viaCheckpoint = rdState(p, 3, 700).slice(); // continues from step 300
-    rdState({ ...p, spots: 2 }, 3, 0);
-    const fresh = rdState(p, 3, 700); // from step 0
+    const c = new StepCache<RdState>();
+    rdState(p, 3, 300, c);
+    rdState({ ...p, spots: 2 }, 3, 500, c); // another simulation in between (LRU keeps both)
+    const viaCheckpoint = rdState(p, 3, 700, c).slice(); // continues from step 300
+    const fresh = rdState(p, 3, 700, new StepCache()); // from step 0
     expect(Array.from(viaCheckpoint)).toEqual(Array.from(fresh));
     const t = (seed: number) => seedTable(req('reaction-diffusion', {}, 2, seed), 1).data;
     expect(same(t(1), t(2))).toBe(false);
+  });
+
+  it('reaction-diffusion: every preset keeps a default batch audible', () => {
+    RD_PRESETS.forEach((_, system) => {
+      for (const seed of [1, 2, 3, 4, 5]) {
+        const b = seedBatch(req('reaction-diffusion', { system }, 8, seed));
+        b.forEach((t, i) => expect(peak(t.data), `preset ${system} seed ${seed} #${i}`).toBeGreaterThan(0.99));
+      }
+    });
+    // A custom chemistry that dies out gets new spots instead of going silent.
+    const dying = seedBatch(req('reaction-diffusion', { system: RD_CUSTOM, feed: 0.01, kill: 0.065 }, 8, 1));
+    for (const t of dying) expect(peak(t.data)).toBeGreaterThan(0.99);
   });
 
   it('registry: modes never reuse another op; old recipes missing a param use its default', () => {
@@ -141,8 +163,9 @@ describe('parameter modes', () => {
   });
 
   it('no silent tables: late Karplus-Strong snapshots, a sine map settling on a fixed point', () => {
-    const peak = (x: Float32Array) => x.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
     const late = seedTable(req('karplus-strong', { damping: 1, passes: 64, start: 256 }, 64), 63).data;
+    const short = seedTable(req('karplus-strong', { length: 16, damping: 1, passes: 64, start: 256 }, 64), 63).data;
+    expect(peak(short)).toBeCloseTo(1, 5);
     expect(peak(late)).toBeCloseTo(1, 5);
     const sine = seedTable(req('dynamical-systems', { map: 1, control: 0, controlEnd: 0, iterations: 64 }, 1), 0).data;
     expect(peak(sine)).toBeCloseTo(1, 5);
@@ -152,10 +175,10 @@ describe('parameter modes', () => {
     const life = parseRule('B3/S23');
     expect(life.birth[3] && life.survive[2] && life.survive[3] && !life.birth[2]).toBe(true);
     const p = { ...DEFAULT_LIFE, size: 16 };
-    const g10 = lifeBoard(p, 5, 10).slice();
-    lifeBoard({ ...p, size: 12 }, 5, 0); // another board: the cache starts afresh
-    lifeBoard(p, 5, 4);
-    expect(Array.from(lifeBoard(p, 5, 10))).toEqual(Array.from(g10));
+    const c = new StepCache<Board>();
+    lifeBoard(p, 5, 4, c);
+    const viaCheckpoint = lifeBoard(p, 5, 10, c).slice();
+    expect(Array.from(viaCheckpoint)).toEqual(Array.from(lifeBoard(p, 5, 10, new StepCache())));
     // Uniform lines fall back to a non-uniform one.
     const board = new Uint8Array(64);
     board[8 * 2 + 3] = 1;

@@ -57,16 +57,23 @@ function excite(p: KsParams, L: number, seed: number): Float64Array {
 
 /**
  * Advance the buffer by `n` round trips of the KS loop (circular, in place). The loop is
- * linear, so the buffer is renormalised to peak 1 after every pass: only the timbre
+ * linear, so the buffer is re-centred and renormalised to peak 1 after every pass: only the timbre
  * decays (bright → toward a sine), never the level, so late snapshots stay audible.
  */
 function run(buf: Float64Array, b: number, n: number): void {
   const L = buf.length;
   const tmp = new Float64Array(L);
   for (let j = 0; j < n; j++) {
-    let peak = 0;
+    let mean = 0;
     for (let i = 0; i < L; i++) {
       tmp[i] = (1 - 0.5 * b) * buf[i] + 0.5 * b * buf[(i - 1 + L) % L];
+      mean += tmp[i];
+    }
+    // Remove the DC residue every pass too (it doesn't decay and would grow relative to the AC).
+    mean /= L;
+    let peak = 0;
+    for (let i = 0; i < L; i++) {
+      tmp[i] -= mean;
       peak = Math.max(peak, Math.abs(tmp[i]));
     }
     if (peak > 0) for (let i = 0; i < L; i++) buf[i] = tmp[i] / peak;

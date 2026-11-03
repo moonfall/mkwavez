@@ -56,7 +56,7 @@ export function parseRule(rule: string): { birth: boolean[]; survive: boolean[] 
   return { birth, survive };
 }
 
-interface Board {
+export interface Board {
   cells: Uint8Array;
   rng: number;
 }
@@ -91,11 +91,12 @@ function advance(b: Board, n: number, size: number, rule: { birth: boolean[]; su
   b.rng = r.state;
 }
 
-const cache = new StepCache<Board>();
+/** Board checkpoints (a pure memo: results never depend on it). */
+const defaultCache = new StepCache<Board>();
 const clone = (b: Board): Board => ({ cells: b.cells.slice(), rng: b.rng });
 
-/** The board after `generation` generations (row-major, size × size). */
-export function lifeBoard(p: LifeParams, seed: number, generation: number): Uint8Array {
+/** The board after `generation` generations (row-major, size × size). `cache` only saves time. */
+export function lifeBoard(p: LifeParams, seed: number, generation: number, cache: StepCache<Board> = defaultCache): Uint8Array {
   const size = clamp(Math.round(p.size), 8, 64);
   const density = clamp(p.density, 0.05, 0.95);
   const ruleIdx = clamp(Math.round(p.rule), 0, LIFE_RULES.length - 1);

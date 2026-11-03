@@ -23,6 +23,7 @@ export * from './reactionDiffusion';
 export * from './resample';
 export * from './seed';
 export * from './sequences';
+export * from './simCache';
 export * from './spline';
 
 export interface RenderEnv {

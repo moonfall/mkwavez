@@ -133,6 +133,16 @@ describe('mutations (core port)', () => {
     expect((lp[70] * 70) / lp[1]).toBeLessThan(0.5);
   });
 
+  it('shapers keep the fundamental at full amount; slew acts early on a sine', () => {
+    const sine = generateBasic('sine', 0).data;
+    const mags = (x: Float32Array) => harmonicMagnitudes(x, 72);
+    for (const id of ['logisticShape', 'cheby'] as const) {
+      const m = mags(mutate(id, sine, 1, 5));
+      expect(m[1] / Math.max(...m.slice(1)), id).toBeGreaterThan(0.2);
+    }
+    expect(maxDiff(mutate('slew', sine, 0.25, 0), sine)).toBeGreaterThan(0.02);
+  });
+
   it('sweep amounts', () => {
     expect(sweepAmounts(4, 1, 'lin')).toEqual([0.25, 0.5, 0.75, 1]);
     const log = sweepAmounts(3, 0.64, 'log');

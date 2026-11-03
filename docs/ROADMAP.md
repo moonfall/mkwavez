@@ -203,7 +203,12 @@ Open:
   replacing (merge into the current timeline).
 - Seed / Mutate / Breed panel settings (entry, formula edits, amounts) aren't saved.
 - Recipes still have no code-version tag (re-render determinism across versions is only
-  checked by a hash for recipe-only waveforms).
+  checked by a hash for recipe-only waveforms). Example: the Mutate spectral pipeline's
+  relative-silence gate (results keeping < 1e-3 of the source's strongest harmonic are
+  silence, residue below 1e-6 dropped) changes the re-render of a few old mutate
+  recipes — Toward sine / Odd only at ≥ ~0.97 or Formant at 1 on sources without a
+  fundamental now give silence instead of normalised residue. Saved sessions are
+  unaffected (only basic / pulse waveforms are stored as recipes).
 
 ## Deferred from M1 / known gaps
 
@@ -220,5 +225,6 @@ Open:
   sequences on one voice just retrigger it (monophonic, last note wins).
 - Formula language is JS (browser-only); a portable expression parser is needed for
   native targets.
-- No draw-a-waveform / image-contour generators yet (discussed in the prototype).
+- No draw-a-waveform generator yet (Glyph contour covers text outlines; arbitrary
+  image contours could reuse its polyline path).
 - No E2E audio-content assertion in the browser (engine output is unit-tested in node).

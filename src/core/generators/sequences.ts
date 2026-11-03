@@ -102,10 +102,10 @@ export function euclid(k: number, n: number): number[] {
   return Array.from({ length: n }, (_, j) => Math.floor(((j + 1) * k) / n) - Math.floor((j * k) / n));
 }
 
-/** The raw values of table `index`. */
-export function sequenceValues(p: SequenceParams, index: number): number[] {
+/** The raw values of table `index`, before the constant-window guard. */
+function rawValues(p: SequenceParams, index: number, shift: number): number[] {
   const n = Math.max(2, Math.min(64, Math.round(p.steps)));
-  const off = Math.max(0, Math.round(p.offset));
+  const off = Math.max(0, Math.round(p.offset)) + shift;
   const adv = Math.max(0, Math.round(p.advance)) * index;
   switch (Math.round(p.source)) {
     case 1:
@@ -121,6 +121,16 @@ export function sequenceValues(p: SequenceParams, index: number): number[] {
     default:
       return Array.from({ length: n }, (_, j) => digit(PI_DIGITS, off + adv + j));
   }
+}
+
+/**
+ * The values of table `index`. A constant window (e.g. π's "999999", prime gaps 2, 2)
+ * would be silence: the window moves on, one position at a time, until it varies.
+ */
+export function sequenceValues(p: SequenceParams, index: number): number[] {
+  let v = rawValues(p, index, 0);
+  for (let shift = 1; shift < 1024 && v.every((x) => x === v[0]); shift++) v = rawValues(p, index, shift);
+  return v;
 }
 
 export function sequenceTable(p: SequenceParams, index: number): Float32Array {

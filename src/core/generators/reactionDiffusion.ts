@@ -8,13 +8,16 @@ import { shape } from '../shape';
 import { resamplePeriodic } from './resample';
 import { StepCache } from './simCache';
 
-/** Feed / kill presets (the last one = the custom sliders). */
+/**
+ * Feed / kill presets (the last one = the custom sliders), chosen so the pattern keeps
+ * living and changing over a default batch for any seed.
+ */
 export const RD_PRESETS: readonly { label: string; feed: number; kill: number }[] = [
-  { label: 'Self-replicating pulses', feed: 0.04, kill: 0.055 },
-  { label: 'Splitting', feed: 0.03, kill: 0.05 },
-  { label: 'Stable spots', feed: 0.035, kill: 0.058 },
-  { label: 'Slow growth', feed: 0.05, kill: 0.062 },
-  { label: 'Turbulent', feed: 0.05, kill: 0.058 },
+  { label: 'Wandering pulses', feed: 0.022, kill: 0.0525 },
+  { label: 'Waves', feed: 0.018, kill: 0.05 },
+  { label: 'Splitting', feed: 0.038, kill: 0.06 },
+  { label: 'Growing spots', feed: 0.03, kill: 0.0575 },
+  { label: 'Slow growth', feed: 0.054, kill: 0.0625 },
 ];
 export const RD_CUSTOM = RD_PRESETS.length;
 
@@ -33,35 +36,49 @@ export interface RdParams {
   spots: number;
 }
 
-export const DEFAULT_RD: RdParams = { system: 0, feed: 0.04, kill: 0.055, cells: 128, steps: 400, start: 200, spots: 3 };
+export const DEFAULT_RD: RdParams = { system: 0, feed: 0.022, kill: 0.0525, cells: 128, steps: 400, start: 200, spots: 3 };
 
 const DU = 0.16;
 const DV = 0.08;
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
-interface RdState {
+export interface RdState {
   u: Float64Array;
   v: Float64Array;
+  /** Steps taken (die-out checks run at absolute step multiples, so checkpoints agree). */
+  step: number;
+  /** PRNG state for spots (initial and re-seeded). */
+  rng: number;
 }
 
-function init(cells: number, spots: number, seed: number): RdState {
-  const r = new Prng(seed);
-  const u = new Float64Array(cells).fill(1);
-  const v = new Float64Array(cells);
-  for (let s = 0; s < spots; s++) {
+/** Steps between die-out checks; a ring whose V spans less than DEAD gets new spots. */
+const CHECK_EVERY = 50;
+const DEAD = 1e-3;
+
+function addSpots(s: RdState, spots: number): void {
+  const r = new Prng(0);
+  r.state = s.rng;
+  const cells = s.u.length;
+  for (let j = 0; j < spots; j++) {
     const c = r.int(cells);
     const w = 4 + r.int(6);
     for (let d = -w; d <= w; d++) {
       const i = (c + d + cells) % cells;
-      u[i] = 0.5;
-      v[i] = 0.25;
+      s.u[i] = 0.5;
+      s.v[i] = 0.25;
     }
   }
-  for (let i = 0; i < cells; i++) v[i] += 0.01 * r.next();
-  return { u, v };
+  for (let i = 0; i < cells; i++) s.v[i] += 0.01 * r.next();
+  s.rng = r.state;
 }
 
-function advance(s: RdState, n: number, F: number, k: number): void {
+function init(cells: number, spots: number, seed: number): RdState {
+  const s: RdState = { u: new Float64Array(cells).fill(1), v: new Float64Array(cells), step: 0, rng: seed >>> 0 };
+  addSpots(s, spots);
+  return s;
+}
+
+function advance(s: RdState, n: number, F: number, k: number, spots: number): void {
   const { u, v } = s;
   const L = u.length;
   const nu = new Float64Array(L);
@@ -76,14 +93,28 @@ function advance(s: RdState, n: number, F: number, k: number): void {
     }
     u.set(nu);
     v.set(nv);
+    if (++s.step % CHECK_EVERY === 0) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i < L; i++) {
+        lo = Math.min(lo, v[i]);
+        hi = Math.max(hi, v[i]);
+      }
+      // Died out (or froze uniform): new seeded spots, so the batch stays audible.
+      if (hi - lo < DEAD) addSpots(s, spots);
+    }
   }
 }
 
-const cache = new StepCache<RdState>();
-const clone = (s: RdState): RdState => ({ u: s.u.slice(), v: s.v.slice() });
+/** Simulation checkpoints (a pure memo: results never depend on it). */
+const defaultCache = new StepCache<RdState>();
+const clone = (s: RdState): RdState => ({ u: s.u.slice(), v: s.v.slice(), step: s.step, rng: s.rng });
 
-/** The ring's V after `step` steps (for tests / previews). */
-export function rdState(p: RdParams, seed: number, step: number): Float64Array {
+/**
+ * The ring's V after `step` steps. `cache` (default: a module-level memo of recent
+ * simulations) only saves time; a port can pass its own or none.
+ */
+export function rdState(p: RdParams, seed: number, step: number, cache: StepCache<RdState> = defaultCache): Float64Array {
   const preset = RD_PRESETS[Math.round(p.system)];
   const F = preset ? preset.feed : clamp(p.feed, 0, 0.1);
   const k = preset ? preset.kill : clamp(p.kill, 0, 0.1);
@@ -94,7 +125,7 @@ export function rdState(p: RdParams, seed: number, step: number): Float64Array {
     key,
     step,
     () => init(cells, spots, seed >>> 0),
-    (s, n) => advance(s, n, F, k),
+    (s, n) => advance(s, n, F, k, spots),
     clone,
   ).v;
 }
