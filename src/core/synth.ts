@@ -119,7 +119,26 @@ export interface SynthParams {
   readonly mMode: ModEnvMode;
   /** Mod matrix: MOD_SLOTS slots of source → destination × amount. */
   readonly mods: readonly ModSlot[];
+  /** Hard sync: osc B's cycle restarts osc A. */
+  readonly sync: boolean;
+  /** FM: osc B modulates osc A's phase, 0..1 (1 = ±FM_DEPTH cycles). */
+  readonly fm: number;
+  /** Unison per oscillator: 1..MAX_UNISON copies, detune (± cents at the outer copies), stereo spread 0..1. */
+  readonly aUnison: number;
+  readonly aDetune: number;
+  readonly aSpread: number;
+  readonly bUnison: number;
+  readonly bDetune: number;
+  readonly bSpread: number;
+  /** Saturation after the filter, 0..1. */
+  readonly sat: number;
+  /** Stereo width of the voice (0 = mono, 1 = as is, 2 = wider). */
+  readonly width: number;
 }
+
+export const MAX_UNISON = 4;
+/** Phase modulation depth at FM 1, in cycles of osc A. */
+export const FM_DEPTH = 1.5;
 
 /** Filter envelope amount 1 = this many octaves. */
 export const FILTER_ENV_OCTAVES = 6;
@@ -187,6 +206,16 @@ export const DEFAULT_SYNTH: SynthParams = {
   mMode: 'ad',
   // An evolving wavetable by default: LFO 1 sweeps osc A's position.
   mods: [{ src: 'lfo1', dst: 'posA', amt: 0.3 }, ...Array.from({ length: MOD_SLOTS - 1 }, () => EMPTY_SLOT)],
+  sync: false,
+  fm: 0,
+  aUnison: 1,
+  aDetune: 12,
+  aSpread: 0.6,
+  bUnison: 1,
+  bDetune: 12,
+  bSpread: 0.6,
+  sat: 0,
+  width: 1,
 };
 
 /** Amp ADSR of a new Synth voice (Simple voices keep their own defaults). */
@@ -227,7 +256,17 @@ export const SYNTH_RANGES: Readonly<Partial<Record<keyof SynthParams, readonly [
   mDecay: [0, 10],
   mSustain: [0, 1],
   mRelease: [0, 10],
+  fm: [0, 1],
+  aUnison: [1, MAX_UNISON, true],
+  aDetune: [0, 100],
+  aSpread: [0, 1],
+  bUnison: [1, MAX_UNISON, true],
+  bDetune: [0, 100],
+  bSpread: [0, 1],
+  sat: [0, 1],
+  width: [0, 2],
 };
+
 
 const ENUMS: Readonly<Partial<Record<keyof SynthParams, readonly string[]>>> = {
   subWave: SUB_WAVES,

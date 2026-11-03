@@ -170,7 +170,7 @@ describe('pitch math', () => {
 
   const voice = (synth: Partial<SynthParams>): VoiceParams => ({ ...DEFAULT_VOICE, id: 1, name: 'V1', type: 'synth', synth: { ...DEFAULT_SYNTH, ...synth } });
   const tables = new Map();
-  const ctl = (bend: number, blockLen: number, glideCoef: (s: number) => number): SynthControl => ({ bend, blockLen, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0 });
+  const ctl = (bend: number, blockLen: number, glideCoef: (s: number) => number): SynthControl => ({ bend, blockLen, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1 });
 
   it('oscillator increments follow octave / coarse / fine, sub is 1 or 2 octaves below A', () => {
     const sv = new SynthVoice(SR, 1, 64);
@@ -366,5 +366,70 @@ describe('Synth voice in the engine', () => {
     const st = e.status({ tick: -1, playing: false, voices: [] });
     expect(st.voices[0].indexB).toBe(0);
     expect(st.voices[0].pos).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('sync, FM, unison, saturation, width', () => {
+  const hfOf = (x: Float32Array) => {
+    let s = 0;
+    for (let i = 1; i < x.length; i++) s += (x[i] - x[i - 1]) ** 2;
+    return Math.sqrt(s / x.length);
+  };
+  const play = (synth: Partial<SynthParams>, frames = SR / 4) => {
+    const e = engine();
+    e.setVoice(synthVoice(1, { mods: [], cutoff: 20000, envAmount: 0, keyTrack: 0, resonance: 0, filterMode: 'lp12', ...synth }, { windowStart: 0, windowEnd: 0 }));
+    e.applyMidi({ type: 'noteOn', voiceId: 1, note: 48, velocity: 127 });
+    return render(e, frames);
+  };
+
+  it('hard sync: osc A restarts on osc B’s cycle (a sine A 17 st up gets harmonics)', () => {
+    const base = { aCoarse: 17, b: { ...DEFAULT_SYNTH.b, windowEnd: 0 } };
+    const free = play({ ...base, sync: false })[0];
+    const synced = play({ ...base, sync: true })[0];
+    expect(synced.every(Number.isFinite)).toBe(true);
+    expect(hfOf(synced)).toBeGreaterThan(hfOf(free) * 1.3);
+  });
+
+  it('FM: osc B modulating A’s phase brightens a sine', () => {
+    const b = { ...DEFAULT_SYNTH.b, windowStart: 0, windowEnd: 0 };
+    const dry = play({ b, fm: 0 })[0];
+    const fm = play({ b, fm: 0.8 })[0];
+    expect(fm.every(Number.isFinite)).toBe(true);
+    expect(hfOf(fm)).toBeGreaterThan(hfOf(dry) * 1.5);
+  });
+
+  it('unison: copies detune (beating) and spread across the stereo field; width 0 folds it to mono', () => {
+    const [L1, R1] = play({ aUnison: 1 });
+    expect(L1).toEqual(R1);
+    const [L, R] = play({ aUnison: 4, aDetune: 30, aSpread: 1 });
+    let diff = 0;
+    for (let i = 0; i < L.length; i++) diff += Math.abs(L[i] - R[i]);
+    expect(diff / L.length).toBeGreaterThan(0.005);
+    expect(L.every((x) => Math.abs(x) <= 2 * MASTER_GAIN)).toBe(true);
+    const [Lm, Rm] = play({ aUnison: 4, aDetune: 30, aSpread: 1, width: 0 });
+    for (let i = 0; i < Lm.length; i += 97) expect(Lm[i]).toBeCloseTo(Rm[i], 6);
+    // 1/√n: four copies are about as loud as one, not four times.
+    const rms1 = rms(L1);
+    expect(rms(L)).toBeLessThan(rms1 * 2);
+  });
+
+  it('saturation after the filter stays bounded', () => {
+    const [L] = play({ sat: 1, drive: 1, resonance: 1, cutoff: 800, aLevel: 1, bLevel: 1, subLevel: 1 });
+    expect(L.every((x) => Number.isFinite(x) && Math.abs(x) <= 2 * MASTER_GAIN + 1e-6)).toBe(true);
+  });
+
+  it('CPU guard: over UNISON_BUDGET copies, unison is scaled down and status says so', () => {
+    const e = engine();
+    for (let id = 1; id <= 8; id++) {
+      e.setVoice(synthVoice(id, { aUnison: 4, bUnison: 4, bLevel: 0.5 }));
+      e.applyMidi({ type: 'noteOn', voiceId: id, note: 40 + id, velocity: 100 });
+    }
+    render(e, 1024);
+    expect(e.status({ tick: -1, playing: false, voices: [] }).unisonLimited).toBe(true);
+    const one = engine();
+    one.setVoice(synthVoice(1, { aUnison: 4, bUnison: 4, bLevel: 0.5 }));
+    one.applyMidi({ type: 'noteOn', voiceId: 1, note: 40, velocity: 100 });
+    render(one, 1024);
+    expect(one.status({ tick: -1, playing: false, voices: [] }).unisonLimited).toBe(false);
   });
 });

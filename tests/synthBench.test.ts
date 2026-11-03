@@ -6,7 +6,7 @@
  * `npm run bench` runs just this file.
  */
 import { describe, expect, it } from 'vitest';
-import { SynthEngine } from '../src/core/engine/engine';
+import { SynthEngine, UNISON_BUDGET } from '../src/core/engine/engine';
 import { generateBasic } from '../src/core/generators';
 import { buildMipSet } from '../src/core/mipmap';
 import { DEFAULT_SYNTH, normalizeSynth, type SynthParams } from '../src/core/synth';
@@ -76,5 +76,15 @@ describe('CPU budget', () => {
     const ms = msPerQuantum(benchEngine());
     console.log(`[bench] 8 Synth voices @48 kHz: ${(ms * 1000).toFixed(1)} µs per 128-sample quantum = ${((ms / budget) * 100).toFixed(1)}% of real time`);
     expect(ms).toBeLessThan(budget * 0.5);
+  });
+
+  it('worst case: 8 voices with 4-voice unison on both oscillators, FM, sync, spread — the CPU guard caps it', () => {
+    const budget = (Q / SR) * 1000;
+    const e = benchEngine({ aUnison: 4, bUnison: 4, aSpread: 1, bSpread: 1, fm: 0.3, sync: true, sat: 0.5, width: 1.5 });
+    const ms = msPerQuantum(e);
+    const st = e.status({ tick: -1, playing: false, voices: [] });
+    console.log(`[bench] 8 Synth voices, unison 4+4 (guarded to ${UNISON_BUDGET} copies) @48 kHz: ${(ms * 1000).toFixed(1)} µs per quantum = ${((ms / budget) * 100).toFixed(1)}% of real time`);
+    expect(st.unisonLimited).toBe(true);
+    expect(ms).toBeLessThan(budget * 0.6);
   });
 });

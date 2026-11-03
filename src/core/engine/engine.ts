@@ -35,6 +35,12 @@ export const TYPE_FADE_SEC = 0.01;
 const IDLE = 0;
 
 /**
+ * CPU guard: oscillator copies (unison) all sounding Synth voices may play together. Over
+ * it, every voice's unison is scaled down (at least one copy each); status reports it.
+ */
+export const UNISON_BUDGET = 40;
+
+/**
  * Longest a mix change takes: weights move towards their targets at most 1 / this many
  * seconds per second, so a jump (window / table / wavetable switch, a table replaced
  * under the voice) crossfades over ~6 ms, while slow position moves track exactly.
@@ -108,6 +114,8 @@ export interface EngineStatus {
   /** Shared clock: ticks since the transport started (TICKS_PER_BEAT per beat; -1 before the first). */
   tick: number;
   playing: boolean;
+  /** The CPU guard is reducing unison (see UNISON_BUDGET). */
+  unisonLimited?: boolean;
   /**
    * Per voice: modulated positions (pos, posY: 0..1), the coordinates they resolve to in
    * the wavetable (index = x along the row, y = row; the chosen cell in Step), envelope
@@ -156,7 +164,10 @@ export class SynthEngine {
     bpm: 132,
     wheel: 0,
     pressure: 0,
+    unisonScale: 1,
   };
+  /** CPU guard: unison copies were reduced in the last control block. */
+  unisonLimited = false;
 
   constructor(sampleRate: number) {
     this.sampleRate = sampleRate;
@@ -369,6 +380,7 @@ export class SynthEngine {
   status(out: EngineStatus): EngineStatus {
     out.tick = this.tick;
     out.playing = this.playing;
+    out.unisonLimited = this.unisonLimited;
     out.voices.length = this.voices.length;
     for (let i = 0; i < this.voices.length; i++) {
       const v = this.voices[i];
@@ -477,6 +489,15 @@ export class SynthEngine {
     if (this.voices.some((v) => v.removing && v.env.stage === IDLE)) {
       this.voices = this.voices.filter((v) => !(v.removing && v.env.stage === IDLE));
     }
+    // CPU guard: total unison copies of the sounding Synth voices.
+    let copies = 0;
+    for (const v of this.voices) {
+      if (!v.syn || v.params.type !== 'synth' || v.env.stage === IDLE) continue;
+      const s = v.params.synth;
+      copies += s.aUnison + (s.bLevel > 0 || s.ringLevel > 0 || s.fm > 0 || s.sync ? s.bUnison : 0);
+    }
+    this.ctl.unisonScale = copies > UNISON_BUDGET ? UNISON_BUDGET / copies : 1;
+    this.unisonLimited = copies > UNISON_BUDGET;
     for (const v of this.voices) {
       v.lfoPhase += (2 * Math.PI * v.params.lfoRate * blockLen) / this.sampleRate;
       if (v.lfoPhase > 2 * Math.PI) v.lfoPhase -= 2 * Math.PI;
@@ -572,9 +593,10 @@ export class SynthEngine {
     let l = simple;
     let r = simple;
     if (m > 0) {
-      const y = syn.render(v.params, e, blockT, this.tables) * m;
-      l += y * (syn.panL0 + (syn.panL1 - syn.panL0) * blockT);
-      r += y * (syn.panR0 + (syn.panR1 - syn.panR0) * blockT);
+      syn.render(v.params, e, blockT, this.tables);
+      l += syn.outL * m * (syn.panL0 + (syn.panL1 - syn.panL0) * blockT);
+      r += syn.outR * m * (syn.panR0 + (syn.panR1 - syn.panR0) * blockT);
+
     }
     this.outL = l;
     this.outR = r;

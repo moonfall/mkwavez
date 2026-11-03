@@ -115,6 +115,7 @@ const ctl = (o: Partial<SynthControl> = {}): SynthControl => ({
   bpm: 120,
   wheel: 0,
   pressure: 0,
+  unisonScale: 1,
   ...o,
 });
 const voice = (synth: Partial<SynthParams>, id = 1): VoiceParams => ({

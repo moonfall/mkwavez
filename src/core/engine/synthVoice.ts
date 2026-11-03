@@ -29,7 +29,7 @@ import {
   reflect01,
   SRC_INDEX,
 } from '../modulation';
-import { FILTER_ENV_OCTAVES, FILTER_VEL_OCTAVES, oscSemis, type SynthParams } from '../synth';
+import { FILTER_ENV_OCTAVES, FILTER_VEL_OCTAVES, FM_DEPTH, MAX_UNISON, oscSemis, type SynthParams } from '../synth';
 import type { TableId } from '../table';
 import type { VoiceParams } from '../voice';
 import type { PackedWavetable } from '../wavetablePlayback';
@@ -62,7 +62,12 @@ export interface SynthControl {
   /** Mod wheel and channel pressure 0..1. */
   wheel: number;
   pressure: number;
+  /** CPU guard: unison copies are scaled by this (≤ 1) when the engine is over budget. */
+  unisonScale: number;
 }
+
+/** Golden-ratio phase offsets for unison copies (deterministic, evenly spread). */
+const UNISON_PHASE = 0.381966;
 
 const D = DST_INDEX;
 const S = SRC_INDEX;
@@ -109,12 +114,30 @@ export class SynthVoice {
   /** Pitch envelope: attack → decay to 0 (sustain 0), stepped once per control block. */
   readonly penv = new Adsr();
   readonly filter = new MultiFilter();
+  /** Right channel's filter (used while the voice is stereo: unison spread). */
+  readonly filterR = new MultiFilter();
+  /** Unison: phases of each copy (copy 0 = the oscillator's own), detune ratios, stereo gains. */
+  readonly phA = new Float64Array(MAX_UNISON);
+  readonly phB = new Float64Array(MAX_UNISON);
+  private readonly ratA = new Float64Array(MAX_UNISON).fill(1);
+  private readonly ratB = new Float64Array(MAX_UNISON).fill(1);
+  private readonly gAL = new Float64Array(MAX_UNISON).fill(1);
+  private readonly gAR = new Float64Array(MAX_UNISON).fill(1);
+  private readonly gBL = new Float64Array(MAX_UNISON).fill(1);
+  private readonly gBR = new Float64Array(MAX_UNISON).fill(1);
+  /** Copies playing (after the CPU guard). */
+  uA = 1;
+  uB = 1;
+  /** Stereo: unison copies are spread (two filters run). */
+  stereo = false;
+  /** Stereo output of the last render() (before pan). */
+  outL = 0;
+  outR = 0;
   private readonly noise: Prng;
   private pink0 = 0;
   private pink1 = 0;
   private pink2 = 0;
   subPhase = 0;
-  phaseB = 0;
 
   /** Glided pitch (MIDI semitones, voice octave included) and the note it glides to. */
   pitch = 57;
@@ -262,8 +285,8 @@ export class SynthVoice {
     this.incA0 = this.incA1;
     this.incB0 = this.incB1;
     this.incS0 = this.incS1;
-    this.a.mipLevel = mipLevelFor(this.incA1 * this.sampleRate, this.sampleRate);
-    this.b.mipLevel = mipLevelFor(this.incB1 * this.sampleRate, this.sampleRate);
+    this.a.mipLevel = mipLevelFor(this.incA1 * this.ratA[this.uA - 1] * this.sampleRate, this.sampleRate);
+    this.b.mipLevel = mipLevelFor(this.incB1 * this.ratB[this.uB - 1] * this.sampleRate, this.sampleRate);
   }
 
   private lastBend = 0;
@@ -345,8 +368,9 @@ export class SynthVoice {
     this.incB0 = this.incB1;
     this.incS0 = this.incS1;
     this.pitches(p, bend);
-    this.a.mipLevel = mipLevelFor(Math.max(this.incA0, this.incA1) * sr, sr);
-    this.b.mipLevel = mipLevelFor(Math.max(this.incB0, this.incB1) * sr, sr);
+    this.unison(s, c.unisonScale);
+    this.a.mipLevel = mipLevelFor(Math.max(this.incA0, this.incA1) * this.ratA[this.uA - 1] * sr, sr);
+    this.b.mipLevel = mipLevelFor(Math.max(this.incB0, this.incB1) * this.ratB[this.uB - 1] * sr, sr);
 
     // Table mixes.
     this.posA = dst[D.posA] ? reflect01(p.position + dst[D.posA]) : p.position;
@@ -386,6 +410,8 @@ export class SynthVoice {
     this.panR1 += (gr - this.panR1) * this.smooth;
     this.gainTarget = gainTarget * Math.max(0, 1 + dst[D.amp]);
     this.filter.flush();
+    this.filterR.flush();
+
     if (Math.abs(this.pink0) < 1e-20) this.pink0 = 0;
     if (Math.abs(this.pink1) < 1e-20) this.pink1 = 0;
     if (Math.abs(this.pink2) < 1e-20) this.pink2 = 0;
@@ -393,8 +419,38 @@ export class SynthVoice {
 
   private gainTarget = 0;
 
+  /** Unison copies per oscillator (after the CPU guard), their detune ratios and stereo gains. */
+  private unison(s: SynthParams, scale: number): void {
+    const want = (n: number) => (scale >= 1 ? n : Math.max(1, Math.floor(n * scale)));
+    const uA = want(s.aUnison);
+    const uB = want(s.bUnison);
+    // New copies start spread out from copy 0 (deterministic).
+    for (let i = this.uA; i < uA; i++) this.phA[i] = (this.phA[0] + i * UNISON_PHASE) % 1;
+    for (let i = this.uB; i < uB; i++) this.phB[i] = (this.phB[0] + i * UNISON_PHASE) % 1;
+    this.uA = uA;
+    this.uB = uB;
+    this.spread(uA, s.aDetune, s.aSpread, this.ratA, this.gAL, this.gAR);
+    this.spread(uB, s.bDetune, s.bSpread, this.ratB, this.gBL, this.gBR);
+    this.stereo = (uA > 1 && s.aSpread > 0) || (uB > 1 && s.bSpread > 0);
+  }
+
+  /** Copy i of n: detune ±cents and pan ±spread across the copies (outer copies widest), gain 1/√n. */
+  private spread(n: number, cents: number, spread: number, rat: Float64Array, gl: Float64Array, gr: Float64Array): void {
+    const norm = 1 / Math.sqrt(n);
+    for (let i = 0; i < n; i++) {
+      const x = n > 1 ? (2 * i) / (n - 1) - 1 : 0;
+      rat[i] = Math.pow(2, (x * cents) / 1200);
+      const p = x * spread;
+      gl[i] = (p > 0 ? 1 - p : 1) * norm;
+      gr[i] = (p < 0 ? 1 + p : 1) * norm;
+    }
+    // Keep the highest ratio last (mip level uses rat[n − 1]).
+    for (let i = n; i < MAX_UNISON; i++) rat[i] = rat[n - 1];
+  }
+
   /**
-   * One mono sample at `blockT` (0..1) through the block, given the amp envelope value `e`.
+   * One sample at `blockT` (0..1) through the block, given the amp envelope value `e`, into
+   * outL / outR (equal unless unison copies are spread). Returns the mid ((L + R) / 2).
    * Advances the oscillators and envelopes.
    */
   render(p: VoiceParams, e: number, blockT: number, tables: ReadonlyMap<TableId, MipSet>): number {
@@ -405,7 +461,9 @@ export class SynthVoice {
     const incA = this.incA0 + (this.incA1 - this.incA0) * t;
     const incB = this.incB0 + (this.incB1 - this.incB0) * t;
     const incS = this.incS0 + (this.incS1 - this.incS0) * t;
-    let y = 0;
+    const stereo = this.stereo;
+    let yL = 0;
+    let yR = 0;
     if (e > 0) {
       const l0 = this.lv0;
       const l1 = this.lv1;
@@ -414,9 +472,32 @@ export class SynthVoice {
       const ls = l0[2] + (l1[2] - l0[2]) * t;
       const ln = l0[3] + (l1[3] - l0[3]) * t;
       const lr = l0[4] + (l1[4] - l0[4]) * t;
-      const sa = this.a.n > 0 ? this.a.read(this.a.phase, t) : 0;
-      const sb = this.b.n > 0 && (lb > 0 || lr > 0) ? this.b.read(this.phaseB, t) : 0;
-      let x = la * sa + lb * sb + lr * sa * sb;
+      // Osc B first (it may modulate A's phase).
+      let sbL = 0;
+      let sbR = 0;
+      let b0 = 0;
+      if (this.b.n > 0 && (lb > 0 || lr > 0 || s.fm > 0)) {
+        for (let i = 0; i < this.uB; i++) {
+          const v = this.b.read(this.phB[i], t);
+          if (i === 0) b0 = v;
+          sbL += v * this.gBL[i];
+          sbR += v * this.gBR[i];
+        }
+      }
+      let saL = 0;
+      let saR = 0;
+      if (this.a.n > 0) {
+        const fmOff = s.fm > 0 ? s.fm * FM_DEPTH * b0 : 0;
+        for (let i = 0; i < this.uA; i++) {
+          let ph = this.phA[i] + fmOff;
+          ph -= Math.floor(ph);
+          const v = this.a.read(ph, t);
+          saL += v * this.gAL[i];
+          saR += v * this.gAR[i];
+        }
+      }
+      let x = la * saL + lb * sbL + lr * saL * sbL;
+      let xr = la * saR + lb * sbR + lr * saR * sbR;
       if (ls > 0) {
         if (s.subWave === 'square') {
           let q = this.subPhase < 0.5 ? 1 : -1;
@@ -424,37 +505,70 @@ export class SynthVoice {
           const h = this.subPhase + 0.5;
           q -= polyBlep(h >= 1 ? h - 1 : h, incS);
           x += ls * q * 0.7;
-        } else x += ls * Math.sin(TWO_PI * this.subPhase);
+          xr += ls * q * 0.7;
+        } else {
+          const q = ls * Math.sin(TWO_PI * this.subPhase);
+          x += q;
+          xr += q;
+        }
       }
       if (ln > 0) {
         const w = this.noise.bipolar();
+        let q: number;
         if (s.noiseType === 'pink') {
           this.pink0 = 0.99765 * this.pink0 + w * 0.099046;
           this.pink1 = 0.963 * this.pink1 + w * 0.2965164;
           this.pink2 = 0.57 * this.pink2 + w * 1.0526913;
-          x += ln * (this.pink0 + this.pink1 + this.pink2 + w * 0.1848) * PINK_GAIN;
-        } else x += ln * w;
+          q = ln * (this.pink0 + this.pink1 + this.pink2 + w * 0.1848) * PINK_GAIN;
+        } else q = ln * w;
+        x += q;
+        xr += q;
       }
-      x = driveSample(x, this.driveM);
-
       const cut = this.cut0 + (this.cut1 - this.cut0) * t + fe * s.envAmount * FILTER_ENV_OCTAVES;
       const g = cutoffG(Math.pow(2, cut), this.sampleRate);
       const k = this.k0 + (this.k1 - this.k0) * t;
-      y = this.filter.process(x, FILTER_MODE_INDEX[s.filterMode], g, k);
-      y = softLimit(y * e * this.gain);
+      const mode = FILTER_MODE_INDEX[s.filterMode];
+      const amp = e * this.gain;
+      yL = softLimit(driveSample(this.filter.process(driveSample(x, this.driveM), mode, g, k), s.sat) * amp);
+      if (stereo) {
+        yR = softLimit(driveSample(this.filterR.process(driveSample(xr, this.driveM), mode, g, k), s.sat) * amp);
+        if (s.width !== 1) {
+          const m = (yL + yR) * 0.5;
+          const d = (yL - yR) * 0.5 * s.width;
+          yL = m + d;
+          yR = m - d;
+        }
+      } else yR = yL;
     }
-    this.a.phase += incA;
-    if (this.a.phase >= 1) {
-      this.a.phase -= Math.floor(this.a.phase);
-      this.a.wrapped(tables);
+    // Advance: unison copies; copy 0's wrap drives Step-mode table switches and hard sync.
+    for (let i = 0; i < this.uB; i++) {
+      let ph = this.phB[i] + incB * this.ratB[i];
+      if (ph >= 1) {
+        ph -= Math.floor(ph);
+        if (i === 0) {
+          this.b.wrapped(tables);
+          if (s.sync) {
+            // Restart A where it would be if it had started at B's wrap (less aliasing than 0).
+            const frac = incB > 0 ? ph / incB : 0;
+            for (let j = 0; j < this.uA; j++) this.phA[j] = (frac * incA * this.ratA[j]) % 1;
+            this.a.wrapped(tables);
+          }
+        }
+      }
+      this.phB[i] = ph;
     }
-    this.phaseB += incB;
-    if (this.phaseB >= 1) {
-      this.phaseB -= Math.floor(this.phaseB);
-      this.b.wrapped(tables);
+    for (let i = 0; i < this.uA; i++) {
+      let ph = this.phA[i] + incA * this.ratA[i];
+      if (ph >= 1) {
+        ph -= Math.floor(ph);
+        if (i === 0) this.a.wrapped(tables);
+      }
+      this.phA[i] = ph;
     }
     this.subPhase += incS;
     if (this.subPhase >= 1) this.subPhase -= Math.floor(this.subPhase);
-    return y;
+    this.outL = yL;
+    this.outR = yR;
+    return (yL + yR) * 0.5;
   }
 }
