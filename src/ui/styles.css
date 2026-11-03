@@ -405,12 +405,21 @@ details.sec > summary .meta {
   max-height: 188px;
   overscroll-behavior: contain;
 }
-.tl-scroll canvas {
+.tl-stage {
   position: sticky;
   top: 0;
+}
+.tl-scroll canvas {
   border: 0;
   border-radius: 0;
   cursor: pointer;
+}
+.tl-scroll .tl-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: transparent;
+  pointer-events: none;
 }
 .sel-view {
   display: grid;

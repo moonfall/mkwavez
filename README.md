@@ -43,7 +43,8 @@ The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to overr
   Mutation rate. Breed adds one child; Breed N sweeps the bias or makes a seeded
   generation of N children.
 - **Timeline**: every table, in order (cap 4096). Click to select and inspect;
-  Shift-click / long-press toggles Breed parents (badged A, B, …).
+  Shift-click / long-press toggles Breed parents (badged A, B, …). Bars show voice
+  windows (voice 1 on top); carets show each unmuted voice's live play position.
 - **Wavetables** (collapsed by default): the auto "All" wavetable as an amplitude heat map
   with voice windows.
 - **Voices**: window, position, LFO, Blend/Step, octave, level, ADSR per voice. Only voice 1

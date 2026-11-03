@@ -108,6 +108,7 @@ async function run(label, url, browser) {
     { timeout: 5000 },
   );
   assert(true, 'worklet holds every timeline table');
+  await timelineMarkerChecks(page);
   await mutateChecks(page, tlCount);
   await breedChecks(page, tlCount);
   await page.click('#add-voice');
@@ -326,6 +327,93 @@ async function mutateChecks(page, tlCount) {
   await page.waitForTimeout(900);
   assert((await tlCount()) === n, 'no Evolve ticks after undo');
   await page.click('#tab-seed');
+}
+
+/**
+ * Timeline (while playing): a play-position marker for each unmuted voice and none for
+ * muted ones, moving with the LFO; window bars stacked in voice order (voice 1 on top).
+ */
+async function timelineMarkerChecks(page) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const saved = await M(() => window.mkwavez.model.voices.map((v) => ({ ...v })));
+  const ids = saved.map((v) => v.id);
+  // Known state: windows in the first row, voice 1 sweeping, voice 2 still, voice 3 muted.
+  await M((ids) => {
+    const m = window.mkwavez.model;
+    const set = [
+      { windowStart: 0, windowEnd: 5, position: 0.5, lfoDepth: 1, lfoRate: 3, mute: false },
+      { windowStart: 2, windowEnd: 4, position: 0.5, lfoDepth: 0, mute: false },
+      { windowStart: 1, windowEnd: 3, position: 0.5, lfoDepth: 0.5, mute: true },
+    ];
+    ids.forEach((id, i) => m.updateVoice(id, set[i] ?? { mute: true }));
+    m.endGesture();
+    document.querySelector('#sec-timeline').scrollIntoView();
+    document.querySelector('.tl-scroll').scrollTop = 0;
+  }, ids);
+  const markers = () =>
+    M(() =>
+      (document.querySelector('#timeline-markers').dataset.markers || '')
+        .split(' ')
+        .filter(Boolean)
+        .map((s) => s.split(':').map(Number)),
+    );
+  // Wait for the worklet's position report to reflect the new params.
+  await page.waitForFunction(
+    () => {
+      const m = (document.querySelector('#timeline-markers').dataset.markers || '').split(' ').map((s) => Number(s.split(':')[1]));
+      return m.length === 2 && m[0] <= 5 && Math.abs(m[1] - 3) < 1e-3;
+    },
+    null,
+    { timeout: 3000 },
+  );
+  const a = await markers();
+  assert(
+    JSON.stringify(a.map((m) => m[0])) === JSON.stringify(ids.slice(0, 2)),
+    `timeline markers for unmuted voices only (${a.map((m) => `V${m[0]}@${m[1]}`).join(', ')})`,
+  );
+  assert(a[0][1] >= 0 && a[0][1] <= 5 && Math.abs(a[1][1] - 3) < 1e-3, 'markers sit inside their windows');
+  const inked = await M(() => {
+    const c = document.querySelector('#timeline-markers');
+    return c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 === 3 && v);
+  });
+  assert(inked, 'marker overlay has ink');
+  await page.waitForTimeout(250);
+  const b = await markers();
+  assert(Math.abs(b[0][1] - a[0][1]) > 0.01, `LFO moves the live marker (${a[0][1]} → ${b[0][1]})`);
+  // Bars: voice order top to bottom; check the pixels in cell 2 (inside all three windows).
+  const bars = await M(() => {
+    const g = document.querySelector('#timeline-grid');
+    const s = document.querySelector('.tl-scroll');
+    const cols = Math.max(4, Math.floor(s.clientWidth / 56));
+    const cw = s.clientWidth / cols;
+    const d = g.width / g.clientWidth;
+    const probe = document.createElement('canvas').getContext('2d');
+    const rgb = (css) => {
+      probe.fillStyle = css;
+      probe.fillRect(0, 0, 1, 1);
+      return [...probe.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+    };
+    const m = window.mkwavez.model;
+    const cols3 = m.voices.slice(0, 3).map((v) => rgb(getComputedStyle(document.documentElement).getPropertyValue(`--v${(v.id - 1) % 8}`)));
+    const ctx = g.getContext('2d');
+    // Rows from the top of the bar stack (3 voices: y = 33, 36, 39 within a 42 px cell).
+    const n = m.voices.length;
+    const found = [];
+    for (let k = 0; k < n; k++) {
+      const y = 42 - 1 - 2 - (n - 1 - k) * 3 + 1;
+      const px = [...ctx.getImageData(Math.round((2 * cw + cw / 2) * d), Math.round(y * d), 1, 1).data.slice(0, 3)];
+      const dist = cols3.map((c) => Math.hypot(c[0] - px[0], c[1] - px[1], c[2] - px[2]));
+      found.push(dist.indexOf(Math.min(...dist)));
+    }
+    return { order: g.dataset.barOrder, ids: m.voices.map((v) => v.id).join(','), found: found.slice(0, 3) };
+  });
+  assert(bars.order === bars.ids, `window bars ordered by voice (${bars.order})`);
+  assert(JSON.stringify(bars.found) === '[0,1,2]', `bar pixels top to bottom are voices 1, 2, 3 (${bars.found})`);
+  await M((saved) => {
+    const m = window.mkwavez.model;
+    for (const v of saved) m.updateVoice(v.id, v);
+    m.endGesture();
+  }, saved);
 }
 
 /** Centre of timeline cell i, relative to the grid canvas (grid scrolled to the top). */

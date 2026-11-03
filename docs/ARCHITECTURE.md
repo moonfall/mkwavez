@@ -109,7 +109,9 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   resolution runs every 64 samples; the Blend crossfade is ramped across the block.
 - UI: one rAF loop, ≤ 25 fps while playing. Sections redraw only when open, on screen
   (IntersectionObserver) and dirty or animating. The timeline is a virtualized grid on
-  one sticky canvas (only visible rows drawn); the wavetable overview is a cached
+  one sticky canvas (only visible rows drawn), with voice play-position markers
+  (live `status` index while playing, static position when stopped) on a separate
+  overlay canvas that redraws only when they move; the wavetable overview is a cached
   heat-map bitmap with overlays. The Mutate preview is computed in the frame loop,
   not in input handlers: only while the tab is showing and on screen, only when its
   key (source id, mutation, amount, seed) changed, and at most every 50 ms while a
