@@ -290,7 +290,8 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     const o = info();
     title.textContent = `${o.group} › ${o.label}`;
     title.title = `${o.hint} · bias 0 = A`;
-    seedBox.hidden = !usesSeed();
+    // Keeps its space when Mutation drops to 0 (visibility), so the params row doesn't re-wrap.
+    seedBox.classList.toggle('seed-off', !usesSeed());
     syncGuards();
     savePrefs();
   };

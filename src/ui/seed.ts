@@ -163,8 +163,14 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   // ---- formula / parameters ----
   const edKind = h('span', { class: 'gen-h', id: 'seed-kind' });
   const edPath = h('span', { class: 'seed-path', id: 'seed-title' });
-  const editedBadge = h('span', { class: 'seed-badge', id: 'seed-edited', hidden: true }, 'edited');
-  const revertBtn = h('button', { class: 'seed-link', id: 'seed-revert', hidden: true, onclick: () => revert() }, 'Revert to preset');
+  // The badge and Revert keep their space while hidden (visibility), so the first edit
+  // doesn't widen the head and re-flow the parameters / viewer beside and below it.
+  const editedBadge = h('span', { class: 'seed-badge seed-off', id: 'seed-edited' }, 'edited');
+  const revertBtn = h('button', { class: 'seed-link seed-off', id: 'seed-revert', onclick: () => revert() }, 'Revert to preset');
+  const showEdited = (on: boolean) => {
+    editedBadge.classList.toggle('seed-off', !on);
+    revertBtn.classList.toggle('seed-off', !on);
+  };
   const edBody = h('div', { class: 'seed-editor-body' });
   const errEl = h('div', { class: 'error', id: 'seed-error', role: 'status' });
   let exprInput: HTMLInputElement | null = null;
@@ -181,7 +187,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const onEdit = () => {
     const e = entry();
     const ed = isEdited(e);
-    editedBadge.hidden = revertBtn.hidden = !ed;
+    showEdited(ed);
     flash('');
     updateStatus();
   };
@@ -210,7 +216,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     edKind.textContent = e.mode === 'formula' ? 'Formula' : e.mode === 'basic' ? 'Basic wave' : 'Parameters';
     edPath.textContent = `${e.cat} › ${e.name}`;
     revertBtn.textContent = e.mode === 'formula' ? 'Revert to preset' : 'Revert to defaults';
-    editedBadge.hidden = revertBtn.hidden = !isEdited(e);
+    showEdited(isEdited(e));
     exprInput = null;
     if (e.mode === 'formula') {
       const input = h('input', {
@@ -500,7 +506,11 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     addShownBtn.title = room1 ? '' : model.fullMessage();
     addBatchBtn.title = !roomN ? model.fullMessage() : failed.length ? 'Every waveform of the batch must evaluate; Add shown still works for the others' : '';
     el.classList.toggle('seed-stale', !!blocking);
-    seedBox.hidden = !seedUsesRandomness(e, exprOf(e), paramsOf(e));
+    // Parameter entries keep the seed box's space when a param turns the seed off (e.g.
+    // Karplus excitation), so changing it doesn't shift the batch row.
+    const seeded = seedUsesRandomness(e, exprOf(e), paramsOf(e));
+    seedBox.hidden = !seeded && !e.params?.length;
+    seedBox.classList.toggle('seed-off', !seeded);
   };
 
   // ---- actions ----

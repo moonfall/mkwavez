@@ -2199,6 +2199,9 @@ button:disabled {
   border-radius: 4px;
   padding: 0 5px;
 }
+.seed-off {
+  visibility: hidden;
+}
 button.seed-link {
   border: 0;
   background: none;

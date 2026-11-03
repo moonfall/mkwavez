@@ -485,9 +485,22 @@ async function seedChecks(page, tlCount) {
     'CA shows parameters',
   );
   assert(await page.isVisible('#seed-reroll'), 'CA shows seed / Reroll');
+  // The first edit shows "edited" / Revert in reserved space: nothing re-flows.
+  const seedLayout = () =>
+    page.evaluate(() =>
+      ['.seed-params', '#seed-wave', '#seed-strip', '#seed-reroll']
+        .map((s) => {
+          const r = document.querySelector(s).getBoundingClientRect();
+          return `${s}:${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)},${Math.round(r.height)}`;
+        })
+        .join(' '),
+    );
+  const layout0 = await seedLayout();
   await page.selectOption('#seed-param-rule', '110');
   await page.fill('#seed-param-start', '5');
   assert(await page.isVisible('#seed-edited'), 'changed params mark it edited');
+  const layout1 = await seedLayout();
+  assert(layout1 === layout0, `editing params doesn't move the Seed layout (${layout0} → ${layout1})`);
   const seedHex = async () => (await page.textContent('#seed-seed')).trim();
   const s0 = await seedHex();
   await page.click('#seed-reroll');
@@ -1463,7 +1476,9 @@ async function timelineMarkerChecks(page) {
       const t = m.timeline[0];
       m.addTables(Array.from({ length: n }, () => ({ data: t.data, recipe: t.recipe })), false);
     }, n);
-  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  // Playing caps the frame loop at ~25 fps (40 ms): wait past one capped tick, or the strip
+  // may not have re-laid out the last add yet.
+  const frames = () => page.evaluate(() => new Promise((r) => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), 45)));
   await add(40);
   await frames();
   await M(() => (document.querySelector('#timeline-scroll').scrollLeft = 0));
