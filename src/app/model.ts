@@ -6,7 +6,7 @@
 import { MAX_PARENTS } from '../core/breed';
 import { MAX_STEPS, TIMELINE_CAP, UNDO_DEPTH } from '../core/constants';
 import type { ModelState } from '../core/session';
-import { emptySteps, normalizeSteps, type SequenceData } from '../core/sequence';
+import { DEFAULT_STEP_LENGTH, emptySteps, isStepLength, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
 import { clampVoiceWindow, DEFAULT_VOICE, followEdit, fullWindow, voiceWindow, type VoiceParams } from '../core/voice';
@@ -567,6 +567,7 @@ export class AppModel {
       length: Math.max(1, Math.min(MAX_STEPS, length)),
       steps: normalizeSteps(steps.length ? steps : emptySteps()),
       gate: 0.5,
+      stepLength: DEFAULT_STEP_LENGTH,
     };
     this.sequences = [...this.sequences, s];
     this.emit('sequences');
@@ -583,6 +584,7 @@ export class AppModel {
             id,
             steps: patch.steps ? normalizeSteps(patch.steps) : s.steps,
             length: Math.max(1, Math.min(MAX_STEPS, Math.round(patch.length ?? s.length))),
+            stepLength: isStepLength(patch.stepLength) ? patch.stepLength : s.stepLength,
           }
         : s,
     );

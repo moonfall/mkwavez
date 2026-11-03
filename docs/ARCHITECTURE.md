@@ -35,7 +35,7 @@ src/
     wavetablePlayback.ts  packed wavetable (engine form), position → tables + weights
                         (resolveMix: Blend / bilinear / row-aligned, Step, empty slots)
     voice.ts            VoiceParams (X / Y window, position, LFOs), followEdit()
-    sequence.ts         SequenceData, scale → frequency, step helpers
+    sequence.ts         SequenceData, step lengths / clock ticks / bars, scale → frequency
     midi.ts             MIDI bytes → messages, MidiRouter (channel / Omni routing, held-note
                         tracking per source), velocity curve, bend scale, CC map + learn
     session.ts          session schema (meta + per-waveform records), encode / decode,
@@ -184,7 +184,12 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   (`windowStartY/EndY`), positions X / Y, LFO depth / rate / phase per axis, octave,
   level, mute, ADSR. Interpolation belongs to the wavetable. Switching wavetable selects
   all of it. Plain data shared verbatim with the engine.
-- **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate.
+- **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate, step
+  length (`'1/4' | '1/8' | '1/16' | '1/8T' | '1/16T'`, default `'1/8'`). Timing helpers
+  live in `core/sequence.ts`: `STEP_TICKS` (clock ticks per step: 12 / 6 / 3 / 4 / 2 at
+  `TICKS_PER_BEAT` = 12 per quarter note, 48 per 4/4 bar), `stepSeconds` =
+  (60 / BPM) × (4 × fraction), `stepSamples`, `stepAtTick`, `stepBarBeat`,
+  `sequenceSummary`.
 - **Session** (`core/session.ts`, M5 part 1) — what is saved: the timeline (ids in order
   plus one record per waveform), the id allocators (`nextTableId`, `nextWavetableId` —
   monotonic, a deleted wavetable's id is never reused after a restore — `nextVoiceId`,
@@ -205,7 +210,9 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
     JS is evaluated at load; parents may be gone).
   - Versioned: `migrateMeta` runs `MIGRATIONS[v]` (v → v+1) up to `SESSION_VERSION`;
     a newer or unmigratable version is a `SessionError` ('incompatible'). Version 2
-    added `nextWavetableId` (1 → 2: the highest wavetable id + 1).
+    added `nextWavetableId` (1 → 2: the highest wavetable id + 1); version 3 added each
+    sequence's `stepLength` (2 → 3: `'1/8'`, what every earlier sequence played; decode
+    also maps a missing / unknown value to `'1/8'`).
   - User wavetables (editor) are stored like the built-ins: every field, write head and
     Live state; "full" (`isFull`, MAX_USER_SLOTS) is derived, so it round-trips. Decoding
     keeps them within the editor's limits (≤ MAX_USER_SLOTS slots, keeping the newest as
@@ -309,7 +316,11 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   dropping adds to it).
 - Voice tabs: `UiState.voiceId` (kept valid as voices come and go: a removed voice's
   neighbour is selected). The Voice panel shows only that voice's controls; the
-  Sequence panel shows its sequence(s).
+  Sequence panel shows its sequence(s). Its playhead is `stepAtTick(status.tick, …)` of
+  the shown sequence, drawn with its bar.beat (`#seq-pos`); the grid canvas carries
+  `data-step-length`, `data-beats`, `data-bars` and `data-step` for tests. A crowded
+  header (muted target, several sequences, a long length) wraps to a second line on the
+  wide shell; the grid gives up the height.
 - Session menu: a native popover like the MIDI one (`#session-pop`); notices are one
   fixed element at the bottom centre (`#session-notice`, `role=status`), hidden after 9 s
   unless they carry an action.
@@ -337,7 +348,7 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   Int32Arrays, -1 = empty; sent only for wavetables that changed), `voice/set|remove`,
   `sequence/set|remove`, `transport`, `midi` (routed note / bend events), `voice/patch`
   (a few params of one voice, from MIDI CCs).
-- Worklet → main: `ready`, `status` (sequencer step, per voice: modulated positions
+- Worklet → main: `ready`, `status` (sequencer clock tick, per voice: modulated positions
   pos / posY, resolved coordinates index (x) / y, env, note; table count), `error`.
 - Everything the bridge queues within one task is sent as a single `batch` message,
   applied atomically between render quanta: a re-indexed wavetable (eviction) and the
@@ -445,6 +456,19 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   data entry (6/38) and (N)RPN (96–101), which can still be typed in.
 
 ## Playback semantics
+
+- Sequencer clock (`SynthEngine.process`): a fractional sample accumulator per eighth
+  note (`stepSamples(bpm, sr, '1/8')`, exactly the arithmetic of the original
+  eighth-note sequencer), split into 6 ticks by thresholds inside the eighth, so 12
+  ticks per quarter note. A sequence steps on ticks that are multiples of its
+  `STEP_TICKS`, step index `(tick / STEP_TICKS) % length`, all counted from the
+  transport start: every step length divides a bar, so bar lines (and every shared
+  boundary) fire on the same sample for every sequence, and nothing drifts. 1/8
+  sequences fire on exactly the samples they did before step lengths (tests compare the
+  render with a frozen copy of the old engine, `tests/fixtures/legacyEngine.ts`). A step
+  length change takes effect on the next boundary of the new grid (the sounding note
+  keeps its gate: no cut, no click); a tempo change on the next eighth. Gate =
+  `stepSamples(bpm, sr, stepLength) × gate`.
 
 - Position (per axis) = `position + depth/2 · sin(lfoPhase)`, reflected into [0,1],
   mapped onto the window. **Blend** (set on the wavetable): 1D crossfades the two

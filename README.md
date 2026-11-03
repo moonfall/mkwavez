@@ -160,6 +160,15 @@ switches (the choice is remembered).
 - **Sequence**: follows the selected voice tab: its 8-row pentatonic step grid (rows
   labelled with the voice's notes), steps, gate, copy / paste / clear / random; shared
   tempo. "+ Seq" adds another sequence to the voice (a picker appears).
+  - **Step length** ("Steps [16] of [1/8]"): each sequence's steps are 1/4, 1/8
+    (default), 1/16, 1/8T or 1/16T notes; BPM counts quarter notes, so a step lasts
+    (60 / BPM) × (4 × the fraction) seconds — 16 steps of 1/8 are 2 bars of 4/4. The
+    header shows the length ("16 steps · 1/8 · 2 bars") and the playhead as bar.beat
+    ("1.3"); the grid shades the first step of each beat and draws a line at each bar.
+  - All sequences run on one clock from the moment Play is pressed, so different step
+    lengths (and pattern lengths) stay bar-aligned; changing the step length while
+    playing picks up at the next step of the new grid. Sessions saved before step
+    lengths existed load as 1/8 and sound exactly as before.
 - **MIDI** (Web MIDI: Chrome, Edge, Firefox, Opera; HTTPS or localhost): pick an input
   (or All inputs) in the transport bar — the choice is remembered and reconnects on load
   and on hot-plug. The LED in the **MIDI** button blinks on activity; the button opens

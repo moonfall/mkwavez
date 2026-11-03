@@ -6,7 +6,7 @@
 import { CONTROL_BLOCK, MIP_LENGTHS, MIP_OFFSETS } from '../constants';
 import { midiNoteFreq, type MidiVoiceEvent, velocityGain } from '../midi';
 import { mipLevelFor, type MipSet } from '../mipmap';
-import { noteFreq, type SequenceData, stepSamples } from '../sequence';
+import { noteFreq, type SequenceData, STEP_TICKS, stepLengthOf, stepSamples, TICKS_PER_BEAT } from '../sequence';
 import type { TableId } from '../table';
 import { DEFAULT_VOICE, modulatedPosition, type VoiceParams } from '../voice';
 import type { WavetableId } from '../wavetable';
@@ -93,9 +93,12 @@ class VoiceRuntime {
   }
 }
 
+/** Clock ticks per eighth note: the clock's accumulator advances per eighth (see SynthEngine.process). */
+const TICKS_PER_EIGHTH = TICKS_PER_BEAT / 2;
+
 export interface EngineStatus {
-  /** Absolute sequencer step counter (-1 before the first step). */
-  step: number;
+  /** Shared clock: ticks since the transport started (TICKS_PER_BEAT per beat; -1 before the first). */
+  tick: number;
   playing: boolean;
   /**
    * Per voice: modulated positions (pos, posY: 0..1), the coordinates they resolve to in
@@ -113,8 +116,14 @@ export class SynthEngine {
   private sequences: SequenceData[] = [];
   private playing = false;
   private bpm = 132;
-  private step = -1;
+  /** Clock tick (see process()); -1 before the first. */
+  private tick = -1;
+  /** Samples until the next eighth note (fractional accumulator). */
   private toNext = 0;
+  /** Length in samples of the eighth in progress (fixed when it starts, so a tempo change takes effect on the next one). */
+  private eighthLen = 0;
+  /** Ticks into the eighth in progress (0..TICKS_PER_EIGHTH-1). */
+  private sub = 0;
   private ctrlCountdown = 0;
   private readonly bendCoef: number;
   /** Largest weight change per control block (see CROSSFADE_SEC). */
@@ -197,8 +206,9 @@ export class SynthEngine {
   setTransport(playing: boolean, bpm: number): void {
     this.bpm = Math.max(20, Math.min(400, bpm));
     if (playing && !this.playing) {
-      this.step = -1;
+      this.tick = -1;
       this.toNext = 0;
+      this.sub = 0;
     }
     // Stopping releases sequencer notes; held MIDI keys keep sounding.
     if (!playing && this.playing) for (const v of this.voices) if (!v.notes.size) v.env.gateOff();
@@ -293,7 +303,7 @@ export class SynthEngine {
   }
 
   status(out: EngineStatus): EngineStatus {
-    out.step = this.step;
+    out.tick = this.tick;
     out.playing = this.playing;
     out.voices.length = this.voices.length;
     for (let i = 0; i < this.voices.length; i++) {
@@ -312,10 +322,19 @@ export class SynthEngine {
 
   // ---- audio ----
 
-  /** Render `frames` mono samples into out[0..frames). */
+  /**
+   * Render `frames` mono samples into out[0..frames).
+   *
+   * The sequencer clock: one fractional sample accumulator per eighth note (exactly the
+   * arithmetic the eighth-note-only sequencer used, so 1/8 sequences fire on the same
+   * samples as before), split into TICKS_PER_EIGHTH ticks by thresholds within the
+   * eighth. Every sequence steps on the ticks that are multiples of its STEP_TICKS, all
+   * counted from the transport start, so different step lengths stay bar-aligned and a
+   * step length change takes effect on the next boundary of the new grid.
+   */
   process(out: Float32Array, frames: number): void {
     const sr = this.sampleRate;
-    const stepLen = stepSamples(this.bpm, sr);
+    const eighthLen = stepSamples(this.bpm, sr, '1/8');
     for (let i = 0; i < frames; i++) {
       if (this.ctrlCountdown <= 0) {
         this.control(CONTROL_BLOCK);
@@ -326,9 +345,16 @@ export class SynthEngine {
 
       if (this.playing) {
         if (this.toNext <= 0) {
-          this.step++;
-          this.toNext += stepLen;
-          this.triggerStep(stepLen);
+          this.toNext += eighthLen;
+          this.eighthLen = eighthLen;
+          this.sub = 0;
+          this.tick++;
+          this.triggerTick();
+        } else if (this.sub < TICKS_PER_EIGHTH - 1 && this.toNext <= (this.eighthLen * (TICKS_PER_EIGHTH - 1 - this.sub)) / TICKS_PER_EIGHTH) {
+          // Tick `sub + 1` of this eighth is due (sub/6 of the way through it).
+          this.sub++;
+          this.tick++;
+          this.triggerTick();
         }
         this.toNext--;
       }
@@ -341,14 +367,18 @@ export class SynthEngine {
     }
   }
 
-  private triggerStep(stepLen: number): void {
+  /** Fire the steps of every sequence whose grid has a boundary on this tick. */
+  private triggerTick(): void {
     for (const s of this.sequences) {
       if (s.voiceId === null || s.length <= 0) continue;
-      const row = s.steps[this.step % s.length];
+      const len = stepLengthOf(s);
+      const ticks = STEP_TICKS[len];
+      if (this.tick % ticks !== 0) continue;
+      const row = s.steps[(this.tick / ticks) % s.length];
       if (row === undefined || row < 0) continue;
       const v = this.findVoice(s.voiceId);
       if (!v || v.notes.size) continue;
-      this.noteOn(s.voiceId, noteFreq(row, v.params.octave), stepLen * s.gate);
+      this.noteOn(s.voiceId, noteFreq(row, v.params.octave), stepSamples(this.bpm, this.sampleRate, len) * s.gate);
     }
   }
 
@@ -535,5 +565,5 @@ export class SynthEngine {
 }
 
 export function emptyStatus(): EngineStatus {
-  return { step: -1, playing: false, voices: [] };
+  return { tick: -1, playing: false, voices: [] };
 }

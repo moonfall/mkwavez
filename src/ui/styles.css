@@ -1342,6 +1342,18 @@ button.voice-tab[aria-selected='true'] {
 .seq-scale b {
   font-size: 12px;
 }
+.seq-pos {
+  min-width: 3.2em;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  text-align: right;
+}
+#seq-step-length {
+  height: 32px;
+  padding: 0 4px;
+}
 .seq-content {
   display: flex;
   flex-direction: column;
@@ -1393,8 +1405,23 @@ canvas.seq-grid {
     height: auto;
   }
 }
+/* A crowded Sequence header (muted target, several sequences, a long length) wraps onto a
+   second line instead of overlapping; the grid below gives up the height. */
+#sec-sequences .panel-tools {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+@media (min-width: 900px) {
+  #sec-sequences .panel-head {
+    flex: 0 0 auto;
+    min-height: 34px;
+    flex-wrap: wrap;
+    row-gap: 2px;
+    padding-top: 1px;
+    padding-bottom: 1px;
+  }
+}
 @media (max-width: 899px) {
-  #sec-sequences .panel-tools,
   #sec-voices .panel-tools {
     flex-wrap: wrap;
   }
