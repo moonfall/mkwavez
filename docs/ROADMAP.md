@@ -155,6 +155,20 @@ Deviations / known gaps:
   Live / Frozen, interpolation, write-head settings; drag from the Timeline onto a slot
   (replace) or between slots (insert); remove / reorder slots. These pin their tables.
 
+## Native plugin (in progress)
+
+JUCE 9 plugin + standalone app in `plugin/`, aiming at parity with the web app; plan,
+build and verification in `docs/PLUGIN.md`.
+
+- P0 (done): C++ port of the audio core (DSP, playback, engine, MIDI routing) checked
+  against the TS core by a golden fixture (`tests/golden.test.ts` →
+  `plugin/core/tests/golden/core.golden.txt`); VST3 / AU / CLAP / LV2 / Standalone;
+  lock-free command queue + pointer retirement; sample-accurate MIDI; host tempo / play;
+  4 voice slots of automatable parameters; state save / load; minimal editor; VST3 host
+  test; CI on Linux / macOS / Windows.
+- Next: P1 generation core (incl. a portable formula language), P2 project model
+  (timeline, wavetables, write head, undo), P3 full UI, P4 release.
+
 ## M5 — Save/load
 
 - Project save/load (IndexedDB + file export): tables (sample data + recipe), timeline

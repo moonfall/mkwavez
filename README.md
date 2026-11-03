@@ -6,7 +6,8 @@ over a wavetable built from it. This browser build is the development testbed; t
 `src/core/` DSP/data code is written to port to a plugin (JUCE/C++) and hardware.
 
 See `docs/prototype-handoff.md` (original spec + prototype), `docs/ARCHITECTURE.md`
-and `docs/ROADMAP.md`.
+and `docs/ROADMAP.md`. The native plugin port (VST3 / AU / CLAP / LV2 / Standalone, JUCE)
+lives in `plugin/`; see `docs/PLUGIN.md`.
 
 ## Run
 
@@ -20,6 +21,10 @@ npx tsc --noEmit   # typecheck
 npm run build      # typecheck + production build to dist/
 npm run smoke      # build, then headless-Chrome smoke test against preview and dev servers
 ```
+
+`npm test` includes `tests/golden.test.ts`, which pins the core's numbers for the C++
+port (`plugin/`). If you change the core's output on purpose, regenerate the fixture
+(`npx vitest run -u tests/golden.test.ts`) and update the port (see `docs/PLUGIN.md`).
 
 The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to override;
 `SHOTS=dir` saves screenshots at 1440×900, 1180×820, 1920×1080 and 390×844, dark and light).

@@ -1,0 +1,1 @@
+plugin/core/tests/golden/core.golden.txt -diff linguist-generated=true

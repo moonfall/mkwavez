@@ -1,0 +1,83 @@
+#pragma once
+
+#include "EngineHost.h"
+#include "Parameters.h"
+
+#include <juce_audio_processors/juce_audio_processors.h>
+
+#include <array>
+#include <atomic>
+
+/** What the editor shows of the audio thread (written per block, read at frame rate). */
+struct LiveStatus {
+    struct Voice {
+        std::atomic<int> id{0};
+        std::atomic<float> pos{0}, posY{0}, index{0}, y{0}, env{0};
+        std::atomic<int> note{-1};
+    };
+    std::atomic<int64_t> step{-1};
+    std::atomic<bool> playing{false};
+    std::atomic<int> voiceCount{0};
+    std::array<Voice, mkwavez::EngineStatus::MAX> voices;
+};
+
+class MkwavezProcessor final : public juce::AudioProcessor, private juce::Timer {
+public:
+    MkwavezProcessor();
+    ~MkwavezProcessor() override;
+
+    void prepareToPlay(double sampleRate, int samplesPerBlock) override;
+    void releaseResources() override;
+    bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
+    void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using AudioProcessor::processBlock;
+
+    juce::AudioProcessorEditor* createEditor() override;
+    bool hasEditor() const override { return true; }
+
+    const juce::String getName() const override { return JucePlugin_Name; }
+    bool acceptsMidi() const override { return true; }
+    bool producesMidi() const override { return false; }
+    bool isMidiEffect() const override { return false; }
+    double getTailLengthSeconds() const override { return 4.0; }
+
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram(int) override {}
+    const juce::String getProgramName(int) override { return {}; }
+    void changeProgramName(int, const juce::String&) override {}
+
+    void getStateInformation(juce::MemoryBlock& destData) override;
+    void setStateInformation(const void* data, int sizeInBytes) override;
+
+    juce::AudioProcessorValueTreeState& parameters() { return apvts; }
+    mkwavez::EngineHost& host() { return engineHost; }
+    const LiveStatus& liveStatus() const { return status; }
+
+    /** Reset the project to the start state (keeps parameter values). */
+    void resetDocument();
+
+private:
+    void timerCallback() override;
+    void applyParameters(mkwavez::SynthEngine& e, bool force);
+    void applyTransport(mkwavez::SynthEngine& e);
+    void handleMidi(mkwavez::SynthEngine& e, const juce::MidiMessage& m);
+    void publishStatus(const mkwavez::SynthEngine& e);
+
+    juce::AudioProcessorValueTreeState apvts;
+    params::Pointers ptr;
+    mkwavez::EngineHost engineHost;
+    mkwavez::MidiRouter router;
+    mkwavez::MidiRouting routing;
+    mkwavez::CcMap ccMap;
+    LiveStatus status;
+
+    // Audio-thread caches.
+    std::array<std::array<float, params::VOICE_FIELD_COUNT>, params::VOICE_SLOTS> lastVoice{};
+    bool lastPlaying = false;
+    double lastBpm = 0;
+    juce::SmoothedValue<float> outGain{1.0f};
+    mkwavez::EngineStatus scratchStatus;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MkwavezProcessor)
+};

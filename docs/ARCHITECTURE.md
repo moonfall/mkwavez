@@ -310,6 +310,11 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
 
 ## Porting notes
 
+The native port is underway in `plugin/` (see `docs/PLUGIN.md`): `plugin/core` mirrors
+`src/core` file by file, and `tests/golden.test.ts` pins the core's outputs in a fixture
+the C++ tests compare against, so a change here that alters those numbers fails
+`npm test` until the fixture is regenerated (and the port updated).
+
 - `src/core` uses only typed arrays, plain objects and explicit seeds; it maps
   directly to C++ (structs + `std::vector<float>`/fixed arrays). `Prng` state is one
   uint32; mulberry32 is trivial to reproduce bit-exactly (`Math.imul` = 32-bit mul).
