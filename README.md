@@ -133,7 +133,9 @@ switches (the choice is remembered).
     selected” (the Timeline selection; handy on touch) and “Write head here” (or Alt-click
     a slot). Every edit is undoable.
   - Waveforms in your wavetables are never evicted from the Timeline; once no wavetable
-    holds them they can be again. A wavetable holds at most 4096 slots.
+    holds them they can be again. A wavetable holds at most 4096 slots. The Timeline
+    never holds more than 4096 waveforms: when all of them are used by wavetables, adds
+    are refused (the Add buttons are disabled; a notice says which wavetables to clear).
 - **Voice**: one tab per voice (V1, V2 · muted, …, + adds one, × removes the selected
   one). The selected voice's wavetable (any wavetable; switching selects all of it) and
   its interpolation (read-only), octave, window, position, LFO, level, mute, plus a "now
@@ -164,7 +166,7 @@ switches (the choice is remembered).
   only start audio on a gesture). Unsupported browsers / denied permission show a short
   status; the rest of the app is unaffected.
 - **Undo** (transport bar) covers waveform adds (including Mutate / Breed adds, Copy to end),
-  Timeline moves, window edits, note edits and wavetable edits (create, duplicate, rename,
+  Timeline moves, window edits, a voice's wavetable switch, note edits and wavetable edits (create, duplicate, rename,
   delete, resize, slot edits). Wavetable settings (Live / Frozen, write head, interpolation)
   are kept across undo.
 

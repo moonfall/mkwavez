@@ -897,3 +897,23 @@ export function previewWrites(wt: Wavetable, n: number): { writes: PendingWrite[
   }
   return { writes, fresh: w.reset };
 }
+
+/**
+ * The slot holding table `id` nearest to `near` (same row first, then the closest row),
+ * or null if the wavetable doesn't hold it. Used to re-find a dragged slot after the
+ * wavetable changed under the drag (a live insert shifts slots).
+ */
+export function findSlot(wt: Wavetable, id: TableId, near: Cell): Cell | null {
+  let best: Cell | null = null;
+  let cost = Infinity;
+  wt.rows.forEach((r, y) =>
+    r.forEach((s, x) => {
+      const c = Math.abs(y - near.y) * 1e6 + Math.abs(x - near.x);
+      if (s === id && c < cost) {
+        cost = c;
+        best = { x, y };
+      }
+    }),
+  );
+  return best;
+}

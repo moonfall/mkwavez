@@ -44,7 +44,9 @@ import { windowIds } from '../core/wavetablePlayback';
  * 'wavetables' = wavetable contents or settings changed (always emitted with 'timeline'
  * on adds / undo, so the bridge sends tables, wavetables and voices in one batch);
  * 'undo' = undo depth changed (any snapshot or undo);
- * 'parents' = the Breed parent list changed (including tables dropping out of the timeline).
+ * 'parents' = the Breed parent list changed (including tables dropping out of the timeline);
+ * 'notice' = a non-blocking message for the user (`notice`), e.g. an add refused because
+ * the Timeline is full of waveforms that wavetables use.
  */
 export type Topic =
   | 'timeline'
@@ -54,7 +56,8 @@ export type Topic =
   | 'sequences'
   | 'transport'
   | 'undo'
-  | 'parents';
+  | 'parents'
+  | 'notice';
 
 export const MAX_VOICES = 8;
 
@@ -68,8 +71,6 @@ interface Snapshot {
   selectedId: TableId | null;
   windows: Map<number, Windows>;
   steps: Map<number, readonly number[]>;
-  /** Undo puts voices back on the wavetable they were on (a deleted wavetable's voices). */
-  restoreVoiceWavetables: boolean;
 }
 
 export class AppModel {
@@ -85,7 +86,12 @@ export class AppModel {
   bpm = 132;
   /** Counts moveTable() calls that moved something (the Timeline strip reveals the moved waveform). */
   moves = 0;
+  /** Next user wavetable id: monotonic, never reused (plain data; persist it with the wavetables). */
+  nextWavetableId: WavetableId = FIRST_USER_WAVETABLE_ID;
+  /** The last notice (see the 'notice' topic). */
+  notice = '';
   readonly cap: number;
+  private room: { tl: unknown; wts: unknown; n: number; ok: boolean } | null = null;
 
   private byId = new Map<TableId, WaveTable>();
   private tableIds = new IdAllocator(1);
@@ -177,14 +183,14 @@ export class AppModel {
    */
   addTables(gen: readonly GeneratedTable[], selectNew = true): WaveTable[] {
     if (!gen.length) return [];
+    if (!this.roomFor(gen.length)) {
+      this.setNotice(this.fullMessage());
+      return [];
+    }
     this.snapshot();
     const added = gen.map((g) => makeTable(this.tableIds.take(), g));
-    const ids = added.map((t) => t.id);
     const before = this.wavetables;
-    const written = before.map((w) => writeTables(w, ids));
-    // Pins after the writes: the new tables are referenced (Last batch), overwritten Grid cells are not.
-    const pinned = pinnedIds(written.map((e) => e.wt));
-    const r = appendWithEviction(this.timeline, added, this.cap, (id) => pinned.has(id));
+    const { written, r } = this.planAdd(added);
     const gone = new Set(r.evicted.map((t) => t.id));
     let voices = this.voices;
     this.wavetables = written.map((e, i) => {
@@ -194,11 +200,52 @@ export class AppModel {
       return edit.wt;
     });
     this.voices = voices;
-    const parentsChanged = this.setTimeline(r.list);
+    const parentsChanged = this.setTimeline(r.list as WaveTable[]);
     if (selectNew) this.selectedId = added[added.length - 1].id;
     else if (this.selectedId !== null && !this.byId.has(this.selectedId)) this.selectedId = r.list[0]?.id ?? null;
     this.emit('timeline', 'wavetables', 'voices', 'selection', 'undo', ...(parentsChanged ? (['parents'] as Topic[]) : []));
     return added;
+  }
+
+  /**
+   * An add of `added` (one batch): the live wavetables' writes, then oldest-first eviction
+   * of unpinned waveforms (pins after the writes: the new ones are referenced, e.g. by Last
+   * batch; overwritten Grid cells are not). `ok` = it fits the cap without evicting any of
+   * the new waveforms themselves.
+   */
+  private planAdd<T extends { readonly id: TableId }>(added: readonly T[]) {
+    const ids = added.map((t) => t.id);
+    const written = this.wavetables.map((w) => writeTables(w, ids));
+    const pinned = pinnedIds(written.map((e) => e.wt));
+    const r = appendWithEviction<{ readonly id: TableId }>(this.timeline, added, this.cap, (id) => pinned.has(id));
+    const fresh = new Set(ids);
+    const ok = r.list.length <= this.cap && !r.evicted.some((t) => fresh.has(t.id));
+    return { written, r: r as unknown as { list: (WaveTable | T)[]; evicted: (WaveTable | T)[] }, ok };
+  }
+
+  /**
+   * Whether `n` new waveforms (one batch) fit: the Timeline never holds more than `cap`;
+   * adds evict the oldest waveforms no wavetable uses, and are refused when there are too
+   * few of those. Cached per state.
+   */
+  roomFor(n: number): boolean {
+    if (n <= 0) return true;
+    const c = this.room;
+    if (c && c.tl === this.timeline && c.wts === this.wavetables && c.n === n) return c.ok;
+    const ok = this.timeline.length + n <= this.cap || this.planAdd(Array.from({ length: n }, (_, i) => ({ id: -1 - i }))).ok;
+    this.room = { tl: this.timeline, wts: this.wavetables, n, ok };
+    return ok;
+  }
+
+  /** Why an add is refused: which wavetables hold the Timeline's waveforms. */
+  fullMessage(): string {
+    const names = this.wavetables.filter((w) => w.pins && w.rows.some((r) => r.some((id) => id !== null))).map((w) => w.name);
+    return `Timeline full: all ${this.timeline.length} waveforms are used by wavetables — remove some from ${names.join(', ') || 'your wavetables'}.`;
+  }
+
+  private setNotice(msg: string): void {
+    this.notice = msg;
+    this.emit('notice');
   }
 
   /**
@@ -208,7 +255,7 @@ export class AppModel {
   copyToEnd(id: TableId | null): WaveTable | null {
     const t = this.table(id);
     if (!t) return null;
-    return this.addTables([{ data: t.data, recipe: copyRecipe(t.id, t.recipe) }])[0];
+    return this.addTables([{ data: t.data, recipe: copyRecipe(t.id, t.recipe) }])[0] ?? null;
   }
 
   /**
@@ -318,7 +365,11 @@ export class AppModel {
    */
   updateVoice(id: number, patch: Partial<VoiceParams>): void {
     const windowEdit = WINDOW_KEYS.some((k) => k in patch);
-    if (windowEdit && this.gestureKey !== `window:${id}`) {
+    const v0 = this.voice(id);
+    // Switching wavetable is an undo step (undo puts the voice back, window and all).
+    const switching = !!v0 && patch.wavetableId !== undefined && patch.wavetableId !== v0.wavetableId && !!this.wavetable(patch.wavetableId);
+    if (switching) this.snapshot();
+    else if (windowEdit && this.gestureKey !== `window:${id}`) {
       this.snapshot();
       this.gestureKey = `window:${id}`;
     }
@@ -340,7 +391,7 @@ export class AppModel {
       changed = true;
       return next;
     });
-    if (changed) this.emit('voices', ...(windowEdit ? (['undo'] as Topic[]) : []));
+    if (changed) this.emit('voices', ...(windowEdit || switching ? (['undo'] as Topic[]) : []));
   }
 
   /** End a coalesced gesture (slider released). */
@@ -400,9 +451,17 @@ export class AppModel {
     return true;
   }
 
-  /** Next free user wavetable id. */
+  /** A fresh user wavetable id (never reused, not even after undo / delete). */
   private newWavetableId(): WavetableId {
-    return Math.max(FIRST_USER_WAVETABLE_ID - 1, ...this.wavetables.map((w) => w.id)) + 1;
+    const id = Math.max(this.nextWavetableId, ...this.wavetables.map((w) => w.id + 1));
+    this.nextWavetableId = id + 1;
+    return id;
+  }
+
+  /** Voices whose wavetable is gone move to the Timeline (whole window). */
+  private rehomeVoices(): void {
+    const tl = this.wavetable(TIMELINE_WAVETABLE_ID)!;
+    this.voices = this.voices.map((v) => (this.wavetable(v.wavetableId) ? v : clampVoiceWindow({ ...v, wavetableId: tl.id, ...fullWindow(tl) }, tl)));
   }
 
   /** `base`, or `base 2`, `base 3`, … — the first name no wavetable has. */
@@ -447,10 +506,9 @@ export class AppModel {
    */
   deleteWavetable(id: WavetableId): void {
     if (!this.userWavetable(id)) return;
-    this.snapshot(true);
+    this.snapshot();
     this.wavetables = this.wavetables.filter((w) => w.id !== id);
-    const tl = this.wavetable(TIMELINE_WAVETABLE_ID)!;
-    this.voices = this.voices.map((v) => (v.wavetableId === id ? clampVoiceWindow({ ...v, wavetableId: tl.id, ...fullWindow(tl) }, tl) : v));
+    this.rehomeVoices();
     this.emit('wavetables', 'voices', 'undo');
   }
 
@@ -545,7 +603,7 @@ export class AppModel {
 
   // ---- undo ----
 
-  private snapshot(restoreVoiceWavetables = false): void {
+  private snapshot(): void {
     this.gestureKey = null;
     this.undoStack.push({
       timeline: this.timeline,
@@ -553,7 +611,6 @@ export class AppModel {
       wavetables: this.wavetables,
       windows: new Map(this.voices.map((v) => [v.id, windowsOf(v)])),
       steps: new Map(this.sequences.map((s) => [s.id, s.steps])),
-      restoreVoiceWavetables,
     });
     if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift();
   }
@@ -573,15 +630,15 @@ export class AppModel {
       // The write settings must suit the restored size (fixed / variable 1D).
       return { ...w, interp: cur.interp, live: cur.live, write: normalizeWrite(w.shape, w.fixed, cur.write) };
     });
+    // Voices go back to their wavetable and windows (switching wavetable is an undo step
+    // too); a voice whose wavetable no longer exists (an undone create) moves to the Timeline.
     this.voices = this.voices.map((v) => {
       const w = s.windows.get(v.id);
-      // A voice that has switched wavetable since keeps its window (unless the step moved
-      // it: a deleted wavetable's voices go back to it).
-      const back = s.restoreVoiceWavetables && w && w.wavetableId !== v.wavetableId && this.wavetable(w.wavetableId);
-      const next = w && (w.wavetableId === v.wavetableId || back) ? { ...v, ...w } : v;
+      const next = w && this.wavetable(w.wavetableId) ? { ...v, ...w } : v;
       const wt = this.wavetable(next.wavetableId);
       return wt ? clampVoiceWindow(next, wt) : next;
     });
+    this.rehomeVoices();
     this.sequences = this.sequences.map((q) => {
       const st = s.steps.get(q.id);
       return st ? { ...q, steps: st } : q;

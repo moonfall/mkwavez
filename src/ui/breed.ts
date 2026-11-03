@@ -293,8 +293,13 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     const s = blocked ?? (mode === 'gen' ? `${n} × ${pct(bias)}%, seeds differ` : sweepBiases(n, bias).map(pct).join(' '));
     stepsLabel.textContent = s;
     stepsLabel.title = s;
-    apply1.disabled = !ready();
-    applyN.disabled = !ready() || blocked !== null;
+    // Timeline full (every waveform used by a wavetable): adds are refused.
+    const room1 = model.roomFor(1);
+    const roomN = model.roomFor(n);
+    apply1.disabled = !ready() || !room1;
+    applyN.disabled = !ready() || blocked !== null || !roomN;
+    apply1.title = room1 ? '' : model.fullMessage();
+    applyN.title = roomN ? '' : model.fullMessage();
     addSel.disabled = model.selectedId === null || model.breedParents.includes(model.selectedId) || model.breedParents.length >= MAX_PARENTS;
   };
   const syncButtons = updateSteps;
@@ -383,7 +388,11 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   model.on('parents', renderCards);
   model.on('voices', renderVoices);
   model.on('selection', syncButtons);
-  model.on('timeline', () => (dirtyThumbs = dirty = true));
+  model.on('timeline', () => {
+    dirtyThumbs = dirty = true;
+    syncButtons();
+  });
+  model.on('wavetables', syncButtons);
   onThemeChange(() => (dirtyThumbs = dirty = true));
   new ResizeObserver(() => (dirtyThumbs = dirty = true)).observe(el);
 

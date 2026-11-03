@@ -70,12 +70,13 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   const legend = h('span', { class: 'tl-legend', id: 'timeline-legend' });
   // Touch devices get the Breed-parent hint visibly (mouse users have the tooltip).
   const hint = h('span', { class: 'tl-hint', id: 'timeline-hint' }, 'Long-press: Breed parent');
+  const copyTitle = 'Copy the selected waveform to the end of the Timeline (Ctrl/⌘+D in the strip)';
   const copyBtn = h(
     'button',
     {
       id: 'timeline-copy',
       class: 'small tl-copy-btn',
-      title: 'Copy the selected waveform to the end of the Timeline (Ctrl/⌘+D in the strip)',
+      title: copyTitle,
       'aria-keyshortcuts': 'Control+D Meta+D',
       onclick: () => model.copyToEnd(model.selectedId),
     },
@@ -314,7 +315,9 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     const idx = model.indexOf(model.selectedId);
     selLabel.textContent = t ? `#${idx + 1} · id ${t.id} · ${describeRecipe(t.recipe)}` : 'Nothing selected';
     selLabel.title = selLabel.textContent;
-    copyBtn.disabled = !t;
+    const room = model.roomFor(1);
+    copyBtn.disabled = !t || !room;
+    copyBtn.title = room ? copyTitle : model.fullMessage();
   };
 
   const updateLegend = () => {
@@ -397,6 +400,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
       y,
       timer: setTimeout(() => {
         press = null;
+        pending = null; // the long-press is the Breed toggle: a following move doesn't drag
         const t = cellAt(x);
         if (!t) return;
         swallowClick = true;
@@ -476,7 +480,10 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     dirtyGrid = dirtyMarkers = true;
     updateLegend();
   });
-  model.on('wavetables', () => (dirtyGrid = dirtyMarkers = true));
+  model.on('wavetables', () => {
+    dirtyGrid = dirtyMarkers = true;
+    updateLabels();
+  });
   model.on('transport', () => (dirtyMarkers = true));
   model.on('parents', () => (dirtyGrid = true));
   updateLabels();

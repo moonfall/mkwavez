@@ -108,6 +108,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   let cardsDirty = true;
   let thumbsDirty = true;
   let statusDirty = true;
+  // Room in the Timeline changes with it and with the wavetables (Add buttons).
+  model.on('timeline', () => (statusDirty = true));
+  model.on('wavetables', () => (statusDirty = true));
 
   // ---- library ----
   const thumbData: (Float32Array | undefined)[] = [];
@@ -442,9 +445,13 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     }
     errEl.textContent = err;
     exprInput?.classList.toggle('invalid', !!blocking);
-    addShownBtn.disabled = !!blocking || !!j?.errors[shown];
-    addBatchBtn.disabled = !!blocking || failed.length > 0;
-    addBatchBtn.title = failed.length ? 'Every waveform of the batch must evaluate; Add shown still works for the others' : '';
+    // Timeline full (every waveform used by a wavetable): adds are refused.
+    const room1 = model.roomFor(1);
+    const roomN = model.roomFor(opts.count());
+    addShownBtn.disabled = !!blocking || !!j?.errors[shown] || !room1;
+    addBatchBtn.disabled = !!blocking || failed.length > 0 || !roomN;
+    addShownBtn.title = room1 ? '' : model.fullMessage();
+    addBatchBtn.title = !roomN ? model.fullMessage() : failed.length ? 'Every waveform of the batch must evaluate; Add shown still works for the others' : '';
     el.classList.toggle('seed-stale', !!blocking);
     seedBox.hidden = !seedUsesRandomness(e, exprOf(e));
   };

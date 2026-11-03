@@ -69,10 +69,11 @@ describe('AppModel', () => {
     (m as unknown as { wavetables: unknown[] }).wavetables = [...m.wavetables, make1D(16, 'Keep', [1])];
     m.addTables(sines(68));
     expect(m.timeline.map((t) => t.id).slice(0, 2)).toEqual([1, 3]);
-    // Everything pinned: the timeline exceeds the cap rather than evicting.
+    // Never past the cap: an add that would need to evict its own waveforms is refused.
     const small = new AppModel(2);
-    small.addTables(sines(3));
-    expect(small.timeline.length).toBe(3);
+    expect(small.addTables(sines(3))).toEqual([]);
+    expect([small.timeline.length, small.undoDepth]).toEqual([0, 0]);
+    expect(small.notice).toMatch(/^Timeline full/);
   });
 
   it('undo covers note edits', () => {
@@ -177,7 +178,7 @@ describe('built-in wavetables', () => {
   });
 
   it('a voice on Last batch plays each new batch in full', () => {
-    const { m } = model();
+    const { m } = model(100);
     const v = m.addVoice({ wavetableId: LAST_BATCH_WAVETABLE_ID })!;
     expect([v.windowStart, v.windowEnd]).toEqual([0, 0]);
     m.addTables(sines(8));

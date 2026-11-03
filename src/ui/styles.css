@@ -2617,3 +2617,20 @@ body.wave-dragging * {
     display: none;
   }
 }
+/* Non-blocking notice (e.g. Timeline full), bottom centre; click to dismiss. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 900;
+  max-width: min(640px, calc(100vw - 32px));
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--danger);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}

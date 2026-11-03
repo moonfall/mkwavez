@@ -111,8 +111,13 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   topic `parents`. Filtered whenever the timeline changes (eviction, undo); not part
   of undo snapshots.
 - **Timeline** — ordered `WaveTable[]`, cap 4096. Eviction is oldest-first and skips
-  tables referenced by a pinning wavetable (`pinnedIds`). If everything is pinned the
-  timeline may exceed the cap. `AppModel.moveTable(id, ±1)` (Shift+←/→) swaps a table
+  tables referenced by a pinning wavetable (`pinnedIds`). The timeline never exceeds the
+  cap: an add that would have to evict one of its own new waveforms (too few unpinned
+  ones left) is refused (`roomFor(n)`, cached per state, is the same check; Add buttons
+  are disabled with the reason as their tooltip) and the model emits a 'notice'
+  (`fullMessage()`: "Timeline full: all N waveforms are used by wavetables — remove some
+  from …"), shown as a toast. So live wavetables only ever reference waveforms that were
+  added. `AppModel.moveTable(id, ±1)` (Shift+←/→) swaps a table
   with its neighbour and the Timeline built-in's slots with it; voice windows are index
   ranges and stay put (the engine crossfades by table id as the window's contents change);
   wavetables referencing ids are untouched. Consecutive moves of one table with no other
@@ -123,11 +128,12 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   1D = one row (fixed or variable size); 2D = a fixed X×Y grid; Rows = rows of differing
   lengths. Plain, serializable data (persistence is M5). Built-ins (ids 0–3): Timeline
   (1D, mirrors the timeline, doesn't pin), Last batch (1D, pins), Batches (Rows, one row
-  per batch, doesn't pin), Grid (2D 8×8, pins); user wavetables start at id 16 (next id =
-  highest + 1, so it is derived from the list; no extra counter to persist), pin, and
-  start Frozen (`newWavetable`; `duplicateWavetable` copies slots, settings and head of any
-  wavetable). Growing writes / inserts stop at `MAX_SLOTS` (4096) slots per user wavetable
-  (a live growing wavetable pins everything it holds).
+  per batch, doesn't pin), Grid (2D 8×8, pins); user wavetables get ids from
+  `AppModel.nextWavetableId` (from 16, monotonic, never reused — not even after an undone
+  create or a delete; plain data to persist alongside the wavetables), pin, and start Frozen (`newWavetable`; `duplicateWavetable` copies slots, settings and head of any
+  wavetable). Growing writes / inserts stop at `MAX_SLOTS` (4096) slots per user
+  wavetable. A voice whose wavetable disappears (delete, undone create / duplicate) moves
+  to the Timeline (whole window).
 - **Hand edits** (pure functions in `core/wavetable.ts`, each a `WavetableEdit` with the
   follow-axis map, so voice windows follow like on adds): a `SlotTarget` is a slot
   (replace), a gap before slot x of row y (insert; x = length appends) or a new row at y
@@ -165,14 +171,13 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   all of it. Plain data shared verbatim with the engine.
 - **SequenceData** — target voice, length (≤ 64), 64 steps (row or -1), gate.
 - **Undo** — snapshots of the timeline array and wavetables (references), selection,
-  voice windows (X and Y, restored only if the voice is still on that wavetable) and
-  sequence steps; 40 deep. Covers adds, note edits, window edits (a slider drag is one
+  voice windows with their wavetable (X and Y; switching a voice's wavetable is an undo
+  step, so undo puts voices back) and sequence steps; 40 deep. Covers adds, note edits, window edits (a slider drag is one
   step) and wavetable content edits (create, duplicate, rename, delete, resize, slot
   edits; `AppModel.editWavetable`); other slider moves are not undoable. Wavetable
   settings (interpolation, Live / Frozen, write settings, head moves) are not undo steps
   and are kept across undo (write settings re-normalized for the restored size). Deleting
-  a wavetable moves its voices to the Timeline; that snapshot restores them
-  (`restoreVoiceWavetables`).
+  a wavetable moves its voices to the Timeline; undoing the delete puts them back.
 
 ## UI layout
 

@@ -9,6 +9,7 @@ import {
   droppedBy1DResize,
   droppedBy2DResize,
   duplicateWavetable,
+  findSlot,
   FIRST_USER_WAVETABLE_ID,
   GRID_WAVETABLE_ID,
   LAST_BATCH_WAVETABLE_ID,
@@ -405,13 +406,19 @@ describe('AppModel wavetable editing', () => {
     expect(m.timeline.map((t) => t.id)).toEqual([6, 7, 8, 9]);
     // A duplicate of a mirror built-in pins what it copied.
     const d = m.duplicateWavetable(TIMELINE_WAVETABLE_ID)!;
-    m.addTables(sines(2)); // everything older is pinned: the new ones go first
+    // Everything is pinned: the add is refused (never past the cap), with a notice.
+    let notices = 0;
+    m.on('notice', () => notices++);
+    expect(m.roomFor(1)).toBe(false);
+    expect(m.addTables(sines(2))).toEqual([]);
     expect(m.timeline.map((t) => t.id)).toEqual([6, 7, 8, 9]);
+    expect([notices, m.notice]).toEqual([1, 'Timeline full: all 4 waveforms are used by wavetables — remove some from Timeline copy.']);
     m.deleteWavetable(d.id);
+    expect(m.roomFor(1)).toBe(true);
     m.addTables(sines(1));
-    expect(m.timeline.map((t) => t.id)).toEqual([7, 8, 9, 12]);
+    expect(m.timeline.map((t) => t.id)).toEqual([7, 8, 9, 10]);
     // The Timeline mirror never holds an evicted id.
-    expect(m.wavetable(TIMELINE_WAVETABLE_ID)!.rows[0]).toEqual([7, 8, 9, 12]);
+    expect(m.wavetable(TIMELINE_WAVETABLE_ID)!.rows[0]).toEqual([7, 8, 9, 10]);
   });
 
   it('voices on a user wavetable follow its edits', () => {
@@ -423,5 +430,87 @@ describe('AppModel wavetable editing', () => {
     expect([m.voice(v.id)!.windowStart, m.voice(v.id)!.windowEnd]).toEqual([2, 3]);
     m.undo();
     expect([m.voice(v.id)!.windowStart, m.voice(v.id)!.windowEnd]).toEqual([1, 2]);
+  });
+});
+
+describe('review fixes', () => {
+  it('wavetable ids are never reused; undoing a create moves its voices to the Timeline', () => {
+    const m = model();
+    const a = m.createWavetable('1d');
+    m.placeInWavetable(a.id, { kind: 'gap', x: 0, y: 0 }, 1);
+    const v = m.addVoice({ wavetableId: a.id })!;
+    expect(m.voice(v.id)!.wavetableId).toBe(a.id);
+    m.undo(); // the place
+    m.undo(); // the create
+    expect(m.wavetable(a.id)).toBeUndefined();
+    const tl = m.wavetable(TIMELINE_WAVETABLE_ID)!;
+    expect([m.voice(v.id)!.wavetableId, m.voice(v.id)!.windowStart, m.voice(v.id)!.windowEnd]).toEqual([TIMELINE_WAVETABLE_ID, 0, tl.rows[0].length - 1]);
+    // A later wavetable gets a fresh id: it can't silently capture that voice.
+    const b = m.createWavetable('2d');
+    expect(b.id).toBe(a.id + 1);
+    expect(m.voicesOn(b.id)).toEqual([]);
+    m.deleteWavetable(b.id);
+    expect(m.createWavetable('rows').id).toBe(a.id + 2);
+    expect(m.nextWavetableId).toBe(a.id + 3);
+    // The same after an undone duplicate.
+    const d = m.duplicateWavetable(GRID_WAVETABLE_ID)!;
+    m.updateVoice(v.id, { wavetableId: d.id });
+    m.undo(); // the switch
+    expect(m.voice(v.id)!.wavetableId).toBe(TIMELINE_WAVETABLE_ID);
+    m.updateVoice(v.id, { wavetableId: d.id });
+    const depth = m.undoDepth;
+    m.deleteWavetable(d.id);
+    expect(m.voice(v.id)!.wavetableId).toBe(TIMELINE_WAVETABLE_ID);
+    m.undo(); // the delete: back on the copy
+    expect(m.voice(v.id)!.wavetableId).toBe(d.id);
+    expect(m.undoDepth).toBe(depth);
+  });
+
+  it('switching a voice’s wavetable is undoable (window too)', () => {
+    const m = model();
+    const v = m.addVoice({ windowStart: 1, windowEnd: 2 })!;
+    m.updateVoice(v.id, { wavetableId: GRID_WAVETABLE_ID });
+    expect([m.voice(v.id)!.wavetableId, m.voice(v.id)!.windowEnd]).toEqual([GRID_WAVETABLE_ID, 7]);
+    m.undo();
+    expect([m.voice(v.id)!.wavetableId, m.voice(v.id)!.windowStart, m.voice(v.id)!.windowEnd]).toEqual([TIMELINE_WAVETABLE_ID, 1, 2]);
+  });
+
+  it('the Timeline never exceeds the cap; a full add is refused and live wavetables are not written', () => {
+    const m = new AppModel(70);
+    m.addTables(sines(60));
+    const a = m.createWavetable('1d');
+    m.setWavetableLive(a.id, true); // grows: pins every new waveform
+    for (let i = 0; i < 5; i++) m.addTables(sines(2));
+    expect(m.timeline.length).toBe(70);
+    expect(m.wavetable(a.id)!.rows[0].length).toBe(10);
+    // Grow on until nothing unpinned is left: then adds are refused.
+    let refused = 0;
+    for (let i = 0; i < 40; i++) if (!m.addTables(sines(2)).length) refused++;
+    expect(m.timeline.length).toBeLessThanOrEqual(70);
+    expect(refused).toBeGreaterThan(0);
+    const held = m.wavetable(a.id)!.rows[0];
+    expect(held.every((id) => m.table(id))).toBe(true); // only waveforms actually added
+    const before = m.wavetable(a.id);
+    expect(m.addTables(sines(1))).toEqual([]);
+    expect(m.wavetable(a.id)).toBe(before);
+    expect(m.notice).toContain(a.name);
+    // A duplicate of a full Timeline pins everything: refused, not grown past the cap.
+    const m2 = new AppModel(10);
+    m2.addTables(sines(10));
+    m2.duplicateWavetable(TIMELINE_WAVETABLE_ID);
+    expect(m2.roomFor(1)).toBe(false);
+    expect(m2.copyToEnd(m2.timeline[0].id)).toBeNull();
+    expect(m2.timeline.length).toBe(10);
+  });
+
+  it('findSlot re-finds a dragged waveform after the wavetable shifted', () => {
+    const a = make1D(16, 'A', [1, 2, 3, 2]);
+    expect(findSlot(a, 2, { x: 0, y: 0 })).toEqual({ x: 1, y: 0 });
+    expect(findSlot(a, 2, { x: 3, y: 0 })).toEqual({ x: 3, y: 0 });
+    const shifted = placeTable(a, gap(0), 9).wt; // a live insert mid-drag
+    expect(findSlot(shifted, 3, { x: 2, y: 0 })).toEqual({ x: 3, y: 0 });
+    expect(findSlot(shifted, 7, { x: 2, y: 0 })).toBeNull();
+    const r = makeRows(17, 'R', [[1], [5, 6]]);
+    expect(findSlot(r, 6, { x: 0, y: 0 })).toEqual({ x: 1, y: 1 });
   });
 });

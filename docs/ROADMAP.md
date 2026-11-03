@@ -164,7 +164,8 @@ Deviations / known gaps:
 
 Deviations / known gaps:
 - New wavetables and duplicates start Frozen (a duplicate is a snapshot; a live copy of
-  the Timeline would pin and grow without bound). Growth stops at 4096 slots.
+  the Timeline would pin everything). Growth stops at 4096 slots; the Timeline never exceeds
+  its cap — when every waveform is pinned, adds are refused with a notice.
 - Interpolation stays switchable on built-ins (the mock disables it) so voices on the
   Timeline etc. can still use Step. Write-head settings can be changed while Frozen (to
   prepare before going Live); next-write markers show only when Live.

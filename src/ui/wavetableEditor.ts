@@ -13,6 +13,7 @@ import {
   cellAt,
   droppedBy1DResize,
   droppedBy2DResize,
+  findSlot,
   MAX_GRID,
   MAX_SLOTS,
   moveSlot,
@@ -988,6 +989,8 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     }
     const len = wt.rows[y]?.length ?? 0;
     const i = Math.floor((px - L.slotLeft(0) + (L.pitch - L.cell.w) / 2) / L.pitch);
+    // Past the end: append (a fixed line can't: nothing there).
+    if (i >= len && wt.fixed) return null;
     if (i >= len || i < 0) return { kind: 'gap', x: i < 0 ? 0 : len, y };
     const lx = px - L.slotLeft(i);
     let t: SlotTarget = lx < EDGE ? { kind: 'gap', x: i, y } : lx > L.cell.w - EDGE ? { kind: 'gap', x: i + 1, y } : { kind: 'slot', x: i, y };
@@ -1023,10 +1026,14 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     const t = dropTarget(wt, x, y);
     const move = !!src.from && src.from.wtId === wt.id && !p.copy;
     const copy = !!src.from && src.from.wtId === wt.id && p.copy;
-    if (wt.builtin) return { wt, t, move, ok: false, label: `${wt.name} is built-in (read-only): Duplicate it to edit` };
-    if (!t) return { wt, t, move, ok: false, label: modeOf(wt) === 'stack' ? 'Switch to Strip to drop here' : 'Drop on a slot' };
-    const ok = move ? moveSlot(wt, src.from!, t).wt !== wt : canTarget(wt, t);
-    return { wt, t, move, ok, label: ok ? describe(wt, t, move, copy) : t.kind === 'slot' || move ? 'No change here' : 'Full (no room for more slots)' };
+    // The slot it came from, re-found by waveform: the wavetable may have changed under the
+    // drag (a live insert shifts slots); gone = nothing to move.
+    const from = move ? findSlot(wt, src.tableId, src.from!) : null;
+    if (wt.builtin) return { wt, t, move, from, ok: false, label: `${wt.name} is built-in (read-only): Duplicate it to edit` };
+    if (!t) return { wt, t, move, from, ok: false, label: modeOf(wt) === 'stack' ? 'Switch to Strip to drop here' : 'Drop on a slot' };
+    if (move && !from) return { wt, t, move, from, ok: false, label: 'That waveform is no longer in this wavetable' };
+    const ok = move ? moveSlot(wt, from!, t).wt !== wt : canTarget(wt, t);
+    return { wt, t, move, from, ok, label: ok ? describe(wt, t, move, copy) : t.kind === 'slot' || move ? 'No change here' : 'Full (no room for more slots)' };
   };
   addDropZone({
     active: () => host.isOpen(),
@@ -1052,15 +1059,14 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
       if (!r?.t || !r.ok) return;
       const wt = r.wt;
       const t = r.t;
-      if (r.move) model.moveInWavetable(wt.id, src.from!, t);
+      const from = r.from;
+      if (r.move && from) model.moveInWavetable(wt.id, from, t);
       else model.placeInWavetable(wt.id, t, src.tableId);
-      // Select where it landed.
-      if (t.kind === 'slot') sel = { x: t.x, y: t.y };
-      else if (t.kind === 'row') sel = { x: 0, y: t.y };
-      else {
-        const shift = r.move && src.from!.y === t.y && t.x > src.from!.x ? 1 : 0;
-        sel = { x: t.x - shift, y: t.y };
-      }
+      // Select where it landed: near the target, found by waveform (a move may have shifted
+      // slots, or removed the emptied source row above it).
+      const near = t.kind === 'row' ? { x: 0, y: t.y } : { x: t.kind === 'gap' && from && from.y === t.y && t.x > from.x ? t.x - 1 : t.x, y: t.y };
+      const after = cur();
+      sel = findSlot(after, src.tableId, near) ?? findSlot(after, src.tableId, { x: near.x, y: near.y - 1 }) ?? near;
       selFor = wt.id;
       scroller.focus({ preventScroll: true });
       syncFoot();

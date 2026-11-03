@@ -169,6 +169,26 @@ async function run(label, url, browser) {
     cards: document.querySelectorAll('#breed-parents .parent-card').length,
   }));
   assert(ev.parents === 0 && ev.cards === 0, 'evicted Breed parents drop out of the list and its cards');
+  // Timeline full of waveforms wavetables use: adds are refused with a notice, buttons say so.
+  const full = await page.evaluate(() => {
+    const m = window.mkwavez.model;
+    const d = m.duplicateWavetable(0);
+    const n = m.timeline.length;
+    const added = m.addTables([{ data: m.timeline[0].data, recipe: m.timeline[0].recipe }]).length;
+    return { id: d.id, n, added, after: m.timeline.length };
+  });
+  await page.waitForTimeout(100);
+  const fullUi = await page.evaluate(() => ({
+    notice: !document.querySelector('#notice').hidden && document.querySelector('#notice').textContent,
+    copy: document.querySelector('#timeline-copy').disabled && document.querySelector('#timeline-copy').title,
+  }));
+  assert(
+    full.n === 4096 && full.added === 0 && full.after === 4096 && String(fullUi.notice).startsWith('Timeline full: all 4096 waveforms') && String(fullUi.copy).startsWith('Timeline full'),
+    `Timeline full: add refused, notice shown, Copy to end disabled (${fullUi.notice})`,
+  );
+  await page.evaluate((id) => window.mkwavez.model.deleteWavetable(id), full.id);
+  await page.waitForTimeout(50);
+  assert(!(await page.isDisabled('#timeline-copy')), 'room again once the wavetable is deleted');
   await page.click('#play');
   assert((await page.evaluate(() => window.mkwavez.model.playing)) === false, 'transport stops');
   // Leave eight parents showing (layout / overflow / screenshots).

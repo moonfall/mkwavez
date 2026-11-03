@@ -87,6 +87,17 @@ root.replaceChildren(
 
 installShortcuts(ctx, { togglePlay: () => void togglePlay(ctx) });
 
+// ---- notices (e.g. an add refused: the Timeline is full of waveforms wavetables use) ----
+const toast = h('div', { class: 'toast', id: 'notice', role: 'status', 'aria-live': 'polite', hidden: true, onclick: () => (toast.hidden = true) });
+document.body.append(toast);
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+model.on('notice', () => {
+  toast.textContent = model.notice;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (toast.hidden = true), 8000);
+});
+
 // ---- frame loop: views draw only when dirty (or animating while playing), ~25 fps cap while playing ----
 const views: FrameView[] = [generate.view, timeline.view, wavetables.view, voices.view, sequences.view];
 const limiter = throttle(40);
