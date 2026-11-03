@@ -57,11 +57,19 @@ async function boot(answer: (b: FakeBackend) => void) {
 
 const flush = () => new Promise((r) => setTimeout(r, 20));
 
+/** Wait (real timers) until `cond` holds: a fixed sleep is flaky on a loaded machine. */
+async function until(cond: () => boolean, ms = 2000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 5));
+}
+
 afterEach(() => vi.useRealTimers());
 
 describe('PluginHost (plugin mode)', () => {
   it('fresh instance: default session, every table sent raw, session autosaved to native', async () => {
     const { backend, model, boot: b } = await boot((x) => x.reply({ type: 'init', meta: null, records: 0, sampleRate: 44100, engine: { tables: [1, 2, 3, 4, 5], wavetables: [0, 1], voices: [1, 2, 3, 4], sequences: [1, 2, 3] } }));
+    // The autosave (debounce 0 + idle callbacks) lands asynchronously: wait for its commit.
+    await until(() => backend.sent.some((m) => m.type === 'session/commit'));
     await flush();
     expect(b.restored).toBe(false);
     expect(model.timeline.length).toBe(5);
