@@ -921,8 +921,8 @@ async function mutateChecks(page, tlCount, label) {
 
   // Library.
   // Offered mutations (core/mutations.ts MUTATION_CHOICES) and the seeded ones among them.
-  const MUTATION_COUNT = 33;
-  const SEEDED = 'toNoise,ring,nwarp,formant,multiples,phaseRandom,jitter,scramble';
+  const MUTATION_COUNT = 44;
+  const SEEDED = 'toNoise,ring,nwarp,cheby,formant,multiples,phaseRandom,jitter,scramble';
   const all = await visibleIds();
   assert(all.length === MUTATION_COUNT && !all.includes('breed'), `library lists ${MUTATION_COUNT} mutations (legacy Breed hidden)`);
   assert((await page.$$('#mutate-list .gen-tag')).length === SEEDED.split(',').length, 'seeded mutations tagged rnd');
