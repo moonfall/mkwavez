@@ -1123,6 +1123,251 @@ async function breedChecks(page, tlCount) {
   await page.click('#tab-seed');
 }
 
+/**
+ * Fake Web MIDI (init script): navigator.requestMIDIAccess resolves to a mock MIDIAccess
+ * with one input ("Fake Keys"); window.__midi fires messages, hot-plugs and unplugs inputs.
+ */
+function installFakeMidi() {
+  class FakeInput {
+    constructor(id, name) {
+      Object.assign(this, { id, name, manufacturer: 'Test', type: 'input', state: 'connected', connection: 'closed', onmidimessage: null });
+    }
+    fire(bytes) {
+      this.onmidimessage?.({ data: new Uint8Array(bytes), timeStamp: performance.now() });
+    }
+  }
+  const inputs = new Map();
+  const access = { inputs, outputs: new Map(), sysexEnabled: false, onstatechange: null };
+  const m = {
+    access,
+    requests: 0,
+    add(id, name) {
+      const i = new FakeInput(id, name);
+      inputs.set(id, i);
+      access.onstatechange?.({ port: i });
+    },
+    unplug(id) {
+      const i = inputs.get(id);
+      i.state = 'disconnected';
+      access.onstatechange?.({ port: i });
+    },
+    fire: (id, bytes) => inputs.get(id).fire(bytes),
+    /** Inputs the app is listening to. */
+    open: () => [...inputs.values()].filter((i) => i.state === 'connected' && i.onmidimessage).map((i) => i.id),
+  };
+  m.add('in-1', 'Fake Keys');
+  window.__midi = m;
+  Object.defineProperty(navigator, 'requestMIDIAccess', {
+    configurable: true,
+    value: () => {
+      m.requests++;
+      return Promise.resolve(access);
+    },
+  });
+}
+
+/**
+ * Web MIDI with a mocked MIDIAccess: no permission request until an input is chosen;
+ * channel routing, note on / off / velocity 0 / held-note return / all-notes-off reaching
+ * the engine; CC1 → position (slider follows); Omni → selected tab; learn (persisted);
+ * hot-plug and unplug (releases held notes); the remembered input reconnects on reload;
+ * layout still fits. Then the unsupported and permission-denied paths.
+ */
+async function midiChecks(label, url, browser) {
+  console.log(`\n[${label}] Web MIDI`);
+  const errors = [];
+  const watch = (page) => {
+    page.on('console', (m) => {
+      if (m.type() === 'error') errors.push(m.text());
+    });
+    page.on('pageerror', (e) => errors.push(String(e)));
+  };
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
+  watch(page);
+  await page.addInitScript(installFakeMidi);
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForSelector('#midi-input');
+  const E = (fn, arg) => page.evaluate(fn, arg);
+  assert((await E(() => window.__midi.requests)) === 0 && (await page.inputValue('#midi-input')) === 'off', 'MIDI off by default: no access request');
+  assert(await fitsScreen(page), '1440×900: one screen with the MIDI controls');
+
+  await page.selectOption('#midi-input', 'all');
+  await page.waitForFunction(() => window.__midi.open().length === 1, null, { timeout: 3000 });
+  const opts = await page.$$eval('#midi-input option', (os) => os.map((o) => o.textContent));
+  assert(opts.includes('Fake Keys') && opts.includes('All MIDI inputs') && opts.includes('MIDI off'), `picker lists Off, All and the input (${opts.join(', ')})`);
+  assert((await page.getAttribute('#midi-led', 'data-state')) === 'on', 'LED shows a connected input');
+  await page.waitForFunction(() => document.body.dataset.audio === 'running', null, { timeout: 10000 });
+  assert(!(await E(() => window.mkwavez.model.playing)), 'choosing an input starts audio, not the transport');
+
+  const fire = (bytes, id = 'in-1') => E(([b, i]) => window.__midi.fire(i, b), [bytes, id]);
+  const waitNote = (voice, note, msg) =>
+    page
+      .waitForFunction(([v, n]) => window.mkwavez.bridge.status.voices.find((x) => x.id === v)?.note === n, [voice, note], { timeout: 3000 })
+      .then(() => assert(true, msg));
+
+  await fire([0x90, 69, 100]);
+  assert(await page.$eval('#midi-led', (l) => l.classList.contains('blink')), 'activity LED blinks');
+  await waitNote(1, 69, 'channel 1 note-on reaches voice 1 in the engine');
+  await fire([0x91, 72, 90]);
+  await waitNote(2, 72, 'channel 2 → voice 2');
+  await fire([0x95, 40, 90]);
+  await page.waitForTimeout(100);
+  assert(!(await E(() => window.mkwavez.bridge.status.voices.some((v) => v.note === 40))), 'channel 5 (no voice 5) is ignored');
+  await fire([0x80, 69, 0]);
+  await waitNote(1, -1, 'note-off releases voice 1');
+  await fire([0x91, 72, 0]);
+  await waitNote(2, -1, 'note-on with velocity 0 releases');
+  await fire([0x90, 60, 100]);
+  await fire([0x90, 64, 100]);
+  await waitNote(1, 64, 'last note wins');
+  await fire([0x80, 64, 0]);
+  await waitNote(1, 60, 'releasing it returns to the held note');
+  await fire([0xb0, 123, 0]);
+  await waitNote(1, -1, 'all-notes-off (CC 123) releases held notes');
+
+  await fire([0xb0, 1, 127]);
+  assert(
+    (await E(() => window.mkwavez.model.voice(1).position)) === 1 && (await page.inputValue('#voice-position')) === '1',
+    'CC1 (mod wheel) moves voice 1 position; the slider follows',
+  );
+  await fire([0xb0, 1, 0]);
+  assert((await E(() => window.mkwavez.model.voice(1).position)) === 0, 'CC1 at 0 → position 0');
+
+  // Omni → the selected voice tab.
+  await page.click('#voice-tab-3');
+  await page.click('#midi-settings');
+  assert(await page.isVisible('#midi-pop'), 'MIDI popover opens');
+  assert(await fitsScreen(page), 'popover open: still no page scroll');
+  await page.check('#midi-omni');
+  assert((await page.textContent('#midi-omni-label')).includes('V3'), 'Omni label names the selected voice');
+  await fire([0x9a, 62, 100]);
+  await waitNote(3, 62, 'Omni: channel 11 plays the selected voice (V3)');
+  await fire([0x8a, 62, 0]);
+  await waitNote(3, -1, 'Omni note-off');
+
+  // Learn.
+  await page.click('#midi-learn-lfoDepth');
+  assert((await page.getAttribute('#midi-learn-lfoDepth', 'aria-pressed')) === 'true', 'learn armed');
+  await fire([0xb2, 74, 0]);
+  await page.waitForFunction(() => document.querySelector('#midi-cc-lfoDepth').value === '74', null, { timeout: 2000 });
+  assert((await page.getAttribute('#midi-learn-lfoDepth', 'aria-pressed')) === 'false', 'learn assigns CC 74 to LFO depth and disarms');
+  assert((await E(() => window.mkwavez.model.voice(3).lfoDepth)) === 0, 'the learned move applies (V3 LFO depth 0)');
+  await fire([0xb2, 74, 127]);
+  assert((await E(() => window.mkwavez.model.voice(3).lfoDepth)) === 1, 'learned CC drives LFO depth');
+  await page.fill('#midi-cc-level', '7');
+  await page.press('#midi-cc-level', 'Enter');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(100);
+  assert(!(await page.isVisible('#midi-pop')), 'Escape closes the popover');
+  const stored = await E(() => JSON.parse(localStorage.getItem('mkwavez.midi')));
+  assert(
+    stored.input === 'all' && stored.omni === true && stored.cc.lfoDepth === 74 && stored.cc.level === 7 && stored.cc.position === 1,
+    'settings persisted',
+  );
+
+  // Hot-plug / unplug.
+  const optionTexts = () => page.$$eval('#midi-input option', (os) => os.map((o) => o.textContent));
+  await E(() => window.__midi.add('in-2', 'Second Keys'));
+  await page.waitForFunction(() => window.__midi.open().length === 2, null, { timeout: 2000 });
+  assert((await optionTexts()).includes('Second Keys'), 'hot-plugged input listed and heard (All inputs)');
+  await fire([0x90, 50, 100], 'in-2');
+  await waitNote(3, 50, 'second input plays');
+  await E(() => window.__midi.unplug('in-2'));
+  await waitNote(3, -1, 'unplugging an input releases its held notes');
+  assert(!(await optionTexts()).includes('Second Keys'), 'unplugged input leaves the picker');
+
+  // Remembered input reconnects on reload (fake MIDI re-installed by the init script).
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => window.__midi.open().length === 1, null, { timeout: 3000 });
+  assert((await E(() => window.__midi.requests)) === 1 && (await page.inputValue('#midi-input')) === 'all', 'stored input reconnects on load');
+  await page.click('#midi-settings');
+  assert((await page.inputValue('#midi-cc-lfoDepth')) === '74' && (await page.isChecked('#midi-omni')), 'CC map and Omni restored');
+  await page.keyboard.press('Escape');
+  // A chosen input that is unplugged stays selected as "not connected" (reconnects on hot-plug).
+  await page.selectOption('#midi-input', 'in-1');
+  await E(() => window.__midi.unplug('in-1'));
+  await page.waitForFunction(() => window.__midi.open().length === 0, null, { timeout: 2000 });
+  assert((await page.$eval('#midi-input', (s) => s.selectedOptions[0].textContent)).includes('not connected'), 'unplugged chosen input shown as not connected');
+  assert((await page.textContent('#midi-status')).trim() === 'No input', 'status says no input');
+  for (const [w, hh] of [
+    [1440, 900],
+    [1180, 820],
+  ]) {
+    await page.setViewportSize({ width: w, height: hh });
+    await page.waitForTimeout(150);
+    const bar = await E(() => {
+      const t = document.querySelector('.transport');
+      return t.scrollWidth <= t.clientWidth + 1;
+    });
+    assert((await fitsScreen(page)) && bar, `${w}×${hh}: one screen, transport bar not overflowing`);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(150);
+  const phone = await E(() => {
+    const t = document.querySelector('.transport');
+    const b = document.querySelector('#midi-settings').getBoundingClientRect();
+    const th = document.querySelector('#theme-toggle').getBoundingClientRect();
+    return { page: document.documentElement.scrollWidth <= innerWidth, bar: t.scrollWidth <= t.clientWidth + 1, apart: b.right <= th.left, w: b.width };
+  });
+  assert(phone.page && phone.bar && phone.apart && phone.w > 40, `390px: transport bar fits with the MIDI button (${JSON.stringify(phone)})`);
+  // On a phone the picker lives in the popover.
+  await page.click('#midi-settings');
+  assert(await page.isVisible('#midi-input-pop'), '390px: input picker in the popover');
+  await page.selectOption('#midi-input-pop', 'all');
+  assert((await page.inputValue('#midi-input')) === 'all', 'popover picker and bar picker stay in sync');
+  await page.keyboard.press('Escape');
+  if (SHOTS) {
+    await page.setViewportSize({ width: 1180, height: 820 });
+    await page.click('#midi-settings');
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: `${SHOTS}/${label}-midi-1180x820.png` });
+  }
+  await ctx.close();
+
+  // Unsupported browser (no requestMIDIAccess) with a remembered input: clear, non-blocking status.
+  const ctx2 = await browser.newContext({ viewport: { width: 1180, height: 820 } });
+  const p2 = await ctx2.newPage();
+  watch(p2);
+  await p2.addInitScript(() => {
+    localStorage.setItem('mkwavez.midi', JSON.stringify({ input: 'all' }));
+    Object.defineProperty(navigator, 'requestMIDIAccess', { configurable: true, value: undefined });
+  });
+  await p2.goto(url, { waitUntil: 'load' });
+  await p2.waitForFunction(() => document.querySelector('#midi-status').textContent !== '', null, { timeout: 3000 });
+  assert(
+    (await p2.textContent('#midi-status')) === 'No Web MIDI' &&
+      (await p2.isDisabled('#midi-input')) &&
+      (await p2.getAttribute('#midi-led', 'data-state')) === 'error',
+    'unsupported browser: "No Web MIDI" status, picker disabled',
+  );
+  await p2.click('#midi-settings');
+  assert((await p2.textContent('#midi-message')).includes('Safari'), 'popover explains (Safari / other browsers)');
+  await p2.keyboard.press('Escape');
+  await p2.click('#play');
+  await p2.waitForFunction(() => document.body.dataset.audio === 'running', null, { timeout: 10000 });
+  assert(await fitsScreen(p2), 'app still plays and fits without MIDI');
+  await ctx2.close();
+
+  // Permission denied.
+  const ctx3 = await browser.newContext({ viewport: { width: 1180, height: 820 } });
+  const p3 = await ctx3.newPage();
+  watch(p3);
+  await p3.addInitScript(() => {
+    Object.defineProperty(navigator, 'requestMIDIAccess', {
+      configurable: true,
+      value: () => Promise.reject(new DOMException('Permission denied', 'NotAllowedError')),
+    });
+  });
+  await p3.goto(url, { waitUntil: 'load' });
+  await p3.selectOption('#midi-input', 'all');
+  await p3.waitForFunction(() => document.querySelector('#midi-status').textContent === 'MIDI blocked', null, { timeout: 3000 });
+  assert(!(await p3.isDisabled('#midi-input')), 'permission denied: "MIDI blocked", picker still usable to retry');
+  await ctx3.close();
+
+  assert(errors.length === 0, `no console errors (MIDI)${errors.length ? `: ${errors.join(' | ')}` : ''}`);
+}
+
 const browser = await chromium.launch({
   executablePath: CHROME,
   headless: true,
@@ -1134,10 +1379,12 @@ try {
   const prev = await preview({ preview: { port: 0, strictPort: false }, logLevel: 'warn' });
   servers.push(prev);
   await run('preview', prev.resolvedUrls.local[0], browser);
+  await midiChecks('preview', prev.resolvedUrls.local[0], browser);
   const dev = await createServer({ server: { port: 0 }, logLevel: 'warn' });
   servers.push(dev);
   await dev.listen();
   await run('dev', dev.resolvedUrls.local[0], browser);
+  await midiChecks('dev', dev.resolvedUrls.local[0], browser);
   console.log('\nsmoke: PASS');
 } catch (e) {
   failed = true;

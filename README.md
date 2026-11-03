@@ -27,7 +27,7 @@ The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to overr
 ## Using it
 
 On a laptop / tablet (≥ 900 px wide) everything is on one screen: the transport bar
-(play, BPM, undo, table count, sample rate, theme toggle), then Generate | Wavetables,
+(play, BPM, undo, MIDI, table count, sample rate, theme toggle), then Generate | Wavetables,
 the Timeline strip, and Voice | Sequence. Panels scroll internally when their content
 doesn't fit (e.g. the Mutate / Breed tabs). Narrower screens get one scrolling column
 of the same panels, each collapsible. Dark theme by default; the sun / moon button
@@ -74,5 +74,20 @@ switches (the choice is remembered).
 - **Sequence**: follows the selected voice tab: its 8-row pentatonic step grid (rows
   labelled with the voice's notes), steps, gate, copy / paste / clear / random; shared
   tempo. "+ Seq" adds another sequence to the voice (a picker appears).
+- **MIDI** (Web MIDI: Chrome, Edge, Firefox, Opera; HTTPS or localhost): pick an input
+  (or All inputs) in the transport bar — the choice is remembered and reconnects on load
+  and on hot-plug. The LED in the **MIDI** button blinks on activity; the button opens
+  routing and the controller map (on a phone the input picker is there too). Channel N
+  plays voice VN; **Omni** sends every channel to the selected voice tab. Voices stay
+  monophonic: the last key wins, releasing it returns to a key still held (legato, no
+  retrigger), velocity sets loudness, pitch bend is ±2 semitones, the voice's octave
+  applies. Held keys take over from the voice's sequence (it keeps counting and resumes
+  on its next step once all keys are up); stopping the transport doesn't cut held keys.
+  All-notes-off / all-sound-off (CC 123 / 120), unplugging the device or switching input
+  release held notes. CC map: Position (CC 1, mod wheel, by default), LFO depth, LFO rate,
+  Level — type a CC number or press Learn and move a control; remembered. Audio starts
+  when you pick an input, or on your first click if the input was remembered (browsers
+  only start audio on a gesture). Unsupported browsers / denied permission show a short
+  status; the rest of the app is unaffected.
 - **Undo** (transport bar) covers table adds (including Apply / Apply N), window
   edits and note edits.

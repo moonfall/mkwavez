@@ -18,8 +18,11 @@ export function buildMidi(ctx: UiContext, midi: MidiController, web: WebMidi): H
 
   const led = h('span', { class: 'midi-led', id: 'midi-led', 'aria-hidden': 'true' });
   const select = h('select', { id: 'midi-input', 'aria-label': 'MIDI input', title: 'MIDI input' });
+  // The same picker inside the popover (the only one on narrow screens).
+  const popSelect = h('select', { id: 'midi-input-pop', 'aria-label': 'MIDI input' });
+  const selects = [select, popSelect];
   const short = h('span', { class: 'midi-status', id: 'midi-status', role: 'status' });
-  const open = h('button', { id: 'midi-settings', class: 'midi-open', 'aria-label': 'MIDI routing and controller map', title: 'MIDI routing and controller map', 'aria-haspopup': 'dialog' }, 'MIDI');
+  const open = h('button', { id: 'midi-settings', class: 'midi-open', 'aria-label': 'MIDI routing and controller map', title: 'MIDI routing and controller map', 'aria-haspopup': 'dialog' }, led, 'MIDI');
 
   // ---- popover ----
   const message = h('p', { class: 'midi-msg', id: 'midi-message' });
@@ -61,6 +64,7 @@ export function buildMidi(ctx: UiContext, midi: MidiController, web: WebMidi): H
     'div',
     { id: 'midi-pop', class: 'midi-pop', role: 'dialog', 'aria-label': 'MIDI' },
     h('div', { class: 'midi-pop-head' }, h('strong', {}, 'MIDI'), h('span', { class: 'grow' }), reset),
+    h('label', { class: 'midi-input-row' }, h('span', {}, 'Input'), popSelect),
     message,
     h('label', { class: 'midi-omni' }, omni, omniLabel),
     routeHint,
@@ -109,21 +113,24 @@ export function buildMidi(ctx: UiContext, midi: MidiController, web: WebMidi): H
       opts.push([s.input, `${s.inputName || 'MIDI input'} (not connected)`]);
     }
     const sig = opts.map((o) => o.join('\u0001')).join('\u0002');
-    if (select.dataset.sig !== sig) {
-      select.dataset.sig = sig;
-      select.replaceChildren(...opts.map(([v, l]) => h('option', { value: v }, l)));
+    for (const sel of selects) {
+      if (sel.dataset.sig !== sig) {
+        sel.dataset.sig = sig;
+        sel.replaceChildren(...opts.map(([v, l]) => h('option', { value: v }, l)));
+      }
+      sel.value = s.input;
     }
-    select.value = s.input;
   };
 
-  select.addEventListener('change', () => {
-    const id = select.value;
+  const onPick = (sel: HTMLSelectElement) => {
+    const id = sel.value;
     const name = web.inputs.find((i) => i.id === id)?.name ?? '';
     midi.setInput(id, name);
     void web.select(id);
     // A user gesture: start audio now so the first key sounds (the transport stays stopped).
     if (id !== 'off' && bridge.state === 'off') bridge.start().catch((err) => console.warn('Audio failed to start', err));
-  });
+  };
+  for (const sel of selects) sel.addEventListener('change', () => onPick(sel));
 
   // Audio can only start on a user gesture; with MIDI on, the first click / key anywhere starts it.
   const kick = () => {
@@ -160,7 +167,7 @@ export function buildMidi(ctx: UiContext, midi: MidiController, web: WebMidi): H
     message.textContent = long;
     message.classList.toggle('midi-msg-error', bad);
     led.dataset.state = bad ? 'error' : choice !== 'off' && st === 'ready' && web.listening > 0 ? 'on' : 'off';
-    select.disabled = st === 'unsupported' || st === 'insecure';
+    for (const sel of selects) sel.disabled = st === 'unsupported' || st === 'insecure';
     select.title = bad ? m.long : 'MIDI input';
   };
 
@@ -209,5 +216,5 @@ export function buildMidi(ctx: UiContext, midi: MidiController, web: WebMidi): H
   bridge.onStateChange(syncStatus);
   syncSettings();
 
-  return h('span', { class: 'midi', id: 'midi' }, led, select, short, open, pop);
+  return h('span', { class: 'midi', id: 'midi' }, select, short, open, pop);
 }

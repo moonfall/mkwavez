@@ -26,9 +26,15 @@ src/
     wavetable.ts        Wavetable1D / Wavetable2D, "All", pinnedIds()
     voice.ts            VoiceParams, LFO position, window following (followAppend)
     sequence.ts         SequenceData, scale → frequency, step helpers
-    engine/             SynthEngine (audio-thread engine) + Adsr
+    midi.ts             MIDI bytes → messages, MidiRouter (channel / Omni routing, held-note
+                        tracking per source), velocity curve, bend scale, CC map + learn
+    engine/             SynthEngine (audio-thread engine), Adsr, NoteStack (held keys)
   browser/formulaEval.ts  JS expression → FormulaFn (browser-only convenience)
+  browser/webMidi.ts    Web MIDI access: permission, inputs + hot-plug, chosen input(s),
+                        unsupported / insecure / denied states
   app/model.ts          AppModel: main-thread state, actions, undo, topic events
+  app/midi.ts           MidiController: router → bridge (notes, bend) and → AppModel (CCs);
+                        persisted settings (input, Omni, CC map), learn
   audio/                protocol.ts (messages), worklet.ts (AudioWorkletProcessor adapter),
                         bridge.ts (AudioContext owner, state → messages, mip building)
   ui/                   Plain DOM + canvas panels (no framework), styles.css tokens
@@ -40,7 +46,8 @@ src/
                         generate.ts hosts the tabs: seed.ts (Seed tab), mutate.ts
                         (Mutate tab) and breed.ts (Breed tab); timeline.ts (strip,
                         toggles Breed parents); wavetables.ts (overview; the slot for
-                        1D / 2D wavetable editing)
+                        1D / 2D wavetable editing); midi.ts (transport MIDI picker,
+                        LED, popover with routing and CC map)
   main.ts               initial state, shell assembly, frame loop
 tests/                  vitest unit tests (core + AppModel)
 scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
@@ -109,7 +116,11 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   Sequence panel shows its sequence(s).
 - Remembered per browser (localStorage, try/catch): `mkwavez.theme` (only once
   toggled; default dark, applied before first paint by an inline script in
-  index.html) and `mkwavez.timelineView` (Waveform / Spectral / both).
+  index.html), `mkwavez.timelineView` (Waveform / Spectral / both) and `mkwavez.midi`
+  (`{ input: 'off'|'all'|id, inputName, omni, cc: {position, lfoDepth, lfoRate, level} }`).
+- MIDI popover: native `popover` (top layer, light dismiss; a `hidden` toggle where
+  unsupported), fixed under the transport bar, so it never affects the shell layout.
+  Below 640 px the bar keeps only the MIDI button (LED inside); the picker is in the popover.
 
 ## Threads and messages
 
@@ -124,7 +135,7 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
 
 - Main → worklet (`audio/protocol.ts`): `tables/add` (packed mip sets, transferred),
   `tables/remove`, `wavetable/set` (Int32Array of ids), `voice/set|remove`,
-  `sequence/set|remove`, `transport`.
+  `sequence/set|remove`, `transport`, `midi` (routed note / bend events).
 - Worklet → main: `ready`, `status` (sequencer step, per-voice position/index/env,
   table count), `error`.
 - Everything the bridge queues within one task is sent as a single `batch` message,
@@ -169,6 +180,40 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   previous tables stay drawn while a restarted batch computes. A planned Edit layer
   (draw / edit harmonics) slots in at `finalTable()` between the generated table and
   the preview / Add.
+
+## MIDI
+
+```
+MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► MidiRouter.route
+   (browser/webMidi.ts)        (app/midi.ts)                         │
+        notes, bend, all-notes-off ─► bridge.sendMidi ─► 'midi' op ─► SynthEngine.applyMidi
+        CCs ─► ccPatch(CC map) ─► model.updateVoice ─► 'voices' ─► voice/set (+ sliders)
+```
+
+- Straight from the MIDI event handler, never through the UI frame loop; events join that
+  task's batch (one postMessage) and apply at the next render quantum (≤ 128 samples
+  ≈ 2.7 ms of jitter). Event timestamps are not used for sub-quantum scheduling: mapping
+  `performance.now()` to the render clock isn't reliable across browsers. A plugin port
+  would apply events at their host sample offsets instead.
+- Routing: channel N → voice id N (the "VN" tab), or Omni → the selected tab. The router
+  remembers where each (source, channel, note) went, so a note-off always reaches the
+  voice its note-on went to, even if Omni / the selected tab changed meanwhile.
+  CC 120 / 123 release the channel's notes; losing an input (unplug, input switch, Off)
+  releases that source's notes and recentres the bend it applied.
+- Engine, per voice: a `NoteStack` (16 keys, fixed arrays). Note-on pushes and retriggers
+  the envelope (from its current level); releasing the sounding key returns to the most
+  recent held key without retrigger (legato, at that key's velocity); releasing the last
+  key releases the envelope. Frequency = `440·2^((n−69)/12 + octave)`. Velocity gain
+  `0.01 + 0.99·(v/127)²` multiplies the level (through the existing gain smoother).
+  Bend: ±2 st target, one-pole smoothed per control block (4 ms) and ramped linearly
+  within the block; mip level uses the higher of the block's ratios.
+- MIDI vs sequence: while a voice has held keys, its sequence's steps are skipped (the
+  sequencer keeps counting); once all keys are up, the next step plays as usual.
+  Transport stop releases only voices without held keys. Muted voices stay silent.
+- CCs change voice params (so the UI follows and they persist like a slider move; not
+  undoable): position / LFO depth / level linear 0..1, LFO rate exponential 0.02–4 Hz.
+  A controller drives one parameter (assigning moves it); 120–127 can't be assigned.
+  Learn assigns the next controller move (and applies it).
 
 ## Playback semantics
 

@@ -103,7 +103,7 @@ export class WebMidi {
           this.attach();
         };
         this.refresh();
-        this.setState('ready');
+        this.state = 'ready'; // select() attaches next and notifies
       })
       .catch((err: unknown) => {
         const name = (err as { name?: string })?.name ?? '';
@@ -116,7 +116,7 @@ export class WebMidi {
     return this.request;
   }
 
-  /** Re-read the connected inputs. */
+  /** Re-read the connected inputs (attach() follows and notifies). */
   private refresh(): void {
     const list: WebMidiInput[] = [];
     this.access?.inputs.forEach((port) => {
@@ -126,7 +126,6 @@ export class WebMidi {
       list.push({ id: port.id, name: port.name || port.manufacturer || 'MIDI input', source });
     });
     this.inputs = list;
-    this.onChange?.();
   }
 
   /** Listen to exactly the chosen, connected inputs; release notes of any we stop hearing. */
@@ -152,6 +151,7 @@ export class WebMidi {
       };
       this.open.set(id, port);
     }
+    this.onChange?.();
   }
 
   /** Number of inputs currently being listened to. */

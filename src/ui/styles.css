@@ -308,7 +308,7 @@ canvas {
   background: var(--new);
   box-shadow: 0 0 6px var(--new);
 }
-.transport .midi select {
+.transport .midi > select {
   height: 28px;
   width: auto;
   max-width: 170px;
@@ -326,8 +326,22 @@ canvas {
   max-width: 130px;
 }
 .transport .midi-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   padding: 0 8px;
+}
+.midi-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.midi-input-row select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
 }
 .midi-pop {
   position: fixed;
@@ -397,11 +411,9 @@ canvas {
   .undo-label {
     display: none;
   }
-  .midi-status {
+  .midi-status,
+  .transport .midi > select {
     display: none;
-  }
-  .transport .midi select {
-    max-width: 96px;
   }
 }
 @media (max-width: 420px) {
