@@ -8,6 +8,7 @@ import { paramMode } from './paramModes';
 import { perlinTable, type PerlinParams } from './perlin';
 import { pulseWidth } from './seed';
 
+export * from './additive';
 export * from './basic';
 export * from './ca';
 export * from './dynamical';

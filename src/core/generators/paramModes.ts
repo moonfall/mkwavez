@@ -6,6 +6,7 @@
  * preset, name }, seed, batch }` and re-renders exactly.
  */
 import type { ParamValue } from '../table';
+import { additiveTable, DEFAULT_ADDITIVE as AD, type AdditiveParams } from './additive';
 import { DEFAULT_DYN, DYN_MAP_LABELS, dynamicalTable } from './dynamical';
 import { DEFAULT_KS, karplusTable } from './karplus';
 
@@ -40,6 +41,13 @@ export interface ParamModeDef {
 
 /** A recipe / request param as a number (missing → NaN; callers merge defaults first). */
 export const num = (p: ModeParams, k: string): number => Number(p[k]);
+
+/** Every key of `defaults` read from p as a number. */
+function nums<T extends object>(p: ModeParams, defaults: T): T {
+  const out: Record<string, number> = {};
+  for (const k of Object.keys(defaults)) out[k] = num(p, k);
+  return out as T;
+}
 
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
@@ -105,6 +113,33 @@ export const PARAM_MODES: readonly ParamModeDef[] = [
         seed,
         index,
       ),
+  },
+  {
+    mode: 'additive',
+    id: 'additive-designer',
+    cat: 'Builders',
+    name: 'Additive designer',
+    about:
+      'Harmonics at k^−slope (1 = saw), odd / even balance, up to three formant peaks (gain 0 = off) and a phase mode. ' +
+      'A batch sweeps the slope to “Batch → slope” and moves the formants by “Batch → formant shift” octaves.',
+    params: [
+      { key: 'slope', label: 'Slope', min: 0, max: 3, step: 0.05, value: AD.slope },
+      { key: 'slopeEnd', label: 'Batch → slope', min: 0, max: 3, step: 0.05, value: AD.slopeEnd },
+      { key: 'balance', label: 'Even ← → odd', min: -1, max: 1, step: 0.05, value: AD.balance },
+      { key: 'f1', label: 'Formant 1 centre', min: 1, max: 72, step: 0.5, value: AD.f1 },
+      { key: 'w1', label: 'Formant 1 width', min: 0.5, max: 16, step: 0.25, value: AD.w1 },
+      { key: 'g1', label: 'Formant 1 gain', min: 0, max: 8, step: 0.1, value: AD.g1 },
+      { key: 'f2', label: 'Formant 2 centre', min: 1, max: 72, step: 0.5, value: AD.f2 },
+      { key: 'w2', label: 'Formant 2 width', min: 0.5, max: 16, step: 0.25, value: AD.w2 },
+      { key: 'g2', label: 'Formant 2 gain', min: 0, max: 8, step: 0.1, value: AD.g2 },
+      { key: 'f3', label: 'Formant 3 centre', min: 1, max: 72, step: 0.5, value: AD.f3 },
+      { key: 'w3', label: 'Formant 3 width', min: 0.5, max: 16, step: 0.25, value: AD.w3 },
+      { key: 'g3', label: 'Formant 3 gain', min: 0, max: 8, step: 0.1, value: AD.g3 },
+      { key: 'shift', label: 'Batch → formant shift (oct)', min: -2, max: 2, step: 0.05, value: AD.shift },
+      { key: 'phase', label: 'Phases', min: 0, max: 2, step: 1, value: AD.phase, options: opts(['Sine', 'Schroeder (low crest)', 'Random (seeded)']) },
+    ],
+    seeded: (p) => num(p, 'phase') === 2,
+    render: (p, seed, index, count) => additiveTable(nums<AdditiveParams>(p, AD), seed, index, count),
   },
 ];
 

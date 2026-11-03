@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { TABLE_SIZE } from '../src/core/constants';
 import {
+  additiveAmps,
+  DEFAULT_ADDITIVE,
   DYN_MAPS,
   PARAM_MODES,
   renderRecipe,
@@ -63,5 +65,24 @@ describe('parameter modes', () => {
     // Snapshot i of a batch = the string after start + i·passes, whatever the batch size.
     const s = seedTable(req('karplus-strong', { start: 12, passes: 6 }, 8), 0).data;
     expect(same(s, seedTable(req('karplus-strong', { start: 6, passes: 6 }, 3), 1).data)).toBe(true);
+  });
+
+  it('additive designer: slope, balance, formants and phase modes', () => {
+    const amps = (params: Record<string, number>, i = 0, n = 1) =>
+      additiveAmps({ ...DEFAULT_ADDITIVE, g1: 0, g2: 0, g3: 0, ...params }, i, n);
+    const saw = amps({ slope: 1 });
+    expect(saw[4] / saw[1]).toBeCloseTo(0.25);
+    const odd = amps({ balance: 1 });
+    expect(odd[2]).toBe(0);
+    expect(odd[3]).toBeGreaterThan(0);
+    const f = amps({ slope: 0, g1: 4, f1: 10, w1: 1 });
+    expect(f[10]).toBeCloseTo(5);
+    // The formant moves an octave up by the end of the batch.
+    const moved = amps({ slope: 0, g1: 4, f1: 10, w1: 1, shift: 1 }, 2, 3);
+    expect(moved[20]).toBeCloseTo(5);
+    const phase = (ph: number, seed: number) => seedTable(req('additive-designer', { phase: ph }, 1, seed), 0).data;
+    expect(same(phase(2, 1), phase(2, 2))).toBe(false);
+    expect(same(phase(1, 1), phase(1, 2))).toBe(true);
+    expect(maxDiff(phase(0, 1), phase(1, 1))).toBeGreaterThan(0.01);
   });
 });
