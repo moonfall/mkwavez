@@ -76,13 +76,24 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   const legend = h('span', { class: 'tl-legend', id: 'timeline-legend' });
   // Touch devices get the Breed-parent hint visibly (mouse users have the tooltip).
   const hint = h('span', { class: 'tl-hint', id: 'timeline-hint' }, 'Long-press: Breed parent');
-  sec.tools.append(viewBtn, viewDots, selLabel, hint, legend);
+  const copyBtn = h(
+    'button',
+    {
+      id: 'timeline-copy',
+      class: 'small tl-copy-btn',
+      title: 'Copy the selected table to the end of the Timeline (Ctrl/⌘+D in the strip)',
+      onclick: () => model.copyToEnd(model.selectedId),
+    },
+    'Copy to end',
+  );
+  sec.tools.append(viewBtn, viewDots, copyBtn, selLabel, hint, legend);
 
   const grid = h('canvas', { 'aria-label': 'Timeline of all tables; click to select', id: 'timeline-grid' });
   const overlay = h('canvas', { class: 'tl-overlay', id: 'timeline-markers', 'aria-hidden': 'true' });
   const stage = h('div', { class: 'tl-stage' }, grid, overlay);
   const track = h('div', { class: 'tl-track' }, stage);
-  const scroller = h('div', { class: 'tl-scroll', id: 'timeline-scroll' }, track);
+  // Focusable (a click on the strip focuses it) so Ctrl/⌘+D can copy the selection.
+  const scroller = h('div', { class: 'tl-scroll', id: 'timeline-scroll', tabindex: 0 }, track);
   sec.body.append(scroller);
   sec.body.title = 'Shift-click (or ⌘-click) or long-press a table to add or remove it as a Breed parent.';
   watchVisibility(grid);
@@ -274,6 +285,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     const idx = model.indexOf(model.selectedId);
     selLabel.textContent = t ? `#${idx + 1} · id ${t.id} · ${describeRecipe(t.recipe)}` : 'Nothing selected';
     selLabel.title = selLabel.textContent;
+    copyBtn.disabled = !t;
   };
 
   const updateLegend = () => {
@@ -356,6 +368,12 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     if (!t) return;
     if (e.shiftKey || e.ctrlKey || e.metaKey) model.toggleBreedParent(t.id);
     else model.select(t.id);
+  });
+  // Ctrl/⌘+D duplicates the selection only while focus is in the Timeline (not page-wide).
+  sec.el.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'd') return;
+    e.preventDefault();
+    model.copyToEnd(model.selectedId);
   });
   const invalidate = () => {
     dirtyGrid = dirtyMarkers = true;

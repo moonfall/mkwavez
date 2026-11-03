@@ -6,7 +6,7 @@
 import { MAX_PARENTS } from '../core/breed';
 import { MAX_STEPS, TIMELINE_CAP, UNDO_DEPTH } from '../core/constants';
 import { emptySteps, normalizeSteps, type SequenceData } from '../core/sequence';
-import { IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
+import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
 import { DEFAULT_VOICE, followAppend, type VoiceParams } from '../core/voice';
 import {
@@ -144,6 +144,16 @@ export class AppModel {
     else if (this.selectedId !== null && !this.byId.has(this.selectedId)) this.selectedId = r.list[0]?.id ?? null;
     this.emit('timeline', 'voices', 'selection', 'undo', ...(parentsChanged ? (['parents'] as Topic[]) : []));
     return added;
+  }
+
+  /**
+   * Append a copy of table `id` to the end of the timeline, as a single add (window
+   * following, undo, selects the copy). The data is shared (tables are immutable).
+   */
+  copyToEnd(id: TableId | null): WaveTable | null {
+    const t = this.table(id);
+    if (!t) return null;
+    return this.addTables([{ data: t.data, recipe: copyRecipe(t.id, t.recipe) }], 'single')[0];
   }
 
   /** Replace the timeline; returns true if Breed parents had to be dropped (evicted / undone). */

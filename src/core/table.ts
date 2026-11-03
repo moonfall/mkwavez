@@ -49,8 +49,22 @@ export function makeTable(id: TableId, g: GeneratedTable): WaveTable {
   return Object.freeze({ id, data: g.data, recipe: g.recipe });
 }
 
+/**
+ * Recipe of a copy of table `parentId`: the parent's recipe (so the copy re-renders the
+ * same way even after the parent is evicted) plus `params.copyOf` = the copied table's id.
+ * A copy of a copy points at its immediate source.
+ */
+export function copyRecipe(parentId: TableId, r: Recipe): Recipe {
+  return { ...r, params: { ...r.params, copyOf: parentId } };
+}
+
 /** Short human-readable recipe summary for UI labels. */
 export function describeRecipe(r: Recipe): string {
+  const desc = describeOp(r);
+  return r.params.copyOf === undefined ? desc : `${desc} · copy of id ${String(r.params.copyOf)}`;
+}
+
+function describeOp(r: Recipe): string {
   const b = r.batch && r.batch.count > 1 ? ` ${r.batch.index + 1}/${r.batch.count}` : '';
   const p = r.params;
   switch (r.op) {

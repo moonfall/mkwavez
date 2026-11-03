@@ -89,6 +89,11 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   and the seed; generation child j uses `childSeed(seed, j)` (child 0 = seed = the
   preview). Weights come from `breedWeights(P, bias, walk, weights)`; bias 0 is
   always `[1, 0, …]`, so every operator returns shape(A) there.
+- **Copy recipe** — Timeline "Copy to end" (`AppModel.copyToEnd`, a single add) gives
+  the copy a new id and the same (shared, immutable) data; its recipe is the source's
+  recipe with `params.copyOf` = the source id (`copyRecipe`), so it re-renders exactly
+  like the source even after the source is evicted. A copy of a copy points at its
+  immediate source; `parents` are the source's parents.
 - **Breed parents** — `AppModel.breedParents`: ordered ids (≤ 8) of timeline tables,
   topic `parents`. Filtered whenever the timeline changes (eviction, undo); not part
   of undo snapshots.

@@ -70,8 +70,10 @@ switches (the choice is remembered).
   inside a voice's window is tinted in the voice's colour (unmuted strong, muted faint)
   with a solid edge at the window's start / end; overlapping windows split the cell into
   bands, voice 1 on top. Carets show each unmuted voice's live play position. The header
-  button cycles the thumbnails: Waveform → Spectral → Waveform + Spectral. The strip keeps
-  the selection in view and follows new tables when scrolled to the end.
+  button cycles the thumbnails: Waveform → Spectral → Waveform + Spectral. **Copy to end**
+  (or Ctrl/⌘+D while the strip has focus, e.g. after clicking a table) appends a copy of
+  the selected table and selects it (like a single add: following windows extend; undoable).
+  The strip keeps the selection in view and follows new tables when scrolled to the end.
 - **Wavetables**: the auto "All" wavetable as an amplitude heat map with voice windows
   and play positions. Creating 1D / 2D wavetables is coming (the slot is reserved);
   collapsed by default on a phone.
@@ -99,5 +101,5 @@ switches (the choice is remembered).
   when you pick an input, or on your first click if the input was remembered (browsers
   only start audio on a gesture). Unsupported browsers / denied permission show a short
   status; the rest of the app is unaffected.
-- **Undo** (transport bar) covers table adds (including Mutate / Breed adds), window
+- **Undo** (transport bar) covers table adds (including Mutate / Breed adds, Copy to end), window
   edits and note edits.

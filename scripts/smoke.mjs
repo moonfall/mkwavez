@@ -7,9 +7,11 @@
 // batch) adds exactly the previewed tables; the worklet loads and the transport runs; the
 // timeline strip tints voice windows (bands in voice order, start / end edges, muted faint),
 // shows carets for unmuted voices, cycles its thumbnail view (remembered), keeps the selection
-// in view and follows the newest table; Mutate (library search / stepping / thumbnails, amount
-// → preview, Linear / Log / Chain, strip arrow keys, Add shown / Add +N recipes, no Evolve, fits
-// the Generate panel) while playing; Breed picks parents (timeline Shift-click / long-press, Add selected,
+// in view and follows the newest table; "Copy to end" / Ctrl+D (only while the strip has
+// focus) appends a copy of the selection, selects and reveals it; Mutate (library search /
+// stepping / thumbnails, amount → preview, Linear / Log / Chain, strip arrow keys, Add shown /
+// Add +N recipes, no Evolve, fits the Generate panel) while playing; Breed picks parents
+// (timeline Shift-click / long-press, Add selected,
 // voice window), previews and applies every operator, sweeps and generations; evicted parents
 // drop out.
 //
@@ -96,6 +98,7 @@ async function run(label, url, browser) {
   );
   assert(true, 'worklet holds every timeline table');
   await timelineMarkerChecks(page);
+  await timelineCopyChecks(page, tlCount);
   await mutateChecks(page, tlCount, label);
   await breedChecks(page, tlCount);
   await page.click('#add-voice');
@@ -1027,6 +1030,75 @@ async function timelineMarkerChecks(page) {
     for (const v of saved) m.updateVoice(v.id, v);
     m.endGesture();
   }, saved);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(150);
+}
+
+/**
+ * Timeline "Copy to end": the header button and Ctrl+D (only while the strip has focus)
+ * append a copy of the selected table (new id, same data, copyOf = source), select it and
+ * scroll it into view; undo removes it.
+ */
+async function timelineCopyChecks(page, tlCount) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
+  const n0 = await tlCount();
+  const srcId = await M(() => {
+    const m = window.mkwavez.model;
+    m.select(m.timeline[2].id);
+    return m.selectedId;
+  });
+  await frames();
+  await M(() => (document.querySelector('#timeline-scroll').scrollLeft = 0));
+  await frames();
+  await page.click('#timeline-copy');
+  await frames();
+  const r = await M((srcId) => {
+    const m = window.mkwavez.model;
+    const t = m.timeline.at(-1);
+    const s = document.querySelector('#timeline-scroll');
+    const left = (m.timeline.length - 1) * 63;
+    return {
+      n: m.timeline.length,
+      sameData: t.data === m.table(srcId).data,
+      copyOf: t.recipe.params.copyOf,
+      newId: t.id > srcId && !m.timeline.slice(0, -1).some((x) => x.id === t.id),
+      selected: m.selectedId === t.id,
+      inView: left >= s.scrollLeft && left + 62 <= s.scrollLeft + s.clientWidth,
+      label: document.querySelector('#timeline-selected').textContent,
+    };
+  }, srcId);
+  assert(
+    r.n === n0 + 1 && r.sameData && r.copyOf === srcId && r.newId && r.selected && r.inView && r.label.includes(`copy of id ${srcId}`),
+    `Copy to end appends a copy of the selection, selects and reveals it (${JSON.stringify({ ...r, label: undefined })})`,
+  );
+  await page.click('#undo');
+  assert((await tlCount()) === n0, 'undo removes the copy');
+  // Ctrl+D elsewhere on the page is not taken over.
+  await M(() => document.activeElement?.blur());
+  await page.keyboard.press('Control+d');
+  await frames();
+  assert((await tlCount()) === n0, 'Ctrl+D outside the Timeline does nothing');
+  // Clicking a cell focuses the strip; Ctrl+D then copies the clicked table.
+  await M(() => (document.querySelector('#timeline-scroll').scrollLeft = 0));
+  await frames();
+  await page.click('#timeline-grid', { position: { x: 63 + 31, y: 30 } });
+  const focused = await M(() => document.activeElement?.id);
+  await page.keyboard.press('Control+d');
+  await frames();
+  const k = await M(() => {
+    const m = window.mkwavez.model;
+    const t = m.timeline.at(-1);
+    return { n: m.timeline.length, copyOf: t.recipe.params.copyOf, src: m.timeline[1].id, selected: m.selectedId === t.id };
+  });
+  assert(
+    focused === 'timeline-scroll' && k.n === n0 + 1 && k.copyOf === k.src && k.selected,
+    `Ctrl+D in the focused strip copies the selected table to the end (focus ${focused})`,
+  );
+  await page.click('#undo');
+  assert((await tlCount()) === n0, 'undo removes the Ctrl+D copy');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(150);
 }
