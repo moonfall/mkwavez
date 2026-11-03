@@ -647,6 +647,9 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
       shapeKey = key;
       scheduleDecide(0);
     }
+    // Shown again after a resize we couldn't measure (e.g. Sequence expanded while a Simple
+    // voice was showing): decide now, before this view paints clipped.
+    if (skipped && !el.hidden) decide();
     if (view === 'full') {
       full.sync(v);
       dirty = true;
@@ -813,7 +816,12 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
    */
   const decide = () => {
     const host = el.parentElement;
-    if (!voice || el.hidden || !host || host.clientHeight === 0) return;
+    if (!voice || el.hidden || !host || host.clientHeight === 0) {
+      // Not measurable now (a Simple voice shown, the panel collapsed): decide when shown again.
+      skipped = true;
+      return;
+    }
+    skipped = false;
     const cs = getComputedStyle(host);
     const w = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     const hh = host.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
@@ -831,13 +839,15 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     setView('pages', 'roomy');
   };
   let decideTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A decision was skipped while hidden: the next sync (shown again) decides at once. */
+  let skipped = false;
   /** Decide once a resize (e.g. a panel collapsing: a short transition) has settled. */
   const scheduleDecide = (ms = 90) => {
     clearTimeout(decideTimer);
     decideTimer = setTimeout(decide, ms);
   };
   let shapeKey = '';
-  const shapesOf = (v: VoiceParams) => `${model.wavetable(v.wavetableId)?.shape}|${model.wavetable(v.synth.b.wavetableId)?.shape}|${el.hidden}`;
+  const shapesOf = (v: VoiceParams) => `${v.id}|${model.wavetable(v.wavetableId)?.shape}|${model.wavetable(v.synth.b.wavetableId)?.shape}`;
 
   onThemeChange(() => (dirty = true));
   new ResizeObserver(() => (dirty = true)).observe(el);

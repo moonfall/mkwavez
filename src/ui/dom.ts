@@ -82,6 +82,7 @@ export interface Panel {
 }
 
 /** Header elements that keep their own clicks (a double-click on them doesn't maximize). */
+const DBLCLICK_GUARD_MS = 400;
 const INTERACTIVE = 'button, input, select, textarea, label, a, [role="tab"], [role="slider"], [tabindex]';
 
 /**
@@ -92,6 +93,7 @@ const INTERACTIVE = 'button, input, select, textarea, label, a, [role="tab"], [r
  * shell the header chevron collapses the body.
  */
 export function panel(id: string, title: string, key: PanelKey): Panel {
+  let expandedAt = -Infinity;
   const meta = h('span', { class: 'meta' });
   const tools = h('div', { class: 'panel-tools' });
   const body = h('div', { class: 'panel-body', id: `${id}-body` });
@@ -101,13 +103,25 @@ export function panel(id: string, title: string, key: PanelKey): Panel {
   const status = h('span', { class: 'strip-status' });
   const strip = h(
     'button',
-    { class: 'panel-strip', id: `${id}-strip`, 'aria-controls': body.id, 'aria-expanded': 'false', onclick: () => layout.setCollapsed(key, false) },
+    {
+      class: 'panel-strip',
+      id: `${id}-strip`,
+      'aria-controls': body.id,
+      'aria-expanded': 'false',
+      onclick: () => {
+        expandedAt = performance.now();
+        layout.setCollapsed(key, false);
+      },
+    },
     icon(ICONS.chevron, 'strip-chev'),
     h('span', { class: 'strip-title' }, title),
     status,
   );
   const el = h('section', { class: 'panel', id, 'aria-label': title, 'data-panel': key }, head, strip, body);
-  const onHeader = (e: Event) => !isNarrowShell() && !(e.target instanceof Element && e.target !== head && e.target.closest(INTERACTIVE));
+  // A double-click on a strip / bar: its first click expands the panel, the second may land on
+  // the header that just appeared; that isn't a request to maximize.
+  const onHeader = (e: Event) =>
+    !isNarrowShell() && performance.now() - expandedAt > DBLCLICK_GUARD_MS && !(e.target instanceof Element && e.target !== head && e.target.closest(INTERACTIVE));
   // A double-click on the header (not on its controls) maximizes / restores; it doesn't select text.
   head.addEventListener('mousedown', (e) => {
     if (e.detail > 1 && onHeader(e)) e.preventDefault();

@@ -3439,6 +3439,29 @@ async function layoutChecks(label, url, browser) {
     (await page.getAttribute('#synth-panel', 'data-view')) === 'pages' && (await page.isVisible('#syn-tab-osc')) && !!(await page.$('#syn-page-mod #syn-matrix')),
     'Sequence expanded: section tabs again (the matrix back on the Mod page)',
   );
+  // Full view → a Simple voice's tab → Sequence expanded meanwhile → back: the pages (re-decided when shown).
+  await page.click('#sec-sequences .panel-collapse');
+  await settle();
+  assert((await page.getAttribute('#synth-panel', 'data-view')) === 'full', 'Sequence collapsed again: full view');
+  await page.click('#voice-tab-1');
+  await page.click('#sec-sequences-strip');
+  await settle();
+  await page.click(`#voice-tab-${id}`);
+  await page.waitForTimeout(50);
+  f = await fullFits();
+  assert(
+    f.view === 'pages' && (await page.isVisible('#syn-tab-osc')) && f.noScroll,
+    'Synth voice shown again after the Sequence expanded under a Simple voice: the pages (no clipped full view)',
+  );
+  // Double-clicking a collapsed strip only expands it (no maximize from the second click).
+  await page.click('#sec-sequences .panel-collapse');
+  await settle();
+  await page.dblclick('#sec-sequences-strip');
+  await settle();
+  assert(
+    (await M(() => JSON.stringify(window.mkwavez.layout.state()))) === JSON.stringify({ collapsed: [], max: null, restore: null }),
+    'double-click on a collapsed strip: expanded, nothing maximized',
+  );
 
   // Generate + Sequence collapsed, 1440×900.
   await page.setViewportSize({ width: 1440, height: 900 });

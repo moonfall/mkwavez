@@ -124,20 +124,20 @@ export function knob(o: KnobOpts): Knob {
     e.stopPropagation();
     o.onCommit();
   });
-  let drag: { y: number; u: number; id: number } | null = null;
+  let drag: { y: number; u: number; id: number; fine: boolean } | null = null;
   el.addEventListener('pointerdown', (e) => {
     if (disabled || e.button !== 0) return;
     e.preventDefault();
     dial.focus({ preventScroll: true });
     el.setPointerCapture(e.pointerId);
-    drag = { y: e.clientY, u: taper.toU(value), id: e.pointerId };
+    drag = { y: e.clientY, u: taper.toU(value), id: e.pointerId, fine: e.shiftKey };
     el.classList.add('active');
   });
   el.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.id) return;
-    const px = e.shiftKey ? DRAG_PX * 4 : DRAG_PX;
-    // Integer knobs: a fixed distance per step for short ranges, so they don't feel jumpy.
-    putU(drag.u + (drag.y - e.clientY) / px);
+    // Shift pressed / released mid-drag: continue from here at the new speed (no jump).
+    if (e.shiftKey !== drag.fine) drag = { ...drag, y: e.clientY, u: taper.toU(value), fine: e.shiftKey };
+    putU(drag.u + (drag.y - e.clientY) / (drag.fine ? DRAG_PX * 4 : DRAG_PX));
   });
   const end = (e: PointerEvent) => {
     if (!drag || e.pointerId !== drag.id) return;
@@ -147,6 +147,8 @@ export function knob(o: KnobOpts): Knob {
   };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
+  // Capture lost some other way (the element hidden, the window blurred): end the gesture too.
+  el.addEventListener('lostpointercapture', end);
   if (o.reset !== undefined) {
     const r = o.reset;
     el.addEventListener('dblclick', () => {

@@ -33,6 +33,13 @@ describe('shell layout state', () => {
     expect(maximized(m2, 'voice')).toEqual({ collapsed: ['gen'], max: null, restore: null });
   });
 
+  it('maximizing a panel that was collapsed restores it collapsed, with the rest as before', () => {
+    const a: LayoutState = { collapsed: ['wt', 'seq'], max: null, restore: null };
+    const m = maximized(a, 'seq');
+    expect(m).toEqual({ collapsed: ['gen', 'wt', 'tl', 'voice'], max: 'seq', restore: ['wt', 'seq'] });
+    expect(maximized(m, 'seq')).toEqual(a);
+  });
+
   it('wide shapes: strips beside an open sibling, bars for whole rows', () => {
     let s = wideShapes(['seq']);
     expect(s.shapes).toMatchObject({ voice: 'open', seq: 'strip', tl: 'open' });
