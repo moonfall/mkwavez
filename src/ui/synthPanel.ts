@@ -47,6 +47,7 @@ import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type UiState } from './context';
 import { h, voiceColorVar } from './dom';
 import { oscMix, oscPositions, oscView } from './playing';
+import { buildPresetControls } from './presets';
 import { createVoicePad } from './voicePad';
 
 export type SynthPage = 'osc' | 'mix' | 'filter' | 'env' | 'mod';
@@ -233,11 +234,13 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     max: (v: VoiceParams) => [number, number],
     step: number,
     fmt: (x: number, y: number) => string,
+    o: { min?: [number, number]; ids?: [string, string]; labels?: [string, string] } = {},
   ): Control & { x: HTMLInputElement } => {
     const val = h('span', { class: 'crow-val' });
-    const mk = (axis: string) => h('input', { type: 'range', id: `${id}${axis.toLowerCase()}`, min: 0, max: 1, step, value: 0, 'aria-label': `${label} ${axis}` });
-    const x = mk('X');
-    const y = mk('Y');
+    const mk = (axis: string, i: number) =>
+      h('input', { type: 'range', id: o.ids?.[i] ?? `${id}${axis.toLowerCase()}`, min: o.min?.[i] ?? 0, max: 1, step, value: 0, 'aria-label': o.labels?.[i] ?? `${label} ${axis}` });
+    const x = mk('X', 0);
+    const y = mk('Y', 1);
     const onInput = () => {
       val.textContent = fmt(Number(x.value), Number(y.value));
       set(put(Number(x.value), Number(y.value)));
@@ -315,8 +318,30 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     wtSig = sig;
     wtSel.replaceChildren(...model.wavetables.map((w) => h('option', { value: String(w.id) }, `${w.name} · ${shapeLabel(w)}`)));
   };
-  const octRow = intRow('syn-oct', 'Octave', (v) => v.synth[k('Oct')], (x) => ({ synth: { [k('Oct')]: x } }), () => [-3, 3], (x) => signed(x));
-  const coarseRow = intRow('syn-coarse', 'Coarse', (v) => v.synth[k('Coarse')], (x) => ({ synth: { [k('Coarse')]: x } }), () => [-24, 24], (x) => signed(x, 0, ' st'));
+  // Octave · coarse on one row.
+  const tuneRow = pair(
+    'syn-tune',
+    'Oct · semi',
+    (v) => [v.synth[k('Oct')], v.synth[k('Coarse')]],
+    (x, y) => ({ synth: { [k('Oct')]: x, [k('Coarse')]: y } }),
+    () => [3, 24],
+    1,
+    (x, y) => `${signed(x)} ${signed(y)}`,
+    { min: [-3, -24], ids: ['syn-oct', 'syn-coarse'], labels: ['Octave', 'Coarse (semitones)'] },
+  );
+  const sk = (name: 'Unison' | 'Detune' | 'Spread') => `${osc}${name}` as 'aUnison' | 'aDetune' | 'aSpread';
+  const unison = seg<number>('syn-unison', 'Unison copies', [[1, '1'], [2, '2'], [3, '3'], [4, '4']] as const, (v) => v.synth[sk('Unison')], (x) => ({ synth: { [sk('Unison')]: x } }));
+  const guardNote = h('span', { class: 'syn-guard', id: 'syn-unison-guard', hidden: true, title: 'Too many unison copies sound at once: the CPU guard plays fewer' }, 'CPU guard: reduced');
+  const detuneSpread = pair(
+    'syn-uni',
+    'Detune',
+    (v) => [v.synth[sk('Detune')], v.synth[sk('Spread')]],
+    (x, y) => ({ synth: { [sk('Detune')]: x, [sk('Spread')]: y } }),
+    () => [50, 1],
+    0.01,
+    (x, y) => `${Math.round(x)}ct ${Math.round(y * 100)}%`,
+    { ids: ['syn-detune', 'syn-spread'], labels: ['Unison detune (cents)', 'Unison stereo spread'] },
+  );
   const fineRow = row('syn-fine', 'Fine', (v) => v.synth[k('Fine')], (x) => ({ synth: { [k('Fine')]: x } }), linear(-100, 100), (x) => signed(x, 0, ' ct'), { snap: Math.round });
   const levelRow = row('syn-level', 'Level', (v) => v.synth[k('Level')], (x) => ({ synth: { [k('Level')]: x } }), linear(0, 1), pct);
   const dims = (v: VoiceParams) => {
@@ -332,7 +357,21 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const pairFrom = pair('syn-w0', 'From', (v) => [src(v).windowStart, src(v).windowStartY], (x, y) => putSrc({ windowStart: x, windowStartY: y }), (v) => [dims(v).W - 1, dims(v).H - 1], 1, (x, y) => `${x + 1}, ${y + 1}`);
   const pairTo = pair('syn-w1', 'To', (v) => [src(v).windowEnd, src(v).windowEndY], (x, y) => putSrc({ windowEnd: x, windowEndY: y }), (v) => [dims(v).W - 1, dims(v).H - 1], 1, (x, y) => `${x + 1}, ${y + 1}`);
   const pairPos = pair('syn-p', 'Position', (v) => [src(v).position, src(v).positionY], (x, y) => putSrc({ position: x, positionY: y }), () => [1, 1], 0.001, (x, y) => `${x.toFixed(2)}, ${y.toFixed(2)}`);
-  const oscRows = h('div', { class: 'crows' }, octRow.el, coarseRow.el, fineRow.el, levelRow.el, ws.el, we.el, px.el, pairFrom.el, pairTo.el, pairPos.el);
+  const oscRows = h(
+    'div',
+    { class: 'crows' },
+    tuneRow.el,
+    fineRow.el,
+    levelRow.el,
+    lineRow('Unison', unison.el, guardNote),
+    detuneSpread.el,
+    ws.el,
+    we.el,
+    px.el,
+    pairFrom.el,
+    pairTo.el,
+    pairPos.el,
+  );
   const pad = createVoicePad(model, bridge, 'syn-pad');
   const scope = h('canvas', { id: 'syn-scope', role: 'img', 'aria-label': 'Now playing: waveform (spectrum behind)' });
   const scopeLabel = h('span', { class: 'plot-tag', id: 'syn-now' });
@@ -362,11 +401,14 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const pan = row('syn-pan', 'Pan', (v) => v.synth.pan, sw('pan'), linear(-1, 1), (x) => (Math.abs(x) < 0.01 ? 'C' : `${x < 0 ? 'L' : 'R'} ${Math.round(Math.abs(x) * 100)}`));
   const outLevel = row('syn-out', 'Output', (v) => v.level, (x) => ({ level: x }), linear(0, 1), pct);
   const oct = intRow('syn-voice-oct', 'Octave', (v) => v.octave, (x) => ({ octave: x }), () => [-2, 2], (x) => signed(x));
+  const syncChk = check('syn-sync', 'Sync B', (v) => v.synth.sync, (x) => ({ synth: { sync: x } }), 'Hard sync: each cycle of osc B restarts osc A');
+  const fmRow = row('syn-fm', 'FM B→A', (v) => v.synth.fm, sw('fm'), linear(0, 1), pct, { title: 'Osc B modulates osc A’s phase' });
+  const width = row('syn-width', 'Width', (v) => v.synth.width, sw('width'), linear(0, 2), pct, { title: 'Stereo width of the unison spread (0 = mono)' });
   const pageMix = h(
     'div',
     { class: 'syn-page syn-page-2col', id: 'syn-page-mix', role: 'tabpanel' },
-    h('div', { class: 'crows' }, mixA.el, mixB.el, mixSub.el, lineRow('', subWave.el, subOct.el), mixNoise.el, lineRow('', noiseType.el), mixRing.el),
-    h('div', { class: 'crows' }, outLevel.el, pan.el, oct.el, glide.el, lineRow('', legato.el), bend.el),
+    h('div', { class: 'crows' }, mixA.el, mixB.el, mixSub.el, lineRow('', subWave.el, subOct.el), mixNoise.el, lineRow('', noiseType.el, syncChk.el), mixRing.el, fmRow.el),
+    h('div', { class: 'crows' }, outLevel.el, pan.el, width.el, oct.el, glide.el, lineRow('', legato.el), bend.el),
   );
 
   // ---- Filter page ----
@@ -378,6 +420,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const envAmt = row('syn-env-amt', 'Env amt',
  (v) => v.synth.envAmount, sw('envAmount'), linear(-1, 1), (x) => signed(x * FILTER_ENV_OCTAVES, 1, ' oct'));
   const velAmt = row('syn-vel-amt', 'Velocity', (v) => v.synth.velAmount, sw('velAmount'), linear(0, 1), pct, { title: 'Softer notes close the filter' });
+  const satRow = row('syn-sat', 'Saturate', (v) => v.synth.sat, sw('sat'), linear(0, 1), pct, { title: 'Saturation after the filter' });
   const resp = h('canvas', { id: 'syn-response', role: 'img', 'aria-label': 'Filter response' });
   const respLabel = h('span', { class: 'plot-tag', id: 'syn-response-label' });
   const visFilter = h('div', { class: 'plot-box syn-vis' }, resp, respLabel);
@@ -385,7 +428,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const pageFilter = h(
     'div',
     { class: 'syn-page', id: 'syn-page-filter', role: 'tabpanel' },
-    h('div', { class: 'syn-ctrl' }, h('div', { class: 'syn-head' }, mode.el), h('div', { class: 'crows' }, cutoff.el, res.el, drive.el, keyTrack.el, envAmt.el, velAmt.el)),
+    h('div', { class: 'syn-ctrl' }, h('div', { class: 'syn-head' }, mode.el), h('div', { class: 'crows' }, cutoff.el, res.el, drive.el, satRow.el, keyTrack.el, envAmt.el, velAmt.el)),
     visFilter,
   );
 
@@ -531,10 +574,11 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
 
   const pages: Record<SynthPage, HTMLElement> = { osc: pageOsc, mix: pageMix, filter: pageFilter, env: pageEnv, mod: pageMod };
   const typeSlot = h('span', { class: 'voice-type-slot' });
+  const presets = buildPresetControls(model, () => voice ?? undefined, (msg) => model.setNotice(msg));
   const el = h(
     'div',
     { class: 'syn-body', id: 'synth-panel' },
-    h('div', { class: 'syn-top' }, tabs, h('span', { class: 'grow' }), typeSlot),
+    h('div', { class: 'syn-top' }, tabs, h('span', { class: 'grow' }), presets.pick, presets.menuBtn, presets.file, typeSlot),
     pageOsc,
     pageMix,
     pageFilter,
@@ -544,8 +588,14 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
 
   const controls: Control[] = [
     oscSel,
-    octRow,
-    coarseRow,
+    tuneRow,
+    unison,
+    detuneSpread,
+    syncChk,
+    fmRow,
+    width,
+    satRow,
+
     fineRow,
     levelRow,
     ws,
@@ -780,6 +830,9 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     },
     frame(v) {
       voice = v;
+      const limited = !!bridge.status.unisonLimited && model.playing;
+      if (guardNote.hidden === limited) guardNote.hidden = !limited;
+
       if (page === 'osc') {
         const canvas = pad.canvas.hidden ? scope : pad.canvas;
         if (isOnScreen(canvas) && (dirty || model.playing)) {

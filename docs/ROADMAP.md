@@ -210,7 +210,55 @@ Open:
   fundamental now give silence instead of normalised residue. Saved sessions are
   unaffected (only basic / pulse waveforms are stored as recipes).
 
+## Synth voice (done)
+
+- Per-voice type Simple | Synth. Simple is the original voice, unchanged (tested
+  sample-identical to the engine before Synth voices); existing / migrated voices (session
+  v3 → v4) are Simple. "+" offers Synth or Simple; a type switch crossfades (10 ms) and is
+  undoable. Voices stay monophonic (note stack, legato, sequences, MIDI routing shared).
+- Stage 1: osc A (the voice's wavetable / window / position) and osc B (own source) with
+  octave / coarse / fine / level, sub (sine / square, −1 / −2 oct), seeded white / pink
+  noise, ring A × B; ZDF SVF LP12 / HP / BP / notch + LP24 (cascaded), cutoff, resonance to
+  Q 100, drive, key tracking, env and velocity amounts; amp / filter ADSR, pitch envelope
+  (A / D, ± 24 st, target); velocity → amp; glide (legato only); bend range; pan; stereo
+  output. Compact Osc · Mix · Filter · Env pages; CC targets; schema v4; undo.
+- Stage 2: 3 LFOs (6 shapes, Hz or tempo-synced, retrigger / free, phase, fade-in, depth),
+  mod envelope (AD / ADSR), 8-slot matrix (11 sources incl. mod wheel and channel
+  pressure, 18 destinations), block-rate into the existing ramps; Mod page; aftertouch in
+  core/midi; CC targets for LFO rate / depth.
+- Stage 3: hard sync B → A, FM (B → A phase), unison 1–4 per oscillator (detune, stereo
+  spread) with a CPU guard (32 copies across voices), post-filter saturation, stereo width;
+  presets (Init + Sub bass, Pluck, Evolving pad, Sync lead, Brass, Noise sweep on the
+  built-in wavetables; user presets saved with the session, exported / imported as JSON);
+  copy / paste a voice between tabs.
+
+Decisions / deviations:
+- New voices from "+" are offered as Synth (first in the menu) or Simple; both start on
+  the Timeline as before. A new Synth voice gets the Init patch: LP24 at 2.4 kHz and
+  LFO 1 → osc A position X (+30%), so a wavetable evolves out of the box.
+- Synth voices don't use the Simple voice's position LFOs; their motion comes from the
+  matrix. The amp ADSR, level, octave and mute are shared fields (so they survive a type
+  switch).
+- Pan is a balance law (centre = unity on both channels), so a centred Synth voice is as
+  loud as before in each channel.
+- LFO rate CC moves turn the LFO's tempo sync off (so the knob is heard).
+- Presets and synth parameters needed no further schema bump: `normalizeSynth` fills
+  missing fields with the Init patch's; `voicePresets` is an optional meta field.
+- Undo restores only the sound of the voice the undone edit changed (live MIDI CC moves on
+  other voices survive).
+
+Known gaps:
+- Osc B's window is not drawn in the Timeline / Wavetables views (only osc A's), and the
+  Wavetables panel's "used by" lists voices by osc A.
+- No oversampling: hard sync, drive / saturation and high FM amounts alias somewhat at
+  high notes (ring mod and FM drop one mip level to compensate).
+- Unison copies switched on / off by the CPU guard (or a count change) can click.
+- Presets don't include the voice's sequence or the Simple-voice LFOs; "copy voice" copies
+  everything but id, name and mute (undoable when the target is a Synth voice).
+- No per-step velocity in sequences, so the velocity source is 1 for sequencer notes.
+
 ## Deferred from M1 / known gaps
+
 
 - Undo does not cover slider moves, voice add/remove or sequence add/remove (by
   design for now). Undoing past an eviction restores the evicted tables (the bridge
@@ -220,7 +268,7 @@ Open:
 - Worklet memory: ~16 KB per table (≈ 64 MB at the 4096 cap). Consider only sending
   tables inside some voice window, or dropping level 0 for distant tables.
 - Blend crossfade and LFO are block-rate (64 samples) with ramped crossfade; gain is
-  smoothed. No per-voice filter yet; polyphony / MIDI input not started.
+  smoothed. (Synth voices now have a filter; MIDI input is done; polyphony not started.)
 - Sequencer: no swing, velocity, per-step probability, or scale choice; multiple
   sequences on one voice just retrigger it (monophonic, last note wins).
 - Formula language is JS (browser-only); a portable expression parser is needed for

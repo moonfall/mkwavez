@@ -29,6 +29,10 @@
 // duplicate a built-in, rename, a Live wavetable receives Seed adds, Timeline drags (mouse
 // replace / insert, touch insert via synthetic pointer events), slot reorder, Delete, undo,
 // built-ins refuse drops, delete moves its voice to the Timeline.
+// Synth voices: + offers Synth / Simple; section tabs (Osc · Mix · Filter · Env · Mod), filter
+// edits + undo, osc B on the Grid (pad), a MIDI note plays, the Mod tab (LFO sync, a matrix
+// slot), factory / user presets, copy / paste, the unison CPU guard, type switch, fit at
+// 1440×900 / 1180×820 on every page, 390px no overflow, synth CC targets (synthVoiceChecks).
 // Session: autosave survives a reload, New session, Export / Import, two tabs (one
 // autosaves; take over), unrestorable save set aside and exportable, no-storage paths
 // (sessionChecks).
@@ -656,7 +660,7 @@ async function synthVoiceChecks(page) {
   const v = () => M((id) => window.mkwavez.model.voice(id), id);
   assert((await v()).type === 'synth' && (await page.isVisible('#synth-panel')) && !(await page.isVisible('#voice-panel')), `Synth voice V${id} added; its panel replaces the Simple controls`);
   assert((await page.inputValue('#voice-type')) === 'synth', 'the type select says Synth');
-  for (const p of ['mix', 'filter', 'env', 'osc']) {
+  for (const p of ['mix', 'filter', 'env', 'mod', 'osc']) {
     await page.click(`#syn-tab-${p}`);
     const shown = await M(() => [...document.querySelectorAll('.syn-page')].filter((e) => !e.hidden).map((e) => e.id));
     assert(shown.join() === `syn-page-${p}` && (await page.getAttribute(`#syn-tab-${p}`, 'aria-selected')) === 'true', `section tab ${p} shows its page`);
@@ -692,7 +696,7 @@ async function synthVoiceChecks(page) {
     [1180, 820],
   ]) {
     await page.setViewportSize({ width: w, height: hh });
-    for (const p of ['osc', 'mix', 'filter', 'env']) {
+    for (const p of ['osc', 'mix', 'filter', 'env', 'mod']) {
       await page.click(`#syn-tab-${p}`);
       await page.waitForTimeout(80);
       const fit = await M(() => {
@@ -710,6 +714,7 @@ async function synthVoiceChecks(page) {
   await page.waitForFunction((id) => window.mkwavez.bridge.status.voices.some((s) => s.id === id && s.env > 0.1 && s.note === 57), id, { timeout: 5000 });
   assert(true, 'worklet plays a MIDI note on the Synth voice');
   await M((id) => window.mkwavez.bridge.sendMidi([{ type: 'noteOff', voiceId: id, note: 57 }]), id);
+  await synthStage3Checks(page, id, v);
   // Type switch both ways.
   await page.selectOption('#voice-type', 'simple');
   assert((await v()).type === 'simple' && (await page.isVisible('#voice-panel')) && !(await page.isVisible('#synth-panel')), 'type select → Simple: Simple controls');
@@ -728,7 +733,74 @@ async function synthVoiceChecks(page) {
   await page.waitForTimeout(150);
 }
 
+/**
+ * Synth voice stage 2 / 3 (wide shell, transport running): the Mod tab (LFO editor: tempo
+ * sync shows the division; a matrix slot routes wheel → cutoff), factory presets (apply,
+ * undo), saving a user preset (it joins the picker), copy / paste between voice tabs, and
+ * the unison CPU guard (many voices with 4+4 copies: the engine reduces them, the Osc page
+ * says so).
+ */
+async function synthStage3Checks(page, id, v) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  // Mod tab.
+  await page.click('#syn-tab-mod');
+  await page.click('#syn-mod-sel-1');
+  await page.selectOption('#syn-lfo-shape', 'sh');
+  await page.check('#syn-lfo-sync');
+  assert((await v()).synth.lfos[1].shape === 'sh' && (await v()).synth.lfos[1].sync && (await page.isVisible('#syn-lfo-div')) && !(await page.isVisible('#syn-lfo-rate')), 'Mod tab: LFO 2 S&H, tempo-synced (division shown)');
+  await page.selectOption('#syn-mod-src-1', 'wheel');
+  await page.selectOption('#syn-mod-dst-1', 'cutoff');
+  await page.fill('#syn-mod-amt-1', '0.5');
+  const slot = (await v()).synth.mods[1];
+  assert(slot.src === 'wheel' && slot.dst === 'cutoff' && slot.amt === 0.5, 'matrix slot 2: mod wheel → cutoff +50%');
+  await page.click('#syn-mod-sel-env');
+  assert((await page.isVisible('#syn-menv')) && !(await page.isVisible('#syn-lfo')), 'Mod tab: mod envelope editor');
+  // Presets.
+  await page.selectOption('#syn-preset', 'f:pad');
+  let s = (await v()).synth;
+  assert(s.aUnison === 3 && s.mods[0].dst === 'posA' && (await v()).wavetableId === 3 && (await page.inputValue('#syn-preset')) === '', 'factory preset “Evolving pad” applied (picker resets)');
+  await page.click('#undo');
+  s = (await v()).synth;
+  assert(s.aUnison === 1 && s.mods[1].src === 'wheel', 'undo reverts the preset');
+  page.once('dialog', (d) => d.accept('Smoke preset'));
+  await page.click('#syn-preset-menu');
+  await page.click('#syn-preset-save');
+  assert(
+    (await M(() => window.mkwavez.model.voicePresets.map((p) => p.name).join())) === 'Smoke preset' && (await page.$$eval('#syn-preset option', (os) => os.some((o) => o.textContent === 'Smoke preset'))),
+    'Save as preset: in the session and the picker',
+  );
+  // Copy here, paste onto another tab.
+  await page.click('#syn-preset-menu');
+  await page.click('#syn-voice-copy');
+  await page.click('#voice-tab-1');
+  assert(!(await page.isDisabled('#voice-paste')), 'copied voice: Paste enabled on another (Simple) voice tab');
+  await page.click(`#voice-tab-${id}`);
+  // CPU guard: fill up with 4+4-copy Synth voices, all holding a note.
+  await page.click('#syn-tab-osc');
+  const added = await M((id) => {
+    const m = window.mkwavez.model;
+    const ids = [id];
+    m.updateVoice(id, { synth: { aUnison: 4, bUnison: 4, bLevel: 0.3 } });
+    while (m.voices.length < 8) ids.push(m.addVoice({ type: 'synth', level: 0.05, synth: { ...m.voice(id).synth } }).id);
+    window.mkwavez.bridge.sendMidi(ids.map((v, i) => ({ type: 'noteOn', voiceId: v, note: 48 + i, velocity: 90 })));
+    return ids;
+  }, id);
+  await page.waitForFunction(() => window.mkwavez.bridge.status.unisonLimited === true, null, { timeout: 5000 });
+  await page.waitForFunction(() => !document.querySelector('#syn-unison-guard').hidden, null, { timeout: 3000 });
+  assert(true, `CPU guard: ${added.length} voices × 4+4 unison copies → reduced, the Osc page says so`);
+  await M((ids) => {
+    const m = window.mkwavez.model;
+    window.mkwavez.bridge.sendMidi(ids.map((v, i) => ({ type: 'noteOff', voiceId: v, note: 48 + i })));
+    for (const v of ids.slice(1)) m.removeVoice(v);
+    m.updateVoice(ids[0], { synth: { aUnison: 1, bUnison: 1 } });
+    window.mkwavez.ui.setVoice(ids[0]);
+  }, added);
+  await page.waitForFunction(() => window.mkwavez.bridge.status.unisonLimited === false, null, { timeout: 5000 });
+  assert(true, 'CPU guard lifts once the voices are gone');
+}
+
 /** Voice tabs switch both the Voice controls and the Sequence panel. */
+
 
 async function voiceTabChecks(page) {
   const M = (fn, arg) => page.evaluate(fn, arg);

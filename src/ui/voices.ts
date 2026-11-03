@@ -10,6 +10,7 @@ import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './c
 import { h, icon, ICONS, panel, slider, voiceColorVar, type Slider } from './dom';
 import { playingMix } from './playing';
 import { SHORTCUTS } from './shortcuts';
+import { buildCopyPaste } from './presets';
 import { buildSynthPanel } from './synthPanel';
 import { createVoicePad } from './voicePad';
 
@@ -245,6 +246,7 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
   watchVisibility(pad.canvas);
 
   const synthPanel = buildSynthPanel(model, bridge, ui);
+  const copyPaste = buildCopyPaste(model, cur);
   synthPanel.el.hidden = true;
   const empty = h('p', { class: 'hint voice-empty', hidden: true }, 'No voices. Add one with +.');
   const body = h(
@@ -264,7 +266,7 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
       rows2d,
       h('div', { class: 'vrows' }, level.el),
     ),
-    h('div', { class: 'voice-side' }, h('div', { class: 'voice-type-row' }, h('span', { class: 'voice-type-label' }, 'Voice type'), typeSlot), padBox, scopeBox, envBox, h('div', { class: 'vrows vrows-adsr' }, att.el, dec.el, sus.el, rel.el)),
+    h('div', { class: 'voice-side' }, h('div', { class: 'voice-type-row' }, copyPaste.copy, copyPaste.paste, typeSlot), padBox, scopeBox, envBox, h('div', { class: 'vrows vrows-adsr' }, att.el, dec.el, sus.el, rel.el)),
   );
   sec.body.append(empty, body, synthPanel.el);
 
@@ -290,6 +292,7 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
     muteBtn.hidden = removeBtn.hidden = typeSel.hidden = !v;
     if (!v) return;
     typeSel.value = v.type;
+    copyPaste.sync();
     // The type select sits in the Simple body's top row, or in the Synth body's section tabs.
     const slot = synth ? synthPanel.typeSlot : typeSlot;
     if (typeSel.parentElement !== slot) slot.append(typeSel);

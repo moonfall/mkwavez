@@ -38,7 +38,7 @@ const IDLE = 0;
  * CPU guard: oscillator copies (unison) all sounding Synth voices may play together. Over
  * it, every voice's unison is scaled down (at least one copy each); status reports it.
  */
-export const UNISON_BUDGET = 40;
+export const UNISON_BUDGET = 32;
 
 /**
  * Longest a mix change takes: weights move towards their targets at most 1 / this many

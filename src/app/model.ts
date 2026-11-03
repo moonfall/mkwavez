@@ -9,7 +9,9 @@ import type { ModelState } from '../core/session';
 import { DEFAULT_STEP_LENGTH, emptySteps, isStepLength, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
+import { MAX_USER_PRESETS, presetPatch, soundOf as presetSoundOf, type PresetSound, type VoicePreset } from '../core/presets';
 import { DEFAULT_SYNTH, SYNTH_AMP_DEFAULTS, type VoiceType } from '../core/synth';
+
 import {
   applyVoicePatch,
   clampOscB,
@@ -71,7 +73,8 @@ export type Topic =
   | 'transport'
   | 'undo'
   | 'parents'
-  | 'notice';
+  | 'notice'
+  | 'presets';
 
 export const MAX_VOICES = 8;
 
@@ -120,6 +123,8 @@ export class AppModel {
   nextWavetableId: WavetableId = FIRST_USER_WAVETABLE_ID;
   /** The last notice (see the 'notice' topic). */
   notice = '';
+  /** User voice presets (saved with the session; topic 'presets'). Factory presets live in core/presets.ts. */
+  voicePresets: readonly VoicePreset[] = [];
   readonly cap: number;
   private room: { tl: unknown; wts: unknown; n: number; ok: boolean } | null = null;
 
@@ -273,7 +278,7 @@ export class AppModel {
     return `Timeline full: all ${this.timeline.length} waveforms are used by wavetables — remove some from ${names.join(', ') || 'your wavetables'}.`;
   }
 
-  private setNotice(msg: string): void {
+  setNotice(msg: string): void {
     this.notice = msg;
     this.emit('notice');
   }
@@ -476,6 +481,67 @@ export class AppModel {
   /** End a coalesced gesture (slider released). */
   endGesture(): void {
     this.gestureKey = null;
+  }
+
+  // ---- voice presets ----
+
+  /** Apply a preset's sound to a voice (it becomes a Synth voice). One undo step. */
+  applyPreset(voiceId: number, sound: PresetSound): void {
+    if (!this.voice(voiceId)) return;
+    this.updateVoice(voiceId, presetPatch(sound));
+    this.endGesture();
+  }
+
+  /** Save a voice's sound as a user preset (name trimmed, made unique). */
+  savePreset(voiceId: number, name: string): VoicePreset | null {
+    const v = this.voice(voiceId);
+    if (!v || this.voicePresets.length >= MAX_USER_PRESETS) return null;
+    const p: VoicePreset = { id: this.presetId(), name: this.presetName(name), sound: presetSoundOf(v) };
+    this.voicePresets = [...this.voicePresets, p];
+    this.emit('presets');
+    return p;
+  }
+
+  deletePreset(id: string): void {
+    if (!this.voicePresets.some((p) => p.id === id)) return;
+    this.voicePresets = this.voicePresets.filter((p) => p.id !== id);
+    this.emit('presets');
+  }
+
+  /** Add presets (an imported file): fresh ids, unique names, up to the limit. Returns how many were added. */
+  importPresets(list: readonly VoicePreset[]): number {
+    let n = 0;
+    for (const p of list) {
+      if (this.voicePresets.length >= MAX_USER_PRESETS) break;
+      this.voicePresets = [...this.voicePresets, { ...p, id: this.presetId(), name: this.presetName(p.name) }];
+      n++;
+    }
+    if (n) this.emit('presets');
+    return n;
+  }
+
+  /** Copy another voice's settings onto a voice (everything but its id, name and mute). Undoable on Synth voices. */
+  pasteVoice(voiceId: number, from: VoiceParams): void {
+    if (!this.voice(voiceId)) return;
+    const { id: _id, name: _name, mute: _mute, ...rest } = from;
+    this.updateVoice(voiceId, rest);
+    this.endGesture();
+  }
+
+  private presetId(): string {
+    let n = 1;
+    for (const p of this.voicePresets) {
+      const m = /^user-(\d+)$/.exec(p.id);
+      if (m) n = Math.max(n, Number(m[1]) + 1);
+    }
+    return `user-${n}`;
+  }
+
+  private presetName(name: string): string {
+    const base = name.trim().slice(0, 40) || 'Preset';
+    const used = new Set(this.voicePresets.map((p) => p.name));
+    if (!used.has(base)) return base;
+    for (let i = 2; ; i++) if (!used.has(`${base} ${i}`)) return `${base} ${i}`;
   }
 
   removeVoice(id: number): void {
@@ -698,6 +764,7 @@ export class AppModel {
       selectedId: this.selectedId,
       breedParents: this.breedParents,
       bpm: this.bpm,
+      voicePresets: this.voicePresets,
     };
   }
 
@@ -726,7 +793,8 @@ export class AppModel {
     this.selectedId = s.selectedId !== null && this.byId.has(s.selectedId) ? s.selectedId : (s.timeline.at(-1)?.id ?? null);
     this.breedParents = s.breedParents.filter((id) => this.byId.has(id)).slice(0, MAX_PARENTS);
     this.bpm = Math.max(40, Math.min(300, s.bpm));
-    this.emit('timeline', 'wavetables', 'voices', 'sequences', 'selection', 'transport', 'undo', 'parents');
+    this.voicePresets = s.voicePresets ?? [];
+    this.emit('timeline', 'wavetables', 'voices', 'sequences', 'selection', 'transport', 'undo', 'parents', 'presets');
   }
 
   // ---- undo ----

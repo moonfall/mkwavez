@@ -19,7 +19,9 @@
 import { MAX_STEPS, TABLE_SIZE, TIMELINE_CAP } from './constants';
 import { renderRecipe } from './generators';
 import { DEFAULT_STEP_LENGTH, normalizeSteps, type SequenceData, stepLengthOf } from './sequence';
+import { normalizePresets, type VoicePreset } from './presets';
 import { isVoiceType, normalizeSynth } from './synth';
+
 import type { ParamValue, Recipe, TableId, WaveTable } from './table';
 import { DEFAULT_VOICE, clampOscB, clampVoiceWindow, oscASource, rehomeVoice, type VoiceParams } from './voice';
 import {
@@ -63,6 +65,8 @@ export interface ModelState {
   readonly selectedId: TableId | null;
   readonly breedParents: readonly TableId[];
   readonly bpm: number;
+  /** User voice presets (missing in older sessions: none). */
+  readonly voicePresets?: readonly VoicePreset[];
 }
 
 /** UI prefs saved with the session (selected voice tab, open tabs, ...). JSON values only. */
@@ -92,6 +96,8 @@ export interface SessionMeta {
   readonly nextSeqId: number;
   readonly bpm: number;
   readonly ui: UiPrefs;
+  /** User voice presets (optional: added without a schema bump; missing = none). */
+  readonly voicePresets?: readonly VoicePreset[];
 }
 
 export type WaveformEncoding = 'samples' | 'recipe' | 'ref';
@@ -140,6 +146,7 @@ export function encodeMeta(s: SessionState, savedAt = 0): SessionMeta {
     nextSeqId: m.nextSeqId,
     bpm: m.bpm,
     ui: s.ui,
+    voicePresets: m.voicePresets ?? [],
   };
 }
 
@@ -439,6 +446,7 @@ export function decodeSession(raw: unknown, records: Records, o: DecodeOptions =
         selectedId,
         breedParents,
         bpm,
+        voicePresets: normalizePresets(m.voicePresets),
       },
       ui: isObj(m.ui) ? m.ui : {},
     },

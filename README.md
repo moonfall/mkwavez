@@ -19,6 +19,7 @@ npm test           # core unit tests (vitest)
 npx tsc --noEmit   # typecheck
 npm run build      # typecheck + production build to dist/
 npm run smoke      # build, then headless-Chrome smoke test against preview and dev servers
+npm run bench      # CPU benchmark: 8 Synth voices at 48 kHz (time per render quantum)
 ```
 
 The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to override;
@@ -152,14 +153,47 @@ switches (the choice is remembered).
     holds them they can be again. A wavetable of yours holds at most 1024 slots: a Live one that fills up is marked **full** and stops taking new waveforms (they still go into the Timeline). The Timeline
     never holds more than 4096 waveforms: when all of them are used by wavetables, adds
     are refused (the Add buttons are disabled; a notice says which wavetables to clear).
-- **Voice**: one tab per voice (V1, V2 · muted, …, + adds one, × removes the selected
-  one). The selected voice's wavetable (any wavetable; switching selects all of it) and
+- **Voice**: one tab per voice (V1, V2 · muted, …, **+** adds a **Synth** or **Simple**
+  voice, × removes the selected one). Each voice is Simple or Synth (the type select: in
+  the Simple panel's right column, right of the Synth panel's section tabs; switching a
+  sounding voice crossfades, and is undoable). Sessions saved before Synth voices existed
+  load every voice as Simple, sounding exactly as before.
+  **Simple voice**: the selected voice's wavetable (any wavetable; switching selects all of it) and
   its interpolation (read-only), octave, window, position, LFO, level, mute, plus a "now
   playing" scope and the ADSR envelope. On a 2D or Rows wavetable the window / position /
   LFO depth / LFO rate become paired X / Y sliders and an X/Y pad shows the window, the
   LFO path and the play position (Blend is bilinear over four cells; on Rows, X is the
   same fraction of every row and Y crossfades between rows). V1 starts on Last batch,
-  V2 / V3 on the Timeline; only voice 1 starts unmuted.
+  V2 / V3 on the Timeline; only voice 1 starts unmuted. Copy / Paste copy a voice's
+  settings onto another voice tab.
+  **Synth voice**: compact pages in the same panel —
+  - **Osc**: A / B picks the oscillator. Each has its own wavetable, window and position
+    (paired X / Y sliders and the X/Y pad on 2D / Rows wavetables, a "now playing" scope
+    on 1D), octave ±3 · semitones ±24, fine ±100 cents, level, and **unison** 1–4 copies
+    with detune and stereo spread. When many copies sound at once (more than 32 across
+    all voices) a CPU guard plays fewer and says "CPU guard: reduced".
+  - **Mix**: levels of A, B, the sub oscillator (sine / square, 1 or 2 octaves below A),
+    noise (white / pink), ring modulation A × B, FM (B modulates A's phase) and **Sync B**
+    (osc B's cycle restarts A); output level, pan, stereo width, octave, glide (with
+    legato only) and the pitch-bend range.
+  - **Filter**: LP12 / LP24 / HP / BP / Notch, cutoff, resonance (up to near
+    self-oscillation), drive (before the filter), saturate (after it), key tracking, filter
+    envelope amount (± 6 octaves) and velocity; the response curve shows the cutoff and
+    (dashed) where the envelope takes it.
+  - **Env**: Amp / Filter (ADSR) / Pitch (attack, decay, ± 24 semitones; target A, B or
+    both) envelopes, with a graph; velocity → level.
+  - **Mod**: LFO 1–3 (sine, triangle, saw, square, S&H, smooth random; rate in Hz or
+    synced to the tempo in divisions from 8 bars to 1/32, dotted and triplets; retrigger or
+    free-running, start phase, fade-in, depth) and the mod envelope (AD or ADSR), plus an
+    8-slot **matrix**: source (LFOs, filter / pitch / mod envelope, velocity, mod wheel,
+    aftertouch, key, per-note random) → destination (A / B pitch, position X / Y, level,
+    sub / noise level, cutoff, resonance, drive, amp, pan, LFO rates) × a bipolar amount
+    (double-click resets it).
+  - **Presets** (the picker next to the section tabs): Init and six factory sounds (Sub
+    bass, Pluck, Evolving pad, Sync lead, Brass, Noise sweep) that play the built-in
+    wavetables, then yours. The ⋯ menu saves the voice as a preset, deletes the chosen one,
+    copies / pastes voices and exports / imports your presets (a `.json` file). Your
+    presets are saved with the session. Applying one is undoable.
 - **Sequence**: follows the selected voice tab: its 8-row pentatonic step grid (rows
   labelled with the voice's notes), steps, gate, copy / paste / clear / random; shared
   tempo. "+ Seq" adds another sequence to the voice (a picker appears).
@@ -187,15 +221,18 @@ switches (the choice is remembered).
   All-notes-off / all-sound-off (CC 123 / 120), unplugging the device or switching input
   release held notes. CC map: Position X (CC 1, mod wheel, by default), Position Y (2D /
   Rows wavetables; unassigned until learned, e.g. CC 2), LFO depth, LFO rate,
-  Level — type a CC number or press Learn and move a control (bank select / RPN / NRPN
-  are ignored while learning); remembered. A held pitch bend follows Omni to a newly
+  Level, and for Synth voices Cutoff, Resonance, Drive, Filter env amount, Osc A / B mix,
+  Sub / Noise level, Glide and LFO 1–3 rate / depth — type a CC number or press Learn and
+  move a control (bank select / RPN / NRPN are ignored while learning); remembered. The mod
+  wheel and channel pressure (aftertouch) are also Synth voice matrix sources; a Synth
+  voice's bend range is its own (default 2). A held pitch bend follows Omni to a newly
   selected voice; CC 121 recentres it. Audio starts
   when you pick an input, or on your first click if the input was remembered (browsers
   only start audio on a gesture). Unsupported browsers / denied permission show a short
   status; the rest of the app is unaffected.
 - **Session** (transport bar): your work is saved in the browser automatically (IndexedDB,
   a second or two after each change and when the tab is hidden) and restored on reload —
-  waveforms, wavetables, voices, sequences, tempo, the selected voice tab and Generate
+  waveforms, wavetables, voices (Synth settings included), your voice presets, sequences, tempo, the selected voice tab and Generate
   tab, Breed parents and the Breed operator / bias / walk / mutation / batch mode; not
   undo history. The menu shows the autosave status and has **New session**
   (asks first; clears the autosaved copy), **Export…** (one `.mkwz` file) and
@@ -206,8 +243,11 @@ switches (the choice is remembered).
   autosaves; the others say so and offer "Use autosave here…".
 - **Undo** (transport bar) covers waveform adds (including Mutate / Breed adds, Copy to end),
   Timeline moves, window edits, a voice's wavetable switch, note edits and wavetable edits (create, duplicate, rename,
-  delete, resize, slot edits). Wavetable settings (Live / Frozen, write head, interpolation)
+  delete, resize, slot edits), Synth voice edits (a slider drag is one step; presets,
+  paste, type switches) — undo restores only the voice the undone edit changed, so MIDI
+  controller moves elsewhere stay. Wavetable settings (Live / Frozen, write head, interpolation)
   are kept across undo.
+
 
 ## Keyboard shortcuts
 
