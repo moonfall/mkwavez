@@ -14,6 +14,7 @@
  * (scenario <name>: sample rate, frames, chunk), `out` (its rendered samples), `status`
  * (its engine status afterwards). See plugin/core/tests/golden.cpp for the reader.
  */
+import fixture from '../plugin/core/tests/golden/core.golden.txt?raw';
 import { describe, expect, it } from 'vitest';
 import { Adsr } from '../src/core/engine/adsr';
 import { emptyStatus, SynthEngine } from '../src/core/engine/engine';
@@ -658,10 +659,40 @@ function build(): string {
   return lines.join('\n') + '\n';
 }
 
+/** One record line → kind, name, numbers. */
+function parseLine(line: string): { head: string; values: number[] } {
+  const parts = line.split(' ');
+  return { head: parts.slice(0, 3).join(' '), values: parts.slice(3).map(Number) };
+}
+
+/**
+ * Whether two fixture texts hold the same records with numbers equal up to `tol` (relative
+ * to max(1, |x|)). Node versions differ in the last bits of Math.pow & co. (V8 changes its
+ * implementations), so an exact text match would tie the fixture to one Node version.
+ */
+function sameNumbers(a: string, b: string, tol = 1e-7): string | null {
+  const la = a.split('\n').filter((l) => l && !l.startsWith('#'));
+  const lb = b.split('\n').filter((l) => l && !l.startsWith('#'));
+  if (la.length !== lb.length) return `${la.length} records vs ${lb.length}`;
+  for (let i = 0; i < la.length; i++) {
+    const x = parseLine(la[i]);
+    const y = parseLine(lb[i]);
+    if (x.head !== y.head) return `record ${i + 1}: ${x.head} vs ${y.head}`;
+    for (let k = 0; k < x.values.length; k++) {
+      const d = Math.abs(x.values[k] - y.values[k]);
+      if (!(d <= tol * Math.max(1, Math.abs(y.values[k])))) return `${x.head.split(' ').slice(0, 2).join(' ')}[${k}]: ${x.values[k]} vs ${y.values[k]}`;
+    }
+  }
+  return null;
+}
+
 describe('golden fixture for the native port', () => {
   // A changed record means the TS core's output changed: regenerate with `-u` (see the
-  // top of this file) and bring the C++ port (plugin/core) in line.
+  // top of this file) and bring the C++ port (plugin/core) in line. Within a tight
+  // tolerance the fixture counts as matching (other Node versions round differently).
   it('matches plugin/core/tests/golden/core.golden.txt', async () => {
-    await expect(build()).toMatchFileSnapshot(FILE);
+    const text = build();
+    if (sameNumbers(text, fixture) === null) return;
+    await expect(text).toMatchFileSnapshot(FILE);
   });
 });
