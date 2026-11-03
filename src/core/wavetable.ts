@@ -225,7 +225,10 @@ export function clampWindow(start: number, end: number, length: number): [number
  *    "New row" on a variable 1D starts the line afresh (its single row is replaced); on a
  *    fixed 1D it moves the head back to the line start (slots are overwritten as it goes).
  *  - 2D: all four directions; edge wrap | stop; write replace only (the grid is fixed).
- *  - Rows: direction ±x; any edge; replace | insert. "New row" appends an empty row.
+ *    Stop with on-wrap "next" fills line after line and stops at the end of the grid;
+ *    with "same line" it stops at the end of the line.
+ *  - Rows: direction ±x; any edge; replace | insert. "New row" appends an empty row, which
+ *    only growing can fill: replace + wrap / stop + new row is coerced to grow.
  */
 export function normalizeWrite(shape: WavetableShape, fixed: boolean, s: WriteSettings): WriteSettings {
   let { dir, edge, mode } = s;
@@ -234,6 +237,7 @@ export function normalizeWrite(shape: WavetableShape, fixed: boolean, s: WriteSe
     if (edge === 'grow') edge = 'wrap';
   } else if (shape === '1d' && edge === 'wrap') edge = 'grow';
   if (shape === '2d') mode = 'replace';
+  if (shape === 'rows' && mode === 'replace' && s.batch === 'newRow') edge = 'grow';
   return { dir, edge, onWrap: shape === '1d' ? 'same' : s.onWrap, mode, batch: s.batch };
 }
 
@@ -245,7 +249,11 @@ function lineStart(dir: WriteDir, len: number, growReplace: boolean): number {
 
 function startHead(shape: WavetableShape, rows: readonly (readonly Slot[])[], s: WriteSettings): WriteHead {
   const grow = s.edge === 'grow' && s.mode === 'replace';
-  if (shape === 'rows') return { x: lineStart(s.dir, 0, grow), y: rows.length };
+  if (shape === 'rows') {
+    // Replacing without growth starts on the first existing row; anything else on a new row.
+    if (s.mode === 'replace' && s.edge !== 'grow' && rows.length) return { x: lineStart(s.dir, rows[0].length, false), y: 0 };
+    return { x: lineStart(s.dir, 0, grow), y: rows.length };
+  }
   if (s.dir === '+y' || s.dir === '-y') return { x: 0, y: lineStart(s.dir, rows.length, false) };
   return { x: lineStart(s.dir, rows[0]?.length ?? 0, grow), y: 0 };
 }
@@ -401,6 +409,10 @@ function writeOne(w: Work, id: TableId): boolean {
       if (s.edge === 'wrap') {
         y = d > 0 ? 0 : H - 1;
         if (s.onWrap === 'next') x = (x + d + W) % W;
+      } else if (s.onWrap === 'next' && x + d >= 0 && x + d < W) {
+        // Stop + next: on to the next column; stops past the last one.
+        y = d > 0 ? 0 : H - 1;
+        x += d;
       }
     }
     w.x = x;
@@ -422,7 +434,17 @@ function writeOne(w: Work, id: TableId): boolean {
   if (pending) w.newRow();
   const row = w.row(w.y);
   const on1d = shape === '1d';
-  if (insert) {
+  if (insert && !growable && d < 0) {
+    // Fixed line, −x: the mirror of +x — the new slot lands at the head, older slots
+    // shift towards the start (the first one drops out), the head moves left.
+    row.splice(pos + 1, 0, id);
+    row.shift();
+    if (on1d) {
+      w.axis().splice(pos + 1, 0, -1);
+      w.axis().shift();
+    }
+    pos--;
+  } else if (insert) {
     row.splice(pos, 0, id);
     if (on1d) w.axis().splice(pos, 0, -1);
     if (!growable) {
@@ -451,6 +473,11 @@ function writeOne(w: Work, id: TableId): boolean {
     // Next row / column, cycling through the existing rows (wrap never creates a row).
     if (shape !== '1d' && s.onWrap === 'next') line = (line + d + w.rows.length) % w.rows.length;
     const nl = line < w.rows.length ? w.rows[line].length : 0;
+    pos = d > 0 ? 0 : nl > 0 ? nl - 1 : 0;
+  } else if (!inRange && !growOk && s.edge === 'stop' && shape !== '1d' && s.onWrap === 'next' && line + d >= 0 && line + d < w.rows.length) {
+    // Stop + next: on to the next existing row; stops after the last one.
+    line += d;
+    const nl = w.rows[line].length;
     pos = d > 0 ? 0 : nl > 0 ? nl - 1 : 0;
   }
   w.x = pos;

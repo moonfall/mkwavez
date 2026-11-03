@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Adsr } from '../src/core/engine/adsr';
-import { emptyStatus, SynthEngine } from '../src/core/engine/engine';
+import { CROSSFADE_SEC, emptyStatus, SynthEngine } from '../src/core/engine/engine';
 import { generateBasic } from '../src/core/generators';
 import { buildMipSet } from '../src/core/mipmap';
 import { emptySteps, type SequenceData } from '../src/core/sequence';
@@ -239,9 +239,43 @@ describe('SynthEngine on 2D / Rows wavetables', () => {
       ref.noteOn(1, 110, SR * 10);
       render(ref, before.length);
       const r = render(ref, 2048);
-      for (let i = 200; i < 2048; i += 97) expect(after[i]).toBeCloseTo(-r[i], 5);
+      // The crossfade lasts ~CROSSFADE_SEC: after = (1 − 2c)·r, c ramping 0 → 1.
+      const c = (i: number) => {
+        let j = i;
+        while (Math.abs(r[j]) < 0.05) j++;
+        return (1 - after[j] / r[j]) / 2;
+      };
+      const ms = (t: number) => Math.round((t * SR) / 1000);
+      expect(c(ms(1))).toBeGreaterThan(0.05);
+      expect(c(ms(1))).toBeLessThan(0.4);
+      expect(c(ms(3.5))).toBeLessThan(0.8);
+      expect(c(ms(CROSSFADE_SEC * 1000 + 1.5))).toBeCloseTo(1, 5);
+      for (let i = ms(8); i < 2048; i += 97) expect(after[i]).toBeCloseTo(-r[i], 5);
     });
   }
+
+  it('Blend → Step on a sounding voice waits for the phase wrap', () => {
+    const p = { windowEnd: 1, windowEndY: 1, position: 0.3, positionY: 0.6 };
+    const blend = packWavetable(make2D(0, 'g', 2, 2, [1, 2, 3, 4]));
+    const step = packWavetable(make2D(0, 'g', 2, 2, [1, 2, 3, 4], { interp: 'step' }));
+    const a = eng(blend, p);
+    const b = eng(blend, p);
+    render(a, 1000);
+    render(b, 1000);
+    b.setWavetable(0, step);
+    const phase0 = (1000 * 220) / SR - Math.floor((1000 * 220) / SR);
+    const toWrap = Math.floor((1 - phase0) * (SR / 220));
+    expect(render(b, toWrap - 1)).toEqual(render(a, toWrap - 1));
+    // After the wrap: one cell (the nearest: x 0, y 1 → id 3 = square).
+    render(b, 300);
+    const out = render(b, 200);
+    const sq = eng(packIds([3]), {});
+    render(sq, 1000 + toWrap - 1 + 300);
+    const ref = render(sq, 200);
+    let err = 0;
+    for (let i = 0; i < 200; i++) err = Math.max(err, Math.abs(out[i] - ref[i]));
+    expect(err).toBeLessThan(1e-6);
+  });
 });
 
 describe('Adsr', () => {

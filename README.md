@@ -56,7 +56,7 @@ switches (the choice is remembered).
   large view shows one table of the batch with its spectrum; the strip below shows all N
   (click, or ←/→ when focused). The previews are exactly what gets added: "Add shown"
   adds that one table, "Add batch (+N)" all N (a voice on the built-in **Last batch**
-  wavetable — V1 at start — then plays exactly that batch). Modes that use randomness
+  wavetable — V1 at start — then plays exactly those waveforms). Modes that use randomness
   show the seed (Reroll); a new seed is drawn after each Add batch.
 - **Generate → Mutate**: mutate the table selected in the Timeline (the Source chip).
   The library works like Seed's (search by name, group or amount mapping; ▲/▼ or the
@@ -85,21 +85,21 @@ switches (the choice is remembered).
   inside a voice's window is tinted in the voice's colour (unmuted strong, muted faint)
   with a solid edge where a run of window tables starts / ends; overlapping windows split
   the cell into bands, voice 1 on top. Voices on other wavetables (Last batch, Grid, …)
-  tint the timeline tables their window references. Carets show each unmuted voice's live
-  play position (for voices on other wavetables: on the table they play most of). The header
+  tint the Timeline waveforms their window references. Carets show each unmuted voice's live
+  play position (for voices on other wavetables: on the waveform they play most of). The header
   button cycles the thumbnails: Waveform → Spectral → Waveform + Spectral. **Copy to end**
   (or Ctrl/⌘+D while the strip has focus, e.g. after clicking a table) appends a copy of
   the selected table and selects it (like a single add: following windows extend; undoable).
   The strip keeps the selection in view and follows new tables when scrolled to the end.
-- **Wavetables**: named sets of slots referencing timeline tables (no copies). Four
+- **Wavetables**: named sets of slots referencing Timeline waveforms (no copies). Four
   read-only built-ins, all live: **Timeline** (1D, everything), **Last batch** (1D,
   replaced by each batch or single add), **Batches** (Rows: one row per batch / single
   add) and **Grid** (2D 8×8, filled in order, wrapping and overwriting). Chips pick one
   (green dot = live); the view shows it (1D as a stack of waveforms, 2D as a grid, Rows as
   rows) with voice windows in voice colours, the write head in green and play positions;
-  click a slot to select its table. The summary line gives the shape, the interpolation
+  click a slot to select its waveform. The summary line gives the shape, the interpolation
   (**Blend** / **Step**, switchable here; it applies to every voice on that wavetable),
-  Live / Frozen and which voices use it. Tables in the Grid or Last batch are never evicted.
+  Live / Frozen and which voices use it. Waveforms in the Grid or Last batch are never evicted.
   Creating / editing wavetables (the Edit button) is phase 2. Collapsed by default on a phone.
 - **Voice**: one tab per voice (V1, V2 · muted, …, + adds one, × removes the selected
   one). The selected voice's wavetable (any wavetable; switching selects all of it) and

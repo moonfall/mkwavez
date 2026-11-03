@@ -165,6 +165,17 @@ describe('write head: 1D fixed', () => {
     expect(e.map).toEqual([1, 2, -1]);
   });
 
+  it('-x insert moves the head left (mirror of +x)', () => {
+    const t = writeAll(mk1([1, 2, 3], { dir: '-x', mode: 'insert', edge: 'wrap' }, undefined, true), [10, 11, 12]);
+    expect(t.rows).toEqual([[12, 11, 10]]);
+    expect(t.head.x).toBe(2); // wrapped
+    const e = writeTables(mk1([1, 2, 3], { dir: '-x', mode: 'insert', edge: 'stop' }, { x: 1, y: 0 }, true), [9]);
+    expect(e.wt.rows).toEqual([[2, 9, 3]]);
+    expect(e.map).toEqual([-1, 0, 2]);
+    const s = writeAll(mk1([1, 2, 3], { dir: '-x', mode: 'insert', edge: 'stop' }, undefined, true), [10, 11, 12, 13]);
+    expect(s.rows).toEqual([[12, 11, 10]]);
+  });
+
   it('-x replace + wrap runs backwards', () => {
     const t = writeAll(mk1([_, _, _], { dir: '-x', mode: 'replace', edge: 'wrap' }, undefined, true), [1, 2, 3, 4]);
     expect(t.rows).toEqual([[3, 2, 4]]);
@@ -200,17 +211,36 @@ describe('write head: 2D', () => {
     ]);
   });
 
-  it('+x stop: one line, then nothing (until a new row)', () => {
-    const c = writeAll(g({ dir: '+x', edge: 'stop', batch: 'continue' }), [1, 2, 3, 4], [5]);
+  it('+x stop + same line: one line, then nothing (until a new row)', () => {
+    const c = writeAll(g({ dir: '+x', edge: 'stop', onWrap: 'same', batch: 'continue' }), [1, 2, 3, 4], [5]);
     expect(c.rows).toEqual([
       [1, 2, 3],
       [_, _, _],
     ]);
     // New row: each batch fills one line from its start; past the last line nothing is written.
-    const n = writeAll(g({ dir: '+x', edge: 'stop', batch: 'newRow' }), [1, 2, 3, 4], [5], [6], [7]);
+    const n = writeAll(g({ dir: '+x', edge: 'stop', onWrap: 'same', batch: 'newRow' }), [1, 2, 3, 4], [5], [6], [7]);
     expect(n.rows).toEqual([
       [1, 2, 3],
       [5, _, _],
+    ]);
+  });
+
+  it('stop + next fills the whole grid, then stops (rows and columns)', () => {
+    const t = writeAll(g({ dir: '+x', edge: 'stop', onWrap: 'next' }), [1, 2, 3, 4], [5, 6, 7], [8]);
+    expect(t.rows).toEqual([
+      [1, 2, 3],
+      [4, 5, 6],
+    ]);
+    expect(writeTables(t, [9]).wt).toBe(t);
+    const back = writeAll(g({ dir: '-x', edge: 'stop', onWrap: 'next' }), [1, 2, 3, 4, 5, 6, 7]);
+    expect(back.rows).toEqual([
+      [3, 2, 1],
+      [_, _, _],
+    ]); // −x: the previous row is above the first: stops there
+    const v = writeAll(g({ dir: '+y', edge: 'stop', onWrap: 'next' }), [1, 2, 3, 4, 5, 6, 7]);
+    expect(v.rows).toEqual([
+      [1, 3, 5],
+      [2, 4, 6],
     ]);
   });
 
@@ -271,6 +301,24 @@ describe('write head: Rows', () => {
     expect(writeAll(r, [7, 8, 9, 10]).rows).toEqual([[10, 8], [9]]);
     const same = live(makeRows(9, 'r', [[1, 2], [3]]), { edge: 'wrap', onWrap: 'same', mode: 'replace', batch: 'continue' }, { x: 0, y: 0 });
     expect(writeAll(same, [7, 8, 9]).rows).toEqual([[9, 8], [3]]);
+  });
+
+  it('replace + wrap / stop + new row grows the new row (coerced; never writes nothing)', () => {
+    for (const edge of ['wrap', 'stop'] as const) {
+      const r = makeRows(9, 'r', [[1, 2]], { write: { edge, mode: 'replace', batch: 'newRow' }, live: true });
+      expect(r.write.edge).toBe('grow');
+      expect(writeAll(r, [3, 4], [5]).rows).toEqual([[1, 2], [3, 4], [5]]);
+    }
+    // Replace without growth (continue) starts on the first existing row.
+    const c = makeRows(9, 'r', [[1, 2], [3]], { write: { edge: 'wrap', mode: 'replace', batch: 'continue' }, live: true });
+    expect(writeAll(c, [7, 8, 9]).rows).toEqual([[7, 8], [9]]);
+  });
+
+  it('stop + next moves on to the next existing row', () => {
+    const r = makeRows(9, 'r', [[1, 2], [3]], { write: { edge: 'stop', onWrap: 'next', mode: 'replace', batch: 'continue' }, live: true });
+    const t = writeAll(r, [7, 8, 9, 10]);
+    expect(t.rows).toEqual([[7, 8], [9]]);
+    expect(writeTables(t, [11]).wt).toBe(t);
   });
 
   it('stop ends the row; a new row resumes', () => {

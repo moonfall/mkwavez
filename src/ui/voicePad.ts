@@ -111,8 +111,14 @@ export function createVoicePad(model: AppModel, bridge: AudioBridge) {
     const x1 = isRows ? 0 : Math.max(v.windowStart, v.windowEnd);
     const y0 = Math.min(v.windowStartY, v.windowEndY);
     const y1 = Math.max(v.windowStartY, v.windowEndY);
-    // Positions → pad pixels (cell centres; Rows: a fraction of the row width).
-    const px = (u: number) => (isRows ? u * w : (x0 + u * (x1 - x0) + 0.5) * cw);
+    // Positions → pad pixels at cell centres. Rows: the engine plays slot u·(L − 1) of the
+    // nearest row (L = its length), drawn as L proportional cells.
+    const rowLen = (uy: number) => Math.max(1, wt.rows[Math.round(y0 + uy * (y1 - y0))]?.length ?? 1);
+    const px = (u: number, uy: number) => {
+      if (!isRows) return (x0 + u * (x1 - x0) + 0.5) * cw;
+      const L = rowLen(uy);
+      return ((u * (L - 1) + 0.5) / L) * w;
+    };
     const py = (u: number) => (y0 + u * (y1 - y0) + 0.5 - rows[0]) * ch;
     // Window.
     g.fillStyle = color;
@@ -137,15 +143,15 @@ export function createVoicePad(model: AppModel, bridge: AudioBridge) {
       const t = (i / N) * span;
       const ux = modulatedPosition(v.position, v.lfoDepth, v.lfoPhase + 2 * Math.PI * v.lfoRate * t);
       const uy = modulatedPosition(v.positionY, v.lfoDepthY, v.lfoPhaseY + 2 * Math.PI * v.lfoRateY * t);
-      if (i) g.lineTo(px(ux), py(uy));
-      else g.moveTo(px(ux), py(uy));
+      if (i) g.lineTo(px(ux, uy), py(uy));
+      else g.moveTo(px(ux, uy), py(uy));
     }
     g.stroke();
     g.setLineDash([]);
     g.globalAlpha = 1;
     // Dot: the played position (the chosen cell in Step).
     const pos = voicePositions(model, bridge, v);
-    let dx = px(pos.x);
+    let dx = px(pos.x, pos.y);
     let dy = py(pos.y);
     if (wt.interp === 'step') {
       const m = playingMix(model, bridge, v, mix);

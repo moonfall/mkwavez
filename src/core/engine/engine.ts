@@ -23,8 +23,15 @@ export const REMOVE_RELEASE_SEC = 0.012;
 export const BEND_SMOOTH_SEC = 0.004;
 
 const IDLE = 0;
-/** Tables a voice can be crossfading at once: this block's mix (<= 4) plus the previous one fading out. */
-const MAX_LIVE = 8;
+/** Tables a voice can be crossfading at once: this block's mix (<= 4) plus earlier ones fading out. */
+const MAX_LIVE = 16;
+
+/**
+ * Longest a mix change takes: weights move towards their targets at most 1 / this many
+ * seconds per second, so a jump (window / table / wavetable switch, a table replaced
+ * under the voice) crossfades over ~6 ms, while slow position moves track exactly.
+ */
+export const CROSSFADE_SEC = 0.006;
 
 class VoiceRuntime {
   params: VoiceParams;
@@ -110,10 +117,13 @@ export class SynthEngine {
   private toNext = 0;
   private ctrlCountdown = 0;
   private readonly bendCoef: number;
+  /** Largest weight change per control block (see CROSSFADE_SEC). */
+  private readonly slew: number;
 
   constructor(sampleRate: number) {
     this.sampleRate = sampleRate;
     this.bendCoef = 1 - Math.exp(-CONTROL_BLOCK / (BEND_SMOOTH_SEC * sampleRate));
+    this.slew = CONTROL_BLOCK / (CROSSFADE_SEC * sampleRate);
   }
 
   // ---- state commands (called between process() calls) ----
@@ -390,7 +400,12 @@ export class SynthEngine {
     v.indexY = mix.y;
     if (v.step) {
       v.targetId = mix.ids[0];
-      if (v.heldId < 0) v.heldId = v.targetId;
+      if (v.heldId < 0) {
+        // Switched from Blend while sounding: keep the current mix until the phase wraps
+        // (renderVoiceSample takes the target there), so the change is click-free.
+        if (v.n > 0) return;
+        v.heldId = v.targetId;
+      }
       // Late-arriving table: pick it up; otherwise keep the previous pointer.
       const t = this.tables.get(v.heldId);
       if (t) v.heldTable = t;
@@ -441,6 +456,13 @@ export class SynthEngine {
       v.nW0[m] = first ? w : 0;
       v.nW1[m] = w;
       m++;
+    }
+    // Slew-limit: scale every entry's step by the same factor (the weights keep summing to 1).
+    let maxDiff = 0;
+    for (let k = 0; k < m; k++) maxDiff = Math.max(maxDiff, Math.abs(v.nW1[k] - v.nW0[k]));
+    if (maxDiff > this.slew) {
+      const f = this.slew / maxDiff;
+      for (let k = 0; k < m; k++) v.nW1[k] = v.nW0[k] + (v.nW1[k] - v.nW0[k]) * f;
     }
     this.swap(v, m);
   }

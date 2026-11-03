@@ -82,7 +82,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
     dirty = true;
   };
 
-  const canvas = h('canvas', { id: 'wavetable-overview', 'aria-label': 'Wavetable view; click a slot to select its table' });
+  const canvas = h('canvas', { id: 'wavetable-overview', 'aria-label': 'Wavetable view; click a slot to select its waveform' });
   const box = h('div', { class: 'wt-box' }, canvas);
   const sumName = h('b', { id: 'wt-name' });
   const sumShape = h('span', { id: 'wt-shape' });
@@ -298,8 +298,9 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
       const p = voicePositions(model, bridge, v);
       let px: number;
       if (isRows) {
+        // As the engine: slot u·(L − 1) of the nearest row (Step: the chosen slot).
         const L = Math.max(1, wt.rows[Math.round(m.y)]?.length ?? 1);
-        px = ox + (wt.interp === 'step' ? (m.x + 0.5) / L : p.x) * L * cw;
+        px = ox + ((wt.interp === 'step' ? m.x : p.x * (L - 1)) + 0.5) * cw;
       } else px = ox + (m.x + 0.5) * cw;
       const py = oy + (m.y + 0.5 - first) * ch;
       if (py < 0 || py > H) continue;

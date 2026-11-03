@@ -121,7 +121,10 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   line start; 2D moves to the next line's start; Rows appends a row. Wrap "next" moves
   to the next row / column (−x / −y: the previous one), cycling existing rows. A
   stopped head drops writes. Edits return an index map along the follow axis (1D slots,
-  Rows rows) for voice windows. Unit-tested for every combination.
+  Rows rows) for voice windows. On a fixed 1D, −x insert mirrors +x (the first slot
+  drops out). Stop + on-wrap "next" moves on line by line and stops at the end of the
+  grid / the last row. Rows replace + wrap / stop + new row is coerced to grow (an empty
+  new row can only be grown). Unit-tested for every combination.
 - **Adds** (`AppModel.addTables`): write into every live wavetable, then pin, then evict
   from the timeline, then drop evicted ids from the (non-pinning) wavetables, then voice
   windows follow; one undo snapshot covers all of it (timeline, wavetables, windows).
@@ -190,10 +193,14 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
   block resolves the voice's mix (≤ 4 tables + weights, `resolveMix`, the same code
   the UI uses) and every table's weight ramps linearly across the block from its
   previous weight (0 for a table entering the mix) to its new one (0 for one leaving),
-  so window / table / wavetable switches crossfade over one block instead of clicking,
+  with every step slew-limited (all weights scaled together, so they keep summing to 1)
+  so a jump — window / table / wavetable switch, a table replaced under the voice —
+  crossfades over ~6 ms (`CROSSFADE_SEC`) while slow position moves track exactly,
   and an eviction re-index changes nothing (weights are computed relative to the
   window start). Step holds one table until the phase wraps. Tables that haven't
   arrived yet drop out of the mix (renormalised); with none, the previous mix holds.
+  Switching a sounding voice's wavetable from Blend to Step keeps the mix until the
+  phase wraps.
   Removed voices fade out with a 12 ms release before being freed.
 - The audio thread never runs an FFT or allocates per sample. LFO/window/mip
   resolution runs every 64 samples (fixed per-voice arrays of 8 live tables).
