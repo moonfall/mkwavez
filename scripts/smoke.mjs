@@ -20,6 +20,9 @@
 // doesn't overflow; the CC map has Position Y. Keyboard shortcuts: Space (also with a button
 // focused; types in text fields), [ / ], M, Shift+←/→ moves in the Timeline (ends no-op,
 // one undo step, ignored in text fields); no UI text says "table" (only "wavetable").
+// Sequence timing: step length selector (default 1/8), "16 steps · 1/8 · 2 bars", beat /
+// bar marks on the grid follow the step length, the playhead steps twice as fast at 1/16,
+// the bar.beat readout advances; the step length survives a reload.
 // Wavetables editor: expand / collapse over the
 // Generate row (fits 1440×900 / 1180×820, 390px no overflow), + 1D / 2D / Rows, 2D resize,
 // duplicate a built-in, rename, a Live wavetable receives Seed adds, Timeline drags (mouse
@@ -100,9 +103,10 @@ async function run(label, url, browser) {
   await page.click('#play');
   await page.waitForFunction(() => document.body.dataset.audio === 'running', null, { timeout: 10000 });
   assert(true, 'audio worklet running');
-  await page.waitForFunction(() => Number(document.body.dataset.step) >= 4, null, { timeout: 10000 });
+  await page.waitForFunction(() => Number(document.body.dataset.tick) >= 24, null, { timeout: 10000 });
   assert(true, 'sequencer steps advance');
   await voiceTabChecks(page);
+  await sequenceTimingChecks(page);
   await collapsedRedrawChecks(page);
   await page.click('#seed-add-shown');
   await page.waitForFunction(
@@ -643,6 +647,131 @@ async function voiceTabChecks(page) {
   const after = await M(() => window.mkwavez.model.sequences.find((s) => s.voiceId === 1).steps[1]);
   assert(before !== after && after === 0, 'grid click toggles a step of the selected voice’s sequence');
   await page.click('#undo');
+}
+
+/**
+ * Sequence timing (while playing, V1's sequence): the step length selector defaults to 1/8,
+ * the header reads "16 steps · 1/8 · 2 bars", the grid marks beats / bars for the step
+ * length, the playhead follows the clock tick (twice as fast at 1/16), the bar.beat readout
+ * advances; the header fits at 1440×900 / 1180×820 and 390px doesn't overflow.
+ */
+async function sequenceTimingChecks(page) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  await page.$eval('#seq-grid', (c) => c.scrollIntoView({ block: 'center' }));
+  const lens = await M(() => window.mkwavez.model.sequences.map((s) => s.stepLength));
+  assert(lens.length === 3 && lens.every((l) => l === '1/8'), `every default sequence steps in 1/8 (${lens.join()})`);
+  const opts = await page.$$eval('#seq-step-length option', (os) => os.map((o) => o.value).join());
+  assert(opts === '1/4,1/8,1/16,1/8T,1/16T' && (await page.inputValue('#seq-step-length')) === '1/8', `step length selector present, 1/8 selected (${opts})`);
+  const grid = () =>
+    M(() => {
+      const g = document.querySelector('#seq-grid');
+      return {
+        len: g.dataset.stepLength,
+        beats: g.dataset.beats,
+        bars: g.dataset.bars,
+        step: Number(g.dataset.step),
+        tick: Number(g.dataset.tick),
+        length: Number(g.dataset.length),
+        pos: document.querySelector('#seq-pos').textContent,
+        summary: document.querySelector('#seq-summary').textContent,
+      };
+    });
+  /** Playhead steps per second, from the drawn grid over ~1.5 s. */
+  const rate = () =>
+    M(
+      () =>
+        new Promise((res) => {
+          const g = document.querySelector('#seq-grid');
+          const len = Number(g.dataset.length);
+          let last = Number(g.dataset.step);
+          let sum = 0;
+          const t0 = performance.now();
+          const f = () => {
+            const s = Number(g.dataset.step);
+            if (s >= 0 && last >= 0) sum += (s - last + len) % len;
+            last = s;
+            const dt = performance.now() - t0;
+            if (dt < 1500) requestAnimationFrame(f);
+            else res(sum / (dt / 1000));
+          };
+          requestAnimationFrame(f);
+        }),
+    );
+  /** Bar-line pixel (between steps k-1 and k) vs an ordinary step boundary's. */
+  const lineAt = (k) =>
+    M((k) => {
+      const c = document.querySelector('#seq-grid');
+      const len = Number(c.dataset.length);
+      const cw = (c.clientWidth - 30) / len;
+      const sx = c.width / c.clientWidth;
+      const x = Math.round(30 + k * cw) - 0.5;
+      return Array.from(c.getContext('2d').getImageData(Math.floor(x * sx), Math.floor(c.height / 2), 1, 1).data).join();
+    }, k);
+  const barBeat = (step, ticks) => `${Math.floor((step * ticks) / 48) + 1}.${Math.floor(((step * ticks) % 48) / 12) + 1}`;
+
+  let g = await grid();
+  assert(g.summary === '16 steps · 1/8 · 2 bars', `header shows the length in bars (“${g.summary}”)`);
+  assert(g.len === '1/8' && g.beats === '0,2,4,6,8,10,12,14' && g.bars === '0,8', `1/8 grid: beats every 2 steps, bar line at 8 (beats ${g.beats}; bars ${g.bars})`);
+  assert((await lineAt(8)) !== (await lineAt(4)), 'bar line drawn between bars');
+  assert(g.step === Math.floor(g.tick / 6) % 16 && g.pos === barBeat(g.step, 6), `playhead step ${g.step} = tick ${g.tick} / 6, readout ${g.pos}`);
+  const pos0 = g.pos;
+  await page.waitForFunction((p) => document.querySelector('#seq-pos').textContent !== p, pos0, { timeout: 3000 });
+  g = await grid();
+  assert(/^[12]\.[1-4]$/.test(g.pos) && g.pos !== pos0, `bar.beat readout advances (${pos0} → ${g.pos})`);
+  const r8 = await rate();
+
+  await page.selectOption('#seq-step-length', '1/16');
+  assert((await M(() => window.mkwavez.model.sequences.find((s) => s.voiceId === 1).stepLength)) === '1/16', 'selector sets the sequence’s step length');
+  await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.stepLength === '1/16', null, { timeout: 3000 });
+  g = await grid();
+  assert(g.summary === '16 steps · 1/16 · 1 bar' && g.beats === '0,4,8,12' && g.bars === '0', `1/16: “${g.summary}”, beats every 4 steps (${g.beats}), one bar`);
+  assert(g.step === Math.floor(g.tick / 3) % 16 && g.pos === barBeat(g.step, 3), `1/16 playhead step ${g.step} = tick ${g.tick} / 3, readout ${g.pos}`);
+  const r16 = await rate();
+  assert(r16 / r8 > 1.6 && r16 / r8 < 2.4, `1/16 steps twice as fast as 1/8 (${r8.toFixed(1)} → ${r16.toFixed(1)} steps/s)`);
+
+  await page.selectOption('#seq-step-length', '1/8T');
+  await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.stepLength === '1/8T', null, { timeout: 3000 });
+  g = await grid();
+  assert(g.summary === '16 steps · 1/8T · 1 bar 1⅓ beats' && g.beats === '0,3,6,9,12,15' && g.bars === '0,12', `1/8T: “${g.summary}”, beats every 3 steps, bar line at 12`);
+  await page.selectOption('#seq-step-length', '1/4');
+  await page.waitForFunction(() => document.querySelector('#seq-grid').dataset.stepLength === '1/4', null, { timeout: 3000 });
+  g = await grid();
+  assert(g.summary === '16 steps · 1/4 · 4 bars' && g.beats.split(',').length === 16 && g.bars === '0,4,8,12', `1/4: every step a beat, bar lines every 4 (“${g.summary}”)`);
+
+  // Layout with a crowded header (muted target, two sequences, a long length).
+  await M(() => {
+    const m = window.mkwavez.model;
+    m.updateSequence(m.sequences.find((s) => s.voiceId === 1).id, { stepLength: '1/16T', length: 61 });
+    m.updateVoice(1, { mute: true });
+    m.addSequence(1);
+  });
+  for (const [w, hh] of [
+    [1440, 900],
+    [1180, 820],
+    [390, 844],
+  ]) {
+    await page.setViewportSize({ width: w, height: hh });
+    await page.waitForTimeout(200);
+    const r = await M(() => {
+      const head = document.querySelector('#sec-sequences .panel-head');
+      const sum = document.querySelector('#seq-summary').getBoundingClientRect();
+      const kids = [...document.querySelectorAll('#sec-sequences .panel-tools > *')].map((e) => e.getBoundingClientRect()).filter((b) => b.width);
+      const overlap = kids.some((b) => b.right > sum.left + 0.5 && b.left < sum.right - 0.5 && b.bottom > sum.top + 0.5 && b.top < sum.bottom - 0.5);
+      return { fits: head.scrollWidth <= head.clientWidth + 1, overlap, page: document.documentElement.scrollWidth <= innerWidth };
+    });
+    const screen = w < 900 ? r.page : await fitsScreen(page);
+    assert(r.fits && !r.overlap && screen, `${w}×${hh}: crowded Sequence header fits without overlap${w < 900 ? ', no overflow' : ', one screen'}`);
+  }
+  await M(() => {
+    const m = window.mkwavez.model;
+    const own = m.sequences.filter((s) => s.voiceId === 1);
+    m.removeSequence(own[1].id);
+    m.updateSequence(own[0].id, { stepLength: '1/8', length: 16 });
+    m.updateVoice(1, { mute: false });
+  });
+  await page.$eval('#seq-grid', (c) => c.scrollIntoView({ block: 'center' }));
+  await page.waitForFunction(() => document.querySelector('#seq-summary').textContent === '16 steps · 1/8 · 2 bars', null, { timeout: 3000 });
+  assert((await page.inputValue('#seq-step-length')) === '1/8', 'back to 1/8');
 }
 
 /** A collapsed panel (phone column) stops redrawing while playing, and redraws when expanded. */
@@ -2105,7 +2234,7 @@ async function sessionChecks(label, url, browser) {
     m.updateVoice(2, { mute: false, position: 0.42, lfoDepth: 0.1 });
     m.addVoice({ wavetableId: 3, windowStart: 1, windowEnd: 4, windowStartY: 0, windowEndY: 1, positionY: 0.8 });
     m.setWavetableInterp(3, 'step');
-    m.updateSequence(1, { gate: 0.7, length: 12 });
+    m.updateSequence(1, { gate: 0.7, length: 12, stepLength: '1/16' });
     m.select(m.timeline[3].id);
     ui.setVoice(2);
   });
@@ -2148,6 +2277,14 @@ async function sessionChecks(label, url, browser) {
     'reload restores the Generate tab and the voice tab',
   );
   assert((await page.inputValue('#bpm')) === '111' && (await E(() => window.mkwavez.model.undoDepth)) === 0, 'BPM control shows the restored tempo; undo history starts empty');
+  await page.click('#voice-tab-1');
+  assert(
+    (await E(() => window.mkwavez.model.sequences.find((s) => s.id === 1).stepLength)) === '1/16' &&
+      (await page.inputValue('#seq-step-length')) === '1/16' &&
+      (await page.textContent('#seq-summary')) === '12 steps · 1/16 · 3 beats',
+    'reload keeps the step length (selector and “12 steps · 1/16 · 3 beats”)',
+  );
+  await page.click('#voice-tab-2');
   assert((await E(() => window.mkwavez.model.nextWavetableId)) === nextWt, 'wavetable id counter restored (deleted ids not reused)');
   await page.click('#wt-edit');
   await page.click(`#wte-item-${g2}`);
@@ -2157,7 +2294,7 @@ async function sessionChecks(label, url, browser) {
   // Playback after restore.
   await page.click('#play');
   await page.waitForFunction(() => document.body.dataset.audio === 'running', null, { timeout: 10000 });
-  await page.waitForFunction(() => window.mkwavez.bridge.workletTableCount === window.mkwavez.model.timeline.length && Number(document.body.dataset.step) >= 2, null, { timeout: 10000 });
+  await page.waitForFunction(() => window.mkwavez.bridge.workletTableCount === window.mkwavez.model.timeline.length && Number(document.body.dataset.tick) >= 12, null, { timeout: 10000 });
   assert(true, 'restored session plays (worklet holds every waveform, sequencer runs)');
 
   // Export.
