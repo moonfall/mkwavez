@@ -139,6 +139,8 @@ export class WebMidi {
     for (const [id, port] of this.open) {
       if (want.get(id) === port) continue;
       port.onmidimessage = null;
+      // Release the port: some (Windows) drivers allow one client per device.
+      if (port.state === 'connected') port.close?.().catch(() => {});
       this.open.delete(id);
       this.onSourceLost?.(this.sources.get(id) ?? 0);
     }

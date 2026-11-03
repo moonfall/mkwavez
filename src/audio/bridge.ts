@@ -8,6 +8,7 @@ import { emptyStatus, type EngineStatus } from '../core/engine/engine';
 import type { MidiVoiceEvent } from '../core/midi';
 import { buildMipSet } from '../core/mipmap';
 import type { TableId, WaveTable } from '../core/table';
+import type { VoiceParams } from '../core/voice';
 import { playbackIds } from '../core/wavetable';
 import { PROCESSOR_NAME, type FromWorklet, type ToWorklet } from './protocol';
 import workletUrl from './worklet.ts?worker&url';
@@ -233,6 +234,11 @@ export class AudioBridge {
    */
   sendMidi(events: readonly MidiVoiceEvent[]): void {
     if (events.length) this.post({ type: 'midi', events: [...events] });
+  }
+
+  /** Light per-voice param change (MIDI CCs); the model's voice/set follows at frame rate. */
+  patchVoice(id: number, patch: Partial<VoiceParams>): void {
+    if (this.sentVoices.has(id)) this.post({ type: 'voice/patch', id, patch });
   }
 
   private syncTransport(): void {

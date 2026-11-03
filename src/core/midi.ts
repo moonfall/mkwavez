@@ -11,9 +11,19 @@ import type { VoiceParams } from './voice';
 export const BEND_RANGE_SEMITONES = 2;
 export const CC_MOD_WHEEL = 1;
 export const CC_ALL_SOUND_OFF = 120;
+export const CC_RESET_ALL_CONTROLLERS = 121;
 export const CC_ALL_NOTES_OFF = 123;
 /** Highest assignable controller (120..127 are channel mode messages). */
 export const CC_MAX_ASSIGNABLE = 119;
+
+/**
+ * Controllers learn ignores: bank select (0 / 32), data entry (6 / 38) and NRPN / RPN
+ * (96..101) arrive as side effects of program and parameter changes, not knob moves.
+ * They can still be typed in. Channel mode messages (120..127) are never assignable.
+ */
+export function isLearnableCc(cc: number): boolean {
+  return cc >= 0 && cc <= CC_MAX_ASSIGNABLE && cc !== 0 && cc !== 32 && cc !== 6 && cc !== 38 && !(cc >= 96 && cc <= 101);
+}
 /** LFO rate range (Hz) of the voice panel slider; CCs map onto it exponentially. */
 export const LFO_RATE_MIN = 0.02;
 export const LFO_RATE_MAX = 4;
@@ -112,8 +122,12 @@ export function targetVoice(channel: number, r: MidiRouting): number | null {
 export class MidiRouter {
   /** key(source, channel, note) → voice id. */
   private held = new Map<number, number>();
-  /** Voice id → source that last bent it (to recentre on device loss). */
-  private bent = new Map<number, number>();
+  /** bendKey(source, channel) → the voice that channel's wheel is bending, and by how much. */
+  private bent = new Map<number, { voiceId: number; semitones: number }>();
+
+  private static bendKey(source: number, channel: number): number {
+    return source * 16 + channel - 1;
+  }
 
   private static key(source: number, channel: number, note: number): number {
     return source * 2048 + (channel - 1) * 128 + note;
@@ -149,18 +163,59 @@ export class MidiRouter {
         return [{ type: 'noteOff', voiceId: v, note: msg.note }];
       }
       case 'bend': {
+        const k = MidiRouter.bendKey(source, msg.channel);
+        const out: MidiRouterEvent[] = [];
+        const prev = this.bent.get(k);
         const v = targetVoice(msg.channel, routing);
-        if (v === null) return [];
-        if (msg.value === 0) this.bent.delete(v);
-        else this.bent.set(v, source);
-        return [{ type: 'bend', voiceId: v, semitones: bendSemitones(msg.value) }];
+        // The channel now plays another voice: recentre the one it was bending.
+        if (prev && prev.voiceId !== v) out.push({ type: 'bend', voiceId: prev.voiceId, semitones: 0 });
+        this.bent.delete(k);
+        if (v === null) return out;
+        const semitones = bendSemitones(msg.value);
+        if (semitones !== 0) this.bent.set(k, { voiceId: v, semitones });
+        out.push({ type: 'bend', voiceId: v, semitones });
+        return out;
       }
       case 'cc': {
         if (msg.cc === CC_ALL_NOTES_OFF || msg.cc === CC_ALL_SOUND_OFF) return this.channelOff(msg.channel, routing, source);
+        if (msg.cc === CC_RESET_ALL_CONTROLLERS) return this.resetControllers(msg.channel, source);
         const v = targetVoice(msg.channel, routing);
         return v === null ? [] : [{ type: 'cc', voiceId: v, cc: msg.cc, value: msg.value }];
       }
     }
+  }
+
+  /**
+   * Reset all controllers (CC 121): recentre the channel's pitch bend. Mapped CCs set
+   * stored voice parameters (like moving a slider), so they are not reset.
+   */
+  private resetControllers(channel: number, source: number): MidiVoiceEvent[] {
+    const k = MidiRouter.bendKey(source, channel);
+    const prev = this.bent.get(k);
+    if (!prev) return [];
+    this.bent.delete(k);
+    return [{ type: 'bend', voiceId: prev.voiceId, semitones: 0 }];
+  }
+
+  /**
+   * Routing changed (Omni toggled, another voice tab selected, voices removed): a wheel
+   * held off-centre moves with its channel — the old voice is recentred, the new target
+   * gets the same bend. Notes stay on the voice they started on.
+   */
+  retarget(routing: MidiRouting): MidiVoiceEvent[] {
+    const out: MidiVoiceEvent[] = [];
+    for (const [k, b] of [...this.bent]) {
+      const v = targetVoice((k % 16) + 1, routing);
+      if (v === b.voiceId) continue;
+      out.push({ type: 'bend', voiceId: b.voiceId, semitones: 0 });
+      if (v === null) {
+        this.bent.delete(k);
+      } else {
+        this.bent.set(k, { voiceId: v, semitones: b.semitones });
+        out.push({ type: 'bend', voiceId: v, semitones: b.semitones });
+      }
+    }
+    return out;
   }
 
   /** All-notes-off on a channel: release its held notes and clear the voice it plays now. */
@@ -188,10 +243,10 @@ export class MidiRouter {
       this.held.delete(k);
       out.push({ type: 'noteOff', voiceId: v, note: k % 128 });
     }
-    for (const [v, s] of [...this.bent]) {
-      if (s !== source) continue;
-      this.bent.delete(v);
-      out.push({ type: 'bend', voiceId: v, semitones: 0 });
+    for (const [k, b] of [...this.bent]) {
+      if (Math.floor(k / 16) !== source) continue;
+      this.bent.delete(k);
+      out.push({ type: 'bend', voiceId: b.voiceId, semitones: 0 });
     }
     return out;
   }
@@ -199,7 +254,7 @@ export class MidiRouter {
   /** MIDI turned off / input switched: release everything and recentre all bends. */
   releaseAll(): MidiVoiceEvent[] {
     const out: MidiVoiceEvent[] = this.voicesOff(new Set(this.held.values()));
-    for (const v of this.bent.keys()) out.push({ type: 'bend', voiceId: v, semitones: 0 });
+    for (const v of new Set([...this.bent.values()].map((b) => b.voiceId))) out.push({ type: 'bend', voiceId: v, semitones: 0 });
     this.bent.clear();
     return out;
   }

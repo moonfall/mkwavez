@@ -135,7 +135,8 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
 
 - Main → worklet (`audio/protocol.ts`): `tables/add` (packed mip sets, transferred),
   `tables/remove`, `wavetable/set` (Int32Array of ids), `voice/set|remove`,
-  `sequence/set|remove`, `transport`, `midi` (routed note / bend events).
+  `sequence/set|remove`, `transport`, `midi` (routed note / bend events), `voice/patch`
+  (a few params of one voice, from MIDI CCs).
 - Worklet → main: `ready`, `status` (sequencer step, per-voice position/index/env,
   table count), `error`.
 - Everything the bridge queues within one task is sent as a single `batch` message,
@@ -187,7 +188,8 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
 MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► MidiRouter.route
    (browser/webMidi.ts)        (app/midi.ts)                         │
         notes, bend, all-notes-off ─► bridge.sendMidi ─► 'midi' op ─► SynthEngine.applyMidi
-        CCs ─► ccPatch(CC map) ─► model.updateVoice ─► 'voices' ─► voice/set (+ sliders)
+        CCs ─► ccPatch(CC map) ─► bridge.patchVoice ─► 'voice/patch' ─► SynthEngine.patchVoice
+               └─► pending per voice ─► (≤ 16 ms timer) model.updateVoice ─► 'voices' ─► voice/set, sliders
 ```
 
 - Straight from the MIDI event handler, never through the UI frame loop; events join that
@@ -199,8 +201,13 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   remembers where each (source, channel, note) went, so a note-off always reaches the
   voice its note-on went to, even if Omni / the selected tab changed meanwhile.
   CC 120 / 123 release the channel's notes; losing an input (unplug, input switch, Off)
-  releases that source's notes and recentres the bend it applied.
-- Engine, per voice: a `NoteStack` (16 keys, fixed arrays). Note-on pushes and retriggers
+  releases that source's notes and recentres the bend it applied. Bend is tracked per
+  (source, channel): when the channel's target changes (Omni toggled, another tab, a
+  voice removed) the old voice is recentred and the new one gets the held bend. CC 121
+  (reset all controllers) recentres the channel's bend; mapped CCs are stored params, so
+  they are not reset. Deselected / lost inputs are `close()`d (exclusive drivers).
+- Engine, per voice: a `NoteStack` (16 keys, fixed arrays, refcounted so the same note
+  held from two channels in Omni stays held until both release). Note-on pushes and retriggers
   the envelope (from its current level); releasing the sounding key returns to the most
   recent held key without retrigger (legato, at that key's velocity); releasing the last
   key releases the envelope. Frequency = `440·2^((n−69)/12 + octave)`. Velocity gain
@@ -212,8 +219,13 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   Transport stop releases only voices without held keys. Muted voices stay silent.
 - CCs change voice params (so the UI follows and they persist like a slider move; not
   undoable): position / LFO depth / level linear 0..1, LFO rate exponential 0.02–4 Hz.
+  Each move goes straight to the engine as a light `voice/patch`; the model update is
+  coalesced per voice and applied at most once per ~16 ms tick (a knob sweep = one
+  'voices' event per frame, not per message). Any other model voice change first folds
+  the pending values in, so a full voice/set never carries stale CC values.
   A controller drives one parameter (assigning moves it); 120–127 can't be assigned.
-  Learn assigns the next controller move (and applies it).
+  Learn assigns the next controller move (and applies it); it ignores bank select (0/32),
+  data entry (6/38) and (N)RPN (96–101), which can still be typed in.
 
 ## Playback semantics
 

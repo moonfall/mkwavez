@@ -85,7 +85,9 @@ switches (the choice is remembered).
   on its next step once all keys are up); stopping the transport doesn't cut held keys.
   All-notes-off / all-sound-off (CC 123 / 120), unplugging the device or switching input
   release held notes. CC map: Position (CC 1, mod wheel, by default), LFO depth, LFO rate,
-  Level — type a CC number or press Learn and move a control; remembered. Audio starts
+  Level — type a CC number or press Learn and move a control (bank select / RPN / NRPN
+  are ignored while learning); remembered. A held pitch bend follows Omni to a newly
+  selected voice; CC 121 recentres it. Audio starts
   when you pick an input, or on your first click if the input was remembered (browsers
   only start audio on a gesture). Unsupported browsers / denied permission show a short
   status; the rest of the app is unaffected.

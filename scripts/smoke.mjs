@@ -1226,13 +1226,23 @@ async function midiChecks(label, url, browser) {
   await fire([0xb0, 123, 0]);
   await waitNote(1, -1, 'all-notes-off (CC 123) releases held notes');
 
-  await fire([0xb0, 1, 127]);
-  assert(
-    (await E(() => window.mkwavez.model.voice(1).position)) === 1 && (await page.inputValue('#voice-position')) === '1',
-    'CC1 (mod wheel) moves voice 1 position; the slider follows',
-  );
+  // A knob sweep: the engine gets each move (voice/patch); the model / sliders catch up per frame.
+  const waitParam = (voice, key, value, msg) =>
+    page
+      .waitForFunction(([v, k, x]) => window.mkwavez.model.voice(v)[k] === x, [voice, key, value], { timeout: 2000 })
+      .then(() => assert(true, msg));
+  const sweep = await E(() => {
+    let events = 0;
+    const off = window.mkwavez.model.on('voices', () => events++);
+    for (let v = 0; v <= 127; v++) window.__midi.fire('in-1', [0xb0, 1, v]);
+    return new Promise((res) => setTimeout(() => (off(), res(events)), 100));
+  });
+  assert(sweep >= 1 && sweep <= 3, `a 128-step CC sweep makes ${sweep} model update(s), not 128`);
+  await waitParam(1, 'position', 1, 'CC1 (mod wheel) moves voice 1 position');
+  await page.waitForFunction(() => document.querySelector('#voice-position').value === '1', null, { timeout: 2000 });
+  assert(true, 'the position slider follows');
   await fire([0xb0, 1, 0]);
-  assert((await E(() => window.mkwavez.model.voice(1).position)) === 0, 'CC1 at 0 → position 0');
+  await waitParam(1, 'position', 0, 'CC1 at 0 → position 0');
 
   // Omni → the selected voice tab.
   await page.click('#voice-tab-3');
@@ -1252,9 +1262,9 @@ async function midiChecks(label, url, browser) {
   await fire([0xb2, 74, 0]);
   await page.waitForFunction(() => document.querySelector('#midi-cc-lfoDepth').value === '74', null, { timeout: 2000 });
   assert((await page.getAttribute('#midi-learn-lfoDepth', 'aria-pressed')) === 'false', 'learn assigns CC 74 to LFO depth and disarms');
-  assert((await E(() => window.mkwavez.model.voice(3).lfoDepth)) === 0, 'the learned move applies (V3 LFO depth 0)');
+  await waitParam(3, 'lfoDepth', 0, 'the learned move applies (V3 LFO depth 0)');
   await fire([0xb2, 74, 127]);
-  assert((await E(() => window.mkwavez.model.voice(3).lfoDepth)) === 1, 'learned CC drives LFO depth');
+  await waitParam(3, 'lfoDepth', 1, 'learned CC drives LFO depth');
   await page.fill('#midi-cc-level', '7');
   await page.press('#midi-cc-level', 'Enter');
   await page.keyboard.press('Escape');

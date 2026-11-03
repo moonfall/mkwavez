@@ -14,6 +14,8 @@ export type ToWorklet =
   | { type: 'wavetable/remove'; id: number }
   | { type: 'voice/set'; voice: VoiceParams }
   | { type: 'voice/remove'; id: number }
+  /** A few params of one voice (MIDI CCs), without resending the whole voice. */
+  | { type: 'voice/patch'; id: number; patch: Partial<VoiceParams> }
   | { type: 'sequence/set'; sequence: SequenceData }
   | { type: 'sequence/remove'; id: number }
   | { type: 'transport'; playing: boolean; bpm: number }

@@ -215,6 +215,7 @@ export class SynthEngine {
     const v = this.findVoice(voiceId);
     if (!v) return;
     const wasTop = v.notes.top === note;
+    // Still held by another channel / input (Omni): nothing changes.
     if (!v.notes.remove(note)) return;
     if (!v.notes.size) {
       v.env.gateOff();
@@ -232,6 +233,15 @@ export class SynthEngine {
       v.notes.clear();
       v.env.gateOff();
     }
+  }
+
+  /**
+   * MIDI-controller parameter change (position, LFO, level): merged into the voice's
+   * params without a full voice/set (the main thread's model catches up at frame rate).
+   */
+  patchVoice(voiceId: number, patch: Partial<VoiceParams>): void {
+    const v = this.findVoice(voiceId);
+    if (v) v.params = { ...v.params, ...patch, id: v.params.id };
   }
 
   /** Pitch bend in semitones (smoothed: no zipper noise). Applies to sequencer notes too. */

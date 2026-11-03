@@ -6,16 +6,18 @@
  */
 import {
   assignCc,
-  CC_MAX_ASSIGNABLE,
   ccPatch,
   DEFAULT_CC_MAP,
+  isLearnableCc,
   MidiRouter,
   normalizeCcMap,
   parseMidi,
   type CcMap,
   type CcParam,
+  type MidiRouting,
   type MidiVoiceEvent,
 } from '../core/midi';
+import type { VoiceParams } from '../core/voice';
 import type { AppModel } from './model';
 
 /** Input choice: 'off', 'all', or an input's id. */
@@ -38,6 +40,12 @@ export interface SettingsStore {
 }
 
 export const MIDI_STORAGE_KEY = 'mkwavez.midi';
+
+/** Where routed MIDI goes: note / bend events and light param patches, both to the engine. */
+export interface MidiOutput {
+  notes(events: readonly MidiVoiceEvent[]): void;
+  params(voiceId: number, patch: Partial<VoiceParams>): void;
+}
 
 /** 'settings' = input / Omni / CC map changed; 'learn' = learn target changed; 'activity' = a message arrived. */
 export type MidiTopic = 'settings' | 'learn' | 'activity';
@@ -63,13 +71,18 @@ export class MidiController {
   /** Parameter waiting for a controller move (learn mode), or null. */
   learn: CcParam | null = null;
   private listeners = new Map<MidiTopic, Set<() => void>>();
+  /** CC patches not yet applied to the model (per voice), flushed once per `schedule` tick. */
+  private pending = new Map<number, Partial<VoiceParams>>();
+  private flushScheduled = false;
 
   constructor(
     private model: AppModel,
-    private sink: (events: readonly MidiVoiceEvent[]) => void,
+    private out: MidiOutput,
     /** The voice Omni plays (the selected voice tab). */
     private omniVoice: () => number | null,
     private store?: SettingsStore,
+    /** Runs the model catch-up later (browser: about once per frame). */
+    private schedule: (fn: () => void) => void = queueMicrotask,
   ) {
     let raw: string | null = null;
     try {
@@ -78,6 +91,11 @@ export class MidiController {
       /* storage blocked */
     }
     this.settings = parseSettings(raw);
+    // Any other voice change resends the model's voices; fold pending CC values in right
+    // away so that batch ends with them (never a stale value between ticks).
+    model.on('voices', () => {
+      if (this.pending.size) this.flush();
+    });
   }
 
   on(topic: MidiTopic, fn: () => void): () => void {
@@ -105,35 +123,57 @@ export class MidiController {
     const msg = parseMidi(data);
     if (!msg) return;
     this.emit('activity');
-    if (msg.kind === 'cc' && this.learn && msg.cc <= CC_MAX_ASSIGNABLE) {
+    if (msg.kind === 'cc' && this.learn && isLearnableCc(msg.cc)) {
       this.setCc(this.learn, msg.cc);
       this.setLearn(null);
       // Fall through: the move that was learned also applies.
     }
-    const evs = this.router.route(
-      msg,
-      { omni: this.settings.omni, selectedVoice: this.omniVoice(), voiceIds: this.model.voices.map((v) => v.id) },
-      source,
-    );
-    const out: MidiVoiceEvent[] = [];
-    for (const ev of evs) {
+    const routing = this.routing();
+    const out: MidiVoiceEvent[] = this.router.retarget(routing);
+    for (const ev of this.router.route(msg, routing, source)) {
       if (ev.type !== 'cc') {
         out.push(ev);
         continue;
       }
       const patch = ccPatch(this.settings.cc, ev.cc, ev.value);
-      if (patch) this.model.updateVoice(ev.voiceId, patch);
+      if (!patch) continue;
+      // The engine hears the knob now; the model (sliders, voice/set) catches up once per tick.
+      this.out.params(ev.voiceId, patch);
+      this.pending.set(ev.voiceId, { ...this.pending.get(ev.voiceId), ...patch });
+      if (!this.flushScheduled) {
+        this.flushScheduled = true;
+        this.schedule(() => this.flush());
+      }
     }
-    if (out.length) this.sink(out);
+    if (out.length) this.out.notes(out);
+  }
+
+  /** Apply pending CC patches to the model (one 'voices' event for the lot). */
+  flush(): void {
+    this.flushScheduled = false;
+    if (!this.pending.size) return;
+    const pending = this.pending;
+    this.pending = new Map();
+    for (const [id, patch] of pending) if (this.model.voice(id)) this.model.updateVoice(id, patch);
+  }
+
+  private routing(): MidiRouting {
+    return { omni: this.settings.omni, selectedVoice: this.omniVoice(), voiceIds: this.model.voices.map((v) => v.id) };
+  }
+
+  /** The selected voice or the voice list changed: move a held pitch bend with its channel. */
+  retarget(): void {
+    const evs = this.router.retarget(this.routing());
+    if (evs.length) this.out.notes(evs);
   }
 
   /** An input disconnected (or was deselected): release its notes. */
   sourceLost(source: number): void {
-    this.sink(this.router.releaseSource(source));
+    this.out.notes(this.router.releaseSource(source));
   }
 
   releaseAll(): void {
-    this.sink(this.router.releaseAll());
+    this.out.notes(this.router.releaseAll());
   }
 
   setInput(input: MidiInputChoice, inputName = ''): void {
@@ -147,6 +187,7 @@ export class MidiController {
     // Held notes stay tracked to the voice they went to; their note-offs still arrive there.
     this.settings = { ...this.settings, omni };
     this.save();
+    this.retarget();
   }
 
   setCc(param: CcParam, cc: number): void {

@@ -45,10 +45,17 @@ model.select(model.timeline[0].id);
 model.clearUndo();
 
 // ---- MIDI: input events go straight to the router and the worklet (not via the frame loop) ----
-const midi = new MidiController(model, (evs) => bridge.sendMidi(evs), () => ctx.ui.voiceId, {
-  get: (k) => localStorage.getItem(k),
-  set: (k, v) => localStorage.setItem(k, v),
-});
+// CC moves reach the worklet at once (voice/patch); the model and sliders catch up per frame
+// (a timer, so it also runs in a background tab).
+const midi = new MidiController(
+  model,
+  { notes: (evs) => bridge.sendMidi(evs), params: (id, patch) => bridge.patchVoice(id, patch) },
+  () => ctx.ui.voiceId,
+  { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) },
+  (fn) => setTimeout(fn, 16),
+);
+ctx.ui.onVoice(() => midi.retarget());
+model.on('voices', () => midi.retarget());
 const webMidi = new WebMidi();
 webMidi.onMessage = (data, source) => midi.handle(data, source);
 webMidi.onSourceLost = (source) => midi.sourceLost(source);

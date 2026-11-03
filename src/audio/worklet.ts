@@ -47,6 +47,9 @@ class EngineProcessor extends AudioWorkletProcessor {
       case 'voice/set':
         e.setVoice(m.voice);
         break;
+      case 'voice/patch':
+        e.patchVoice(m.id, m.patch);
+        break;
       case 'voice/remove':
         e.removeVoice(m.id);
         break;

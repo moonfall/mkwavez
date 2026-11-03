@@ -88,6 +88,18 @@ describe('NoteStack', () => {
     expect([s.size, s.topVelocity]).toEqual([1, 50]);
   });
 
+  it('the same note held twice (two channels in Omni) stays held until both release', () => {
+    const s = new NoteStack();
+    s.push(60, 100);
+    s.push(64, 100);
+    s.push(60, 90);
+    expect(s.top).toBe(60);
+    expect(s.remove(60)).toBe(false);
+    expect(s.top).toBe(60);
+    expect(s.remove(60)).toBe(true);
+    expect(s.top).toBe(64);
+  });
+
   it('drops the oldest key when full', () => {
     const s = new NoteStack();
     for (let n = 0; n < NoteStack.CAPACITY + 2; n++) s.push(40 + n, 100);
@@ -138,6 +150,27 @@ describe('MidiRouter', () => {
   it('pitch bend is routed and scaled', () => {
     const r = new MidiRouter();
     expect(r.route(parseMidi([0xe1, 127, 127])!, r3())).toEqual([{ type: 'bend', voiceId: 2, semitones: 2 }]);
+  });
+
+  it('a bend moved after the routing changed recentres the voice it bent before', () => {
+    const r = new MidiRouter();
+    r.route(parseMidi([0xe0, 127, 127])!, r3({ omni: true, selectedVoice: 2 }));
+    expect(r.route(parseMidi([0xe0, 127, 127])!, r3({ omni: true, selectedVoice: 3 }))).toEqual([
+      { type: 'bend', voiceId: 2, semitones: 0 },
+      { type: 'bend', voiceId: 3, semitones: 2 },
+    ]);
+  });
+
+  it('retarget moves a held bend; reset-all-controllers (121) recentres it', () => {
+    const r = new MidiRouter();
+    r.route(parseMidi([0xe0, 0, 0])!, r3({ omni: true, selectedVoice: 2 }));
+    expect(r.retarget(r3({ omni: true, selectedVoice: 2 }))).toEqual([]);
+    expect(r.retarget(r3({ omni: true, selectedVoice: 3 }))).toEqual([
+      { type: 'bend', voiceId: 2, semitones: 0 },
+      { type: 'bend', voiceId: 3, semitones: -2 },
+    ]);
+    expect(r.route(parseMidi([0xb0, 121, 0])!, r3({ omni: true, selectedVoice: 3 }))).toEqual([{ type: 'bend', voiceId: 3, semitones: 0 }]);
+    expect(r.retarget(r3({ omni: true, selectedVoice: 1 }))).toEqual([]);
   });
 
   it('all-notes-off (123) and all-sound-off (120) release the channel', () => {
@@ -291,6 +324,15 @@ describe('SynthEngine MIDI', () => {
     expect(pitch(render(e, 9600))).toBeCloseTo(220, 0);
   });
 
+  it('CC param patches apply without a full voice/set', () => {
+    const e = engine({ level: 1 });
+    e.midiNoteOn(1, 60, 127);
+    render(e, SR / 4);
+    e.patchVoice(1, { level: 0 });
+    render(e, SR / 4);
+    expect(rms(render(e, 2048))).toBeLessThan(1e-4);
+  });
+
   it('releasing a key that is not sounding changes nothing', () => {
     const e = engine();
     e.midiNoteOn(1, 57, 127);
@@ -375,9 +417,18 @@ function controller(store?: SettingsStore) {
   m.addVoice();
   m.addVoice();
   const sent: MidiVoiceEvent[] = [];
+  const patches: [number, Partial<VoiceParams>][] = [];
   let selected = 1;
-  const c = new MidiController(m, (evs) => sent.push(...evs), () => selected, store);
-  return { m, c, sent, select: (id: number) => (selected = id) };
+  const ticks: (() => void)[] = [];
+  const c = new MidiController(
+    m,
+    { notes: (evs) => void sent.push(...evs), params: (id, p) => void patches.push([id, p]) },
+    () => selected,
+    store,
+    (fn) => void ticks.push(fn),
+  );
+  const tick = () => ticks.splice(0).forEach((fn) => fn());
+  return { m, c, sent, patches, tick, select: (id: number) => (selected = id) };
 }
 
 function memStore(): SettingsStore & { data: Map<string, string> } {
@@ -387,13 +438,54 @@ function memStore(): SettingsStore & { data: Map<string, string> } {
 
 describe('MidiController', () => {
   it('sends routed notes to the engine sink and CC1 to the voice position', () => {
-    const { m, c, sent } = controller();
+    const { m, c, sent, patches, tick } = controller();
     c.handle([0x91, 60, 100]);
     expect(sent).toEqual([{ type: 'noteOn', voiceId: 2, note: 60, velocity: 100 }]);
     c.handle([0xb0, 1, 127]);
+    expect(patches).toEqual([[1, { position: 1 }]]); // engine hears it at once
+    tick();
     expect(m.voice(1)!.position).toBe(1);
     expect(m.voice(2)!.position).toBe(DEFAULT_VOICE.position);
     expect(sent.length).toBe(1); // CCs don't go to the engine
+  });
+
+  it('coalesces a knob sweep into one model update per tick', () => {
+    const { m, c, patches, tick } = controller();
+    c.setCc('level', 7);
+    let events = 0;
+    m.on('voices', () => events++);
+    for (let v = 0; v <= 127; v++) c.handle([0xb0, 1, v]);
+    c.handle([0xb0, 7, 0]);
+    expect(patches.length).toBe(129);
+    expect(events).toBe(0);
+    tick();
+    expect(events).toBe(1);
+    expect(m.voice(1)!).toMatchObject({ position: 1, level: 0 });
+  });
+
+  it('another voice change folds in pending CC values first', () => {
+    const { m, c } = controller();
+    c.handle([0xb0, 1, 127]);
+    m.updateVoice(2, { mute: true });
+    expect(m.voice(1)!.position).toBe(1);
+  });
+
+  it('a held bend follows Omni to the newly selected voice', () => {
+    const { c, sent, select } = controller();
+    c.setOmni(true);
+    c.handle([0xe0, 127, 127]);
+    expect(sent.at(-1)).toEqual({ type: 'bend', voiceId: 1, semitones: 2 });
+    select(2);
+    c.retarget();
+    expect(sent.slice(-2)).toEqual([
+      { type: 'bend', voiceId: 1, semitones: 0 },
+      { type: 'bend', voiceId: 2, semitones: 2 },
+    ]);
+    c.setOmni(false); // channel 1 → voice 1 again
+    expect(sent.slice(-2)).toEqual([
+      { type: 'bend', voiceId: 2, semitones: 0 },
+      { type: 'bend', voiceId: 1, semitones: 2 },
+    ]);
   });
 
   it('Omni follows the selected voice', () => {
@@ -405,19 +497,22 @@ describe('MidiController', () => {
   });
 
   it('learn assigns the next controller move and applies it', () => {
-    const { m, c } = controller();
+    const { m, c, tick } = controller();
     let learnEvents = 0;
     c.on('learn', () => learnEvents++);
     c.setLearn('lfoDepth');
     c.handle([0xb0, 123, 0]); // channel-mode CC: not learnable
+    for (const cc of [0, 32, 6, 38, 98, 99, 100, 101]) c.handle([0xb0, cc, 1]); // bank / data entry / (N)RPN
     expect(c.learn).toBe('lfoDepth');
     c.handle([0xb0, 74, 127]);
+    tick();
     expect(c.learn).toBeNull();
     expect(c.settings.cc.lfoDepth).toBe(74);
     expect(m.voice(1)!.lfoDepth).toBe(1);
     expect(learnEvents).toBe(2);
     c.setLearn('position');
     c.handle([0xb0, 74, 0]); // moves CC74 from depth to position
+    tick();
     expect(c.settings.cc).toMatchObject({ position: 74, lfoDepth: -1 });
   });
 
