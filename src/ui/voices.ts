@@ -39,7 +39,7 @@ function timeSlider(label: string, maxSec: number, value: number, onInput: (s: n
  */
 export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model, bridge, ui } = ctx;
-  const sec = panel('sec-voices', 'Voice');
+  const sec = panel('sec-voices', 'Voice', 'voice');
   const cur = (): VoiceParams | undefined => (ui.voiceId === null ? undefined : model.voice(ui.voiceId));
   const set = (patch: Partial<VoiceParams>) => {
     if (ui.voiceId !== null) model.updateVoice(ui.voiceId, patch);
@@ -445,6 +445,12 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
   sec.onToggle(() => {
     dirtyScope = dirtyEnv = dirtyPad = true;
     synthPanel.markDirty();
+  });
+  sec.setStatus(() => {
+    const v = cur();
+    if (!v) return 'No voice';
+    const wt = model.wavetable(v.wavetableId);
+    return `${v.name} · ${v.type === 'synth' ? 'Synth' : 'Simple'}${v.mute ? ' · muted' : ''}${wt ? ` · ${wt.name}` : ''} · ${model.voices.length} voices`;
   });
 
   new ResizeObserver(() => (dirtyScope = dirtyEnv = dirtyPad = true)).observe(body);

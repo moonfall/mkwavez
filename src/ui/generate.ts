@@ -6,7 +6,7 @@ import { MAX_BATCH } from './batch';
 import { buildSeedPanel } from './seed';
 
 export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameView } {
-  const sec = panel('sec-generate', 'Generate');
+  const sec = panel('sec-generate', 'Generate', 'gen');
   let count = 8;
   const countListeners: ((n: number) => void)[] = [];
   const setCount = (n: number) => {
@@ -82,6 +82,14 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   // The open tab is saved with the session (and follows an imported one).
   const savedTab = () => ctx.ui.pref('generateTab', 'Seed', (v) => tabNames.includes(v as (typeof tabNames)[number]));
   setTab(savedTab());
+  sec.setStatus(() => {
+    if (currentTab === 'Breed') return `Breed · ${ctx.model.breedParents.length} parents`;
+    if (currentTab === 'Mutate') {
+      const i = ctx.model.indexOf(ctx.model.selectedId);
+      return i >= 0 ? `Mutate · source #${i + 1}` : 'Mutate';
+    }
+    return `${currentTab} · batch of ${count}`;
+  });
   ctx.ui.onPrefs(() => {
     if (savedTab() !== currentTab) setTab(savedTab());
   });

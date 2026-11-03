@@ -36,6 +36,12 @@
 // Session: autosave survives a reload, New session, Export / Import, two tabs (one
 // autosaves; take over), unrestorable save set aside and exportable, no-storage paths
 // (sessionChecks).
+// Collapsible panels (layoutChecks): each panel collapses to a strip / bar with a status and
+// expands again, siblings / other rows take the freed width / height, a collapsed panel
+// doesn't redraw; Sequence collapsed → the Synth voice's full view (every group, no page
+// tabs, no overflow) at 1440×900 and 1180×820, knobs by keyboard and drag (one undo step);
+// maximize / restore (button and header double-click; the Timeline shows lanes); the
+// arrangement survives a reload and is separate from the phone column's.
 //
 // Usage: npm run smoke            (builds, then tests `vite preview` and `vite dev`)
 //        CHROME=/path/to/chrome   (default /usr/bin/google-chrome)
@@ -625,8 +631,11 @@ async function shellChecks(page) {
       Math.abs(r.timeline.b + 8 - r.voices.y) < 1.5;
     assert(ok, `${w}×${hh}: layout C (Generate ${Math.round(g.w)} | Wavetables ${Math.round(r.wavetables.w)}; timeline ${Math.round(r.timeline.h)} px; Voice | Sequence)`);
     if (w === 1440) {
-      assert(await page.isVisible('#wavetable-overview'), 'wide: Wavetables shown (collapse applies to the phone column only)');
-      assert(!(await page.isVisible('#sec-voices .panel-collapse')), 'wide: no collapse chevrons');
+      assert(await page.isVisible('#wavetable-overview'), 'wide: Wavetables shown (the phone column’s collapse state is its own)');
+      assert(
+        (await page.isVisible('#sec-voices .panel-collapse')) && (await page.isVisible('#sec-voices-max')) && !(await page.isVisible('#sec-voices-strip')),
+        'wide: collapse and maximize buttons in the headers',
+      );
     }
   }
   await page.setViewportSize({ width: 390, height: 844 });
@@ -2996,12 +3005,14 @@ try {
   await run('preview', prev.resolvedUrls.local[0], browser);
   await midiChecks('preview', prev.resolvedUrls.local[0], browser);
   await sessionChecks('preview', prev.resolvedUrls.local[0], browser);
+  await layoutChecks('preview', prev.resolvedUrls.local[0], browser);
   const dev = await createServer({ server: { port: 0 }, logLevel: 'warn' });
   servers.push(dev);
   await dev.listen();
   await run('dev', dev.resolvedUrls.local[0], browser);
   await midiChecks('dev', dev.resolvedUrls.local[0], browser);
   await sessionChecks('dev', dev.resolvedUrls.local[0], browser);
+  await layoutChecks('dev', dev.resolvedUrls.local[0], browser);
   console.log('\nsmoke: PASS');
 } catch (e) {
   failed = true;
@@ -3242,4 +3253,265 @@ async function wavetableEditorChecks(page, tlCount) {
     const m = window.mkwavez.model;
     for (const w of m.wavetables.filter((w) => !w.builtin)) m.deleteWavetable(w.id);
   });
+}
+
+/**
+ * Collapsible panels and the Synth voice's full view (own context, wide shell): every panel
+ * collapses to a strip (next to an open sibling) or a bar (its row / the Timeline) that shows
+ * a status and expands again; siblings and the other rows take the freed space; a collapsed
+ * panel doesn't redraw; Sequence collapsed → the Synth full view (all groups, no page tabs,
+ * no overflow) at 1440×900 and 1180×820, knobs work by keyboard and drag (one undo step
+ * each); Generate + Sequence collapsed; maximize / restore (button and header double-click;
+ * the maximized Timeline shows lanes); the arrangement survives a reload; the phone column
+ * keeps its own.
+ */
+async function layoutChecks(label, url, browser) {
+  console.log(`\n[${label}] collapsible panels`);
+  const errors = [];
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text());
+  });
+  page.on('pageerror', (e) => errors.push(String(e)));
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForSelector('#sec-generate');
+  const keys = { gen: 'generate', wt: 'wavetables', tl: 'timeline', voice: 'voices', seq: 'sequences' };
+  const rects = () =>
+    M(
+      (keys) =>
+        Object.fromEntries(
+          Object.entries(keys).map(([k, id]) => {
+            const r = document.querySelector(`#sec-${id}`).getBoundingClientRect();
+            return [k, { x: r.left, y: r.top, w: r.width, h: r.height }];
+          }),
+        ),
+      keys,
+    );
+  const settle = () => page.waitForTimeout(320); // the 160 ms transition + the full view's resize debounce
+  const shape = (k) => page.getAttribute(`#sec-${keys[k]}`, 'data-shape');
+  const status = (k) => page.textContent(`#sec-${keys[k]}-strip .strip-status`);
+  const near = (a, b, tol = 1.5) => Math.abs(a - b) <= tol;
+  // Some content first: batches of waveforms (the maximized Timeline fills its lanes) and a playing transport.
+  for (let i = 0; i < 4; i++) await page.click('#seed-add-batch');
+  await page.click('#play');
+  await page.waitForFunction(() => document.body.dataset.audio === 'running', null, { timeout: 10000 });
+  await settle();
+  const r0 = await rects();
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/collapse-default-1440x900.png` });
+
+  // Each panel: collapse (strip / bar with a status), the space goes to the others; expand back.
+  const expect = {
+    gen: (r) => near(r.gen.w, 32) && near(r.wt.x, r.gen.x + 40) && r.wt.w > r0.wt.w + r0.gen.w - 40,
+    wt: (r) => near(r.wt.w, 32) && r.gen.w > r0.gen.w + r0.wt.w - 40,
+    tl: (r) => near(r.tl.h, 34) && r.gen.h > r0.gen.h + 30 && r.voice.h > r0.voice.h + 30 && near(r.gen.h + r.voice.h, r0.gen.h + r0.voice.h + r0.tl.h - 34, 2),
+    voice: (r) => near(r.voice.w, 32) && r.seq.w > r0.seq.w + r0.voice.w - 40,
+    seq: (r) => near(r.seq.w, 32) && r.voice.w > r0.voice.w + r0.seq.w - 40,
+  };
+  const statusRe = { gen: /^Seed · batch of \d+/, wt: /Timeline · 1D/, tl: /^\d+ waveforms · #\d+ selected/, voice: /^V1 · Simple/, seq: /^→ V1 · 16 steps · \d+\.\d/ };
+  for (const k of Object.keys(keys)) {
+    await page.click(`#sec-${keys[k]} .panel-collapse`);
+    await settle();
+    const r = await rects();
+    const st = (await status(k)).trim();
+    assert(
+      (await shape(k)) === (k === 'tl' ? 'bar' : 'strip') && expect[k](r) && statusRe[k].test(st) && !(await page.isVisible(`#sec-${keys[k]}-body`)) && (await fitsScreen(page)),
+      `${keys[k]} collapses to a ${k === 'tl' ? 'bar' : 'strip'} (“${st}”); the freed space goes to the others`,
+    );
+    await page.click(`#sec-${keys[k]}-strip`);
+    await settle();
+    const back = await rects();
+    assert(Object.keys(keys).every((j) => near(back[j].w, r0[j].w) && near(back[j].h, r0[j].h)) && (await shape(k)) === 'open', `${keys[k]} expands again (layout as before)`);
+  }
+  // A collapsed panel doesn't redraw while playing.
+  await page.click('#sec-sequences .panel-collapse');
+  await settle();
+  const ink = (await canvasInk(page, '#seq-grid')).sum;
+  await page.waitForTimeout(600);
+  assert((await canvasInk(page, '#seq-grid')).sum === ink, 'collapsed Sequence: its grid isn’t redrawn while playing');
+  await page.click('#sec-sequences-strip');
+  await settle();
+  // A whole row: Generate + Wavetables → bars; the Timeline moves up, the Voice row takes the height.
+  await page.click('#sec-generate .panel-collapse');
+  await page.click('#sec-wavetables .panel-collapse');
+  await settle();
+  let r = await rects();
+  assert(
+    (await shape('gen')) === 'bar' &&
+      (await shape('wt')) === 'bar' &&
+      near(r.gen.h, 34) &&
+      near(r.wt.h, 34) &&
+      near(r.tl.y, r.gen.y + 42) &&
+      near(r.voice.h, r0.voice.h + r0.gen.h - 34, 2) &&
+      (await fitsScreen(page)),
+    `top row collapsed: two bars, the Voice row takes the height (${Math.round(r.voice.h)} px)`,
+  );
+  await page.click('#sec-wavetables-strip');
+  await page.click('#sec-generate-strip');
+  await settle();
+
+  // Synth voice + Sequence collapsed → every control at once (no page tabs).
+  await page.click('#add-voice');
+  await page.click('#add-voice-synth');
+  const id = await M(() => window.mkwavez.ui.voiceId);
+  await settle();
+  assert((await page.getAttribute('#synth-panel', 'data-view')) === 'pages' && (await page.isVisible('#syn-tab-osc')), 'Synth voice beside the Sequence panel: section tabs');
+  await page.click('#sec-sequences .panel-collapse');
+  const groups = ['#synf-osc-a', '#synf-osc-b', '#synf-mix', '#synf-filter', '#synf-env', '#synf-lfo0', '#synf-lfo1', '#synf-lfo2', '#synf-out', '#syn-matrix', '#syn-preset', '#voice-type'];
+  const fullFits = () =>
+    M((groups) => {
+      const b = document.querySelector('#sec-voices-body');
+      const br = b.getBoundingClientRect();
+      const inside = groups.every((s) => {
+        const e = document.querySelector(s);
+        const r = e.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.left >= br.left - 0.5 && r.right <= br.right + 0.5 && r.top >= br.top - 0.5 && r.bottom <= br.bottom + 0.5;
+      });
+      const f = document.querySelector('#synth-full');
+      return {
+        view: document.querySelector('#synth-panel').dataset.view,
+        density: document.querySelector('#synth-panel').dataset.density,
+        inside,
+        noScroll:
+          b.scrollHeight <= b.clientHeight + 1 && b.scrollWidth <= b.clientWidth + 1 && [f, ...f.children].every((e) => e.scrollWidth <= e.clientWidth + 1 && e.scrollHeight <= e.clientHeight + 1),
+        knobs: document.querySelectorAll('#synth-full [role="slider"]').length,
+        tabs: !!document.querySelector('#syn-tab-osc').offsetParent,
+      };
+    }, groups);
+  for (const [w, hh] of [
+    [1440, 900],
+    [1180, 820],
+  ]) {
+    await page.setViewportSize({ width: w, height: hh });
+    await settle();
+    const f = await fullFits();
+    assert(
+      f.view === 'full' && f.inside && f.noScroll && !f.tabs && f.knobs >= 60 && (await fitsScreen(page)),
+      `${w}×${hh}, Sequence collapsed: Synth full view, ${f.knobs} knobs, every group shown, no page tabs, no overflow (${f.density})`,
+    );
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/collapse-seq-synth-${w}x${hh}.png` });
+  }
+  // Osc B on the Grid (2D: X / Y windows, inline pad) still fits.
+  await M((id) => {
+    const m = window.mkwavez.model;
+    m.updateVoice(id, { synth: { b: { ...m.voice(id).synth.b, wavetableId: 3, windowStart: 0, windowEnd: 7, windowStartY: 0, windowEndY: 7 } } });
+    m.endGesture();
+  }, id);
+  await settle();
+  let f = await fullFits();
+  assert(
+    f.view === 'full' && f.inside && f.noScroll && (await page.isVisible('#synf-b-pad')) && (await page.isVisible('#synf-b-from-y')),
+    `1180×820: osc B on the Grid (X/Y knobs, inline pad) still fits (${f.knobs} knobs)`,
+  );
+  // Knobs: keyboard and drag edit the voice; one undo step each; aria values follow.
+  await M(() => window.mkwavez.model.clearUndo());
+  const v = () => M((id) => window.mkwavez.model.voice(id), id);
+  const cut0 = (await v()).synth.cutoff;
+  await page.focus('#synf-cutoff');
+  await page.keyboard.press('ArrowUp');
+  const cut1 = (await v()).synth.cutoff;
+  assert(
+    cut1 > cut0 && (await M(() => window.mkwavez.model.undoDepth)) === 1 && Number(await page.getAttribute('#synf-cutoff', 'aria-valuenow')) === Math.round(cut1 * 1000) / 1000,
+    `cutoff knob: ↑ raises it (${Math.round(cut0)} → ${Math.round(cut1)} Hz), one undo step, aria-valuenow follows`,
+  );
+  const res0 = (await v()).synth.resonance;
+  const kb = await page.$eval('#synf-res', (e) => {
+    const r = e.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.mouse.move(kb.x, kb.y);
+  await page.mouse.down();
+  await page.mouse.move(kb.x, kb.y - 20, { steps: 4 });
+  await page.mouse.move(kb.x, kb.y - 40, { steps: 4 });
+  await page.mouse.up();
+  const res1 = (await v()).synth.resonance;
+  assert(res1 > res0 + 0.2 && (await M(() => window.mkwavez.model.undoDepth)) === 2, `resonance knob: an upward drag raises it (${res0.toFixed(2)} → ${res1.toFixed(2)}), one undo step`);
+  await page.click('#undo');
+  assert(Math.abs((await v()).synth.resonance - res0) < 1e-9, 'undo reverts the drag');
+  // The matrix (moved into the full view) still edits the voice.
+  await page.selectOption('#syn-mod-src-2', 'lfo2');
+  assert((await v()).synth.mods[2].src === 'lfo2', 'mod matrix works in the full view');
+  // Sequence expanded again: back to the pages (the matrix back on the Mod page).
+  await page.click('#sec-sequences-strip');
+  await settle();
+  assert(
+    (await page.getAttribute('#synth-panel', 'data-view')) === 'pages' && (await page.isVisible('#syn-tab-osc')) && !!(await page.$('#syn-page-mod #syn-matrix')),
+    'Sequence expanded: section tabs again (the matrix back on the Mod page)',
+  );
+
+  // Generate + Sequence collapsed, 1440×900.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.click('#sec-generate .panel-collapse');
+  await page.click('#sec-sequences .panel-collapse');
+  await settle();
+  r = await rects();
+  f = await fullFits();
+  assert(near(r.gen.w, 32) && near(r.seq.w, 32) && f.view === 'full' && f.noScroll && (await fitsScreen(page)), 'Generate + Sequence collapsed: Wavetables and the Synth full view take the width');
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/collapse-gen-seq-1440x900.png` });
+  const before = await M(() => window.mkwavez.layout.state().collapsed.join());
+
+  // Maximize the Timeline (header double-click): the others collapse; lanes; restore.
+  await page.dblclick('#sec-timeline .panel-title');
+  await settle();
+  r = await rects();
+  const lanes = Number(await page.getAttribute('#timeline-grid', 'data-lanes'));
+  assert(
+    (await M(() => window.mkwavez.layout.state().collapsed.join())) === 'gen,wt,voice,seq' &&
+      r.tl.h > 600 &&
+      lanes >= 5 &&
+      (await page.getAttribute('#sec-timeline-max', 'aria-pressed')) === 'true' &&
+      (await fitsScreen(page)),
+    `double-click the Timeline header: maximized (${Math.round(r.tl.h)} px, ${lanes} lanes), the others are bars`,
+  );
+  // A click in a lane selects that waveform (column-major: index = column × lanes + lane).
+  await page.$eval('#timeline-scroll', (s) => (s.scrollLeft = 0));
+  await page.waitForTimeout(100);
+  const g = await page.$eval('#timeline-grid', (c) => {
+    const b = c.getBoundingClientRect();
+    const n = Number(c.dataset.lanes);
+    return { x: b.left, y: b.top, lh: (b.height - (n - 1)) / n };
+  });
+  await page.mouse.click(g.x + 63 + 30, g.y + 2 * (g.lh + 1) + g.lh / 2);
+  assert((await M(() => window.mkwavez.model.indexOf(window.mkwavez.model.selectedId))) === lanes + 2, 'maximized Timeline: a click in lane 3 of column 2 selects that waveform');
+  await page.waitForTimeout(150);
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/collapse-timeline-max-1440x900.png` });
+  await page.click('#sec-timeline-max');
+  await settle();
+  assert(
+    (await M(() => window.mkwavez.layout.state().collapsed.join())) === before && Number(await page.getAttribute('#timeline-grid', 'data-lanes')) === 1,
+    'restore: the previous arrangement (Generate + Sequence collapsed), one lane',
+  );
+  // The maximize button on the Voice panel, then restore.
+  await page.click('#sec-voices-max');
+  await settle();
+  r = await rects();
+  assert((await M(() => window.mkwavez.layout.state().max)) === 'voice' && r.voice.w > 1350 && r.voice.h > 700 && (await fitsScreen(page)), 'Voice maximize button: the whole content area (the Sequence a strip beside it)');
+  await page.click('#sec-voices-max');
+  await settle();
+  assert((await M(() => window.mkwavez.layout.state().collapsed.join())) === before, 'Voice restore: the previous arrangement');
+
+  // Persistence: the arrangement survives a reload (saved with the session's UI prefs).
+  await page.waitForTimeout(1500);
+  await page.waitForFunction(() => window.mkwavez.saver.status === 'saved', null, { timeout: 10000 });
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForSelector('#sec-generate');
+  await settle();
+  r = await rects();
+  assert(
+    (await page.getAttribute('#sec-generate', 'data-shape')) === 'strip' && (await page.getAttribute('#sec-sequences', 'data-shape')) === 'strip' && near(r.gen.w, 32) && near(r.seq.w, 32),
+    'after a reload: Generate and Sequence still collapsed',
+  );
+  // The phone column keeps its own state (Wavetables collapsed by default; Sequence open).
+  await page.setViewportSize({ width: 390, height: 844 });
+  await settle();
+  assert(
+    (await page.isVisible('#sec-sequences-body')) && (await page.isVisible('#sec-generate-body')) && !(await page.isVisible('#sec-wavetables-body')) && !(await page.isVisible('#sec-generate-strip')),
+    'phone column: its own collapse state (the wide arrangement isn’t applied)',
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await settle();
+  assert(near((await rects()).seq.w, 32), 'back to wide: its arrangement again');
+  assert(errors.length === 0, `no console errors (layout)${errors.length ? `: ${errors.join(' | ')}` : ''}`);
+  await ctx.close();
 }

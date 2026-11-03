@@ -13,6 +13,11 @@ import { beginDrag, consumeDragClick, DRAG_SLOP, dropTargetsActive, isDragging }
 const CELL_W = 62;
 const GAP = 1;
 const PITCH = CELL_W + GAP;
+/**
+ * A tall strip (e.g. the Timeline maximized) shows the waveforms in lanes: column by column,
+ * top to bottom, one lane per LANE_MIN_H px of height (the usual ~110 px strip is one lane).
+ */
+const LANE_MIN_H = 96;
 /** Touch long-press (ms) toggles a Breed parent; movement beyond LONG_PRESS_SLOP px cancels. */
 const LONG_PRESS_MS = 450;
 const LONG_PRESS_SLOP = 10;
@@ -61,7 +66,7 @@ const voiceColor = (v: VoiceParams) => cssColor(voiceColorVar(v.id - 1));
  */
 export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model, bridge } = ctx;
-  const sec = panel('sec-timeline', 'Timeline');
+  const sec = panel('sec-timeline', 'Timeline', 'tl');
 
   let view = loadView();
   const viewBtn = h('button', { id: 'timeline-view', class: 'small tl-view-btn' });
@@ -110,7 +115,12 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   let dirtyMarkers = true;
   let markerKey = '';
   let viewW = 300;
+  /** Stage height; with `lanes` > 1 each lane (a cell's height) is `laneH`. */
   let cellH = 60;
+  let lanes = 1;
+  let laneH = 60;
+  const colOf = (idx: number) => Math.floor(idx / lanes);
+  const laneY = (idx: number) => (idx % lanes) * (laneH + GAP);
 
   const syncView = () => {
     const name = TIMELINE_VIEWS[view];
@@ -131,7 +141,10 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   const layout = () => {
     viewW = scroller.clientWidth || 300;
     cellH = Math.max(24, scroller.clientHeight || 60);
-    track.style.width = `${Math.max(viewW, model.timeline.length * PITCH - GAP)}px`;
+    lanes = Math.max(1, Math.floor((cellH + GAP) / (LANE_MIN_H + GAP)));
+    laneH = (cellH - (lanes - 1) * GAP) / lanes;
+    grid.dataset.lanes = String(lanes);
+    track.style.width = `${Math.max(viewW, Math.ceil(model.timeline.length / lanes) * PITCH - GAP)}px`;
     stage.style.width = `${viewW}px`;
     stage.style.height = `${cellH}px`;
   };
@@ -142,7 +155,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   const scrollToIndex = (idx: number) => {
     if (idx < 0) return;
     layout();
-    const left = idx * PITCH;
+    const left = colOf(idx) * PITCH;
     if (left < scroller.scrollLeft) scroller.scrollLeft = Math.max(0, left - PITCH / 2);
     else if (left + CELL_W > scroller.scrollLeft + viewW) scroller.scrollLeft = left + CELL_W - viewW + PITCH / 2;
   };
@@ -153,11 +166,11 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
 
   const drawGrid = () => {
     layout();
-    const [g] = fit(grid, cellH);
+    const [g] = fit(grid, lanes * laneH + (lanes - 1) * GAP);
     const n = model.timeline.length;
     const left = scroller.scrollLeft;
-    const first = Math.max(0, Math.floor(left / PITCH));
-    const last = Math.min(n - 1, Math.floor((left + viewW) / PITCH));
+    const first = Math.max(0, Math.floor(left / PITCH) * lanes);
+    const last = Math.min(n - 1, (Math.floor((left + viewW) / PITCH) + 1) * lanes - 1);
     const selIdx = model.indexOf(model.selectedId);
     const newest = n - 1;
     const cWave = cssColor('--wave');
@@ -189,10 +202,13 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     g.font = '9px ui-monospace, monospace';
     g.textBaseline = 'top';
     const top = 12;
-    const plotH = cellH - top - 3;
+    const plotH = laneH - top - 3;
+    const cellH = laneH;
     for (let idx = first; idx <= last; idx++) {
       const t = model.timeline[idx];
-      const x = idx * PITCH - left;
+      const x = colOf(idx) * PITCH - left;
+      const ly = laneY(idx);
+      if (ly) g.translate(0, ly);
       g.fillStyle = cCell;
       g.fillRect(x, 0, CELL_W, cellH);
       // Window tints: one band per voice whose window holds this table, voice order top→bottom.
@@ -249,6 +265,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
         g.fillStyle = cParentText;
         g.fillText(String.fromCharCode(65 + pi), x + CELL_W - 10.5, 3.5);
       }
+      if (ly) g.translate(0, -ly);
     }
   };
 
@@ -264,7 +281,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     const n = model.timeline.length;
     const left = scroller.scrollLeft;
     const live = model.playing ? new Map(bridge.status.voices.map((s) => [s.id, s.index])) : null;
-    const marks: { v: VoiceParams; f: number; x: number }[] = [];
+    const marks: { v: VoiceParams; f: number; x: number; y: number }[] = [];
     if (n) {
       for (const v of model.voices) {
         if (v.mute) continue;
@@ -278,28 +295,30 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
           if (f < 0) continue;
         }
         f = Math.max(0, Math.min(n - 1, f));
-        const x = (f + 0.5) * PITCH - GAP / 2 - left;
+        // The caret sits in cell round(f), offset by the fraction (f = i + 0.5: between i and i + 1).
+        const i = Math.min(n - 1, Math.round(f));
+        const x = (colOf(i) + 0.5 + f - i) * PITCH - GAP / 2 - left;
         if (x < -6 || x > viewW + 6) continue;
-        marks.push({ v, f, x });
+        marks.push({ v, f, x, y: laneY(i) });
       }
     }
-    const key = `${viewW}|${cellH}|${marks.map((m) => `${m.v.id}:${m.x.toFixed(1)}`).join(' ')}`;
+    const key = `${viewW}|${cellH}|${marks.map((m) => `${m.v.id}:${m.x.toFixed(1)}:${m.y}`).join(' ')}`;
     if (key === markerKey) return;
     markerKey = key;
     const [g] = fit(overlay, cellH);
     const cEdge = cssColor('--surface');
-    for (const { v, x } of marks) {
+    for (const { v, x, y } of marks) {
       const col = voiceColor(v);
       g.globalAlpha = 0.85;
       g.fillStyle = cEdge;
-      g.fillRect(x - 2, 0, 4, cellH);
+      g.fillRect(x - 2, y, 4, laneH);
       g.globalAlpha = 1;
       g.fillStyle = col;
-      g.fillRect(x - 1, 0, 2, cellH);
+      g.fillRect(x - 1, y, 2, laneH);
       g.beginPath();
-      g.moveTo(x - 5, 0);
-      g.lineTo(x + 5, 0);
-      g.lineTo(x, 7);
+      g.moveTo(x - 5, y);
+      g.lineTo(x + 5, y);
+      g.lineTo(x, y + 7);
       g.closePath();
       g.strokeStyle = cEdge;
       g.lineWidth = 1;
@@ -354,10 +373,11 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
     },
     { passive: false },
   );
-  const cellAt = (clientX: number) => {
+  const cellAt = (clientX: number, clientY: number) => {
     const r = grid.getBoundingClientRect();
     const x = clientX - r.left + scroller.scrollLeft;
-    const idx = Math.floor(x / PITCH);
+    const lane = Math.max(0, Math.min(lanes - 1, Math.floor((clientY - r.top) / (laneH + GAP))));
+    const idx = Math.floor(x / PITCH) * lanes + lane;
     return x >= 0 && idx < model.timeline.length ? model.timeline[idx] : undefined;
   };
   // Touch long-press toggles a Breed parent and swallows the click that follows.
@@ -374,7 +394,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   grid.addEventListener('pointerdown', (e) => {
     pending = null;
     if (e.button === 0 && dropTargetsActive()) {
-      const t = cellAt(e.clientX);
+      const t = cellAt(e.clientX, e.clientY);
       if (t) pending = { x: e.clientX, y: e.clientY, id: t.id };
     }
   });
@@ -401,7 +421,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
       timer: setTimeout(() => {
         press = null;
         pending = null; // the long-press is the Breed toggle: a following move doesn't drag
-        const t = cellAt(x);
+        const t = cellAt(x, y);
         if (!t) return;
         swallowClick = true;
         model.toggleBreedParent(t.id);
@@ -423,7 +443,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
       swallowClick = false;
       return;
     }
-    const t = cellAt(e.clientX);
+    const t = cellAt(e.clientX, e.clientY);
     if (!t) return;
     if (e.shiftKey || e.ctrlKey || e.metaKey) model.toggleBreedParent(t.id);
     else model.select(t.id);
@@ -440,6 +460,10 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   };
   new ResizeObserver(invalidate).observe(scroller);
   sec.onToggle(invalidate);
+  sec.setStatus(() => {
+    const idx = model.indexOf(model.selectedId);
+    return `${model.timeline.length} waveforms · ${idx >= 0 ? `#${idx + 1} selected` : 'nothing selected'}`;
+  });
   onThemeChange(invalidate);
 
   // Scrolling: a changed (or moved) selection is brought into view; otherwise, if the

@@ -1,13 +1,14 @@
 /**
- * The Voice panel's body for a Synth voice: compact pages (Osc · Mix · Filter · Env) in the
- * panel's usual footprint. Each page is a column of compact rows (label · slider · value)
+ * The Voice panel's body for a Synth voice: compact pages (Osc · Mix · Filter · Env · Mod) in
+ * the panel's usual footprint, or — when the panel has room (e.g. the Sequence panel
+ * collapsed on a laptop screen) — every control at once (synthFull.ts): the choice is made
+ * from the panel's size (a ResizeObserver), not the viewport. Each page is a column of compact rows (label · slider · value)
  * plus, where it helps, a picture on the right: the oscillator's X/Y pad or "now playing"
  * scope, the filter's response curve, the selected envelope. Every edit goes through
  * AppModel.updateVoice (undoable on a Synth voice; a slider drag is one step).
  */
 import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
-import { TABLE_SIZE } from '../core/constants';
 import { filterResponse } from '../core/engine/svf';
 import {
   CUTOFF_MAX,
@@ -42,12 +43,12 @@ import {
 import type { VoicePatch, VoiceParams } from '../core/voice';
 
 import { shapeLabel } from '../core/wavetable';
-import { Mix } from '../core/wavetablePlayback';
-import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
+import { cssColor, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type UiState } from './context';
-import { h, voiceColorVar } from './dom';
-import { oscMix, oscPositions, oscView } from './playing';
+import { h, isNarrowShell, voiceColorVar } from './dom';
+import { linear, type Taper } from './knob';
 import { buildPresetControls } from './presets';
+import { buildSynthFull, hz, logTaper, oscDrawer, pct, secs, signed, timeTaper } from './synthFull';
 import { createVoicePad } from './voicePad';
 
 export type SynthPage = 'osc' | 'mix' | 'filter' | 'env' | 'mod';
@@ -62,23 +63,15 @@ type EnvPage = 'amp' | 'filter' | 'pitch';
 /** What the Mod page's left column edits: an LFO (0..2) or the mod envelope. */
 type ModEdit = 0 | 1 | 2 | 'env';
 
-const pct = (v: number) => `${Math.round(v * 100)}%`;
-const secs = (v: number) => (v < 1 ? `${Math.round(v * 1000)} ms` : `${v.toFixed(2)} s`);
-const hz = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 1 : 2)} k` : `${Math.round(v)} Hz`);
-const signed = (v: number, digits = 0, unit = '') => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(digits)}${unit}`;
-
-/** Value ↔ slider position (0..1) mappings. */
-interface Taper {
-  toU(v: number): number;
-  toV(u: number): number;
-}
-const linear = (min: number, max: number): Taper => ({ toU: (v) => (v - min) / (max - min), toV: (u) => min + u * (max - min) });
-const logTaper = (min: number, max: number): Taper => ({
-  toU: (v) => Math.log(Math.max(min, v) / min) / Math.log(max / min),
-  toV: (u) => min * Math.pow(max / min, u),
-});
-/** Seconds with a quadratic taper (fine control of short times), 0..max. */
-const timeTaper = (max: number): Taper => ({ toU: (v) => Math.sqrt(Math.max(0, v) / max), toV: (u) => max * u * u });
+/** Full view densities: values under the knobs, or (dense) only while hovered / focused / dragged. */
+type Density = 'roomy' | 'dense';
+/** Below this panel size the full view isn't tried (the pages fit anywhere). */
+const FULL_MIN_W = 860;
+const FULL_MIN_H = 180;
+/** Full view cell heights per density, a group's header + padding, and the most rows used. */
+const CELL_H: Record<Density, number> = { roomy: 46, dense: 35 };
+const FULL_CHROME_H = 24;
+const FULL_MAX_ROWS = 9;
 
 interface Control {
   readonly el: HTMLElement;
@@ -93,6 +86,8 @@ export interface SynthPanel {
   /** Draw the visible picture (frame loop). */
   frame(v: VoiceParams): void;
   markDirty(): void;
+  /** 'full' when every control shows at once (no page tabs). */
+  readonly view: 'pages' | 'full';
 }
 
 export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiState): SynthPanel {
@@ -647,6 +642,16 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const sync = () => {
     const v = voice;
     if (!v) return;
+    const key = shapesOf(v);
+    if (key !== shapeKey) {
+      shapeKey = key;
+      scheduleDecide(0);
+    }
+    if (view === 'full') {
+      full.sync(v);
+      dirty = true;
+      return;
+    }
     tabBtns.forEach((b, i) => {
       const on = PAGES[i][0] === page;
       b.setAttribute('aria-selected', String(on));
@@ -680,46 +685,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   };
 
   // ---- pictures ----
-  const mix = new Mix();
-  let scopeKey = '';
-  let scopeData: Float32Array | null = null;
-  const drawOsc = (v: VoiceParams) => {
-    const s = src(v);
-    const wt = model.wavetable(s.wavetableId);
-    if (!wt) return;
-    const color = cssColor(voiceColorVar(v.id - 1));
-    const hh = Math.max(40, visOsc.clientHeight || 110);
-    if (wt.shape !== '1d') {
-      pad.draw(oscView(v, osc), wt, hh, { pos: oscPositions(model, bridge, v, osc), mix: (out) => oscMix(model, bridge, v, osc, out) });
-      scopeLabel.textContent = `Osc ${osc.toUpperCase()}`;
-      return;
-    }
-    const m = oscMix(model, bridge, v, osc, mix);
-    let key = `${osc}|`;
-    for (let i = 0; i < m.n; i++) key += `${m.ids[i]}:${m.w[i].toFixed(3)} `;
-    if (key !== scopeKey) {
-      scopeKey = key;
-      scopeData = null;
-      if (m.n === 1) scopeData = model.table(m.ids[0])?.data ?? null;
-      else if (m.n > 1) {
-        const out = new Float32Array(TABLE_SIZE);
-        for (let i = 0; i < m.n; i++) {
-          const t = model.table(m.ids[i]);
-          if (!t) continue;
-          for (let j = 0; j < TABLE_SIZE; j++) out[j] += m.w[i] * t.data[j];
-        }
-        scopeData = out;
-      }
-    }
-    scopeLabel.textContent = m.n ? `Osc ${osc.toUpperCase()} · #${wt.interp === 'step' ? m.x + 1 : (m.x + 1).toFixed(1)}` : `Osc ${osc.toUpperCase()}`;
-    const [g, w, H] = fit(scope, hh);
-    if (!scopeData) return;
-    g.save();
-    g.globalAlpha = 0.3;
-    drawSpectrum(g, w, H, scopeData, color);
-    g.restore();
-    drawWave(g, 0, 0, w, H, scopeData, color, { axis: cssColor('--border'), lineWidth: 1.75 });
-  };
+  const drawOsc = oscDrawer(model, bridge, () => osc, pad, scope, scopeLabel, visOsc);
 
   const drawResponse = (v: VoiceParams) => {
     const s = v.synth;
@@ -813,8 +779,72 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     envLabel.textContent = label;
   };
 
+  // ---- full view (every control at once) ----
+  const full = buildSynthFull(model, bridge, set, commit, () => voice);
+  full.el.hidden = true;
+  el.append(full.el);
+  const top = el.querySelector('.syn-top') as HTMLElement;
+  let view: 'pages' | 'full' = 'pages';
+  el.dataset.view = view;
+  let density: Density = 'roomy';
+  /** Show the pages or the full view: the presets, type select and matrix move along. */
+  const setView = (next: 'pages' | 'full', d: Density) => {
+    density = d;
+    el.dataset.density = d;
+    full.el.classList.toggle('knobs-dense', d === 'dense');
+    if (next === view) return;
+    view = next;
+    el.dataset.view = next;
+    full.el.hidden = next !== 'full';
+    if (next === 'full') {
+      full.sideTop.append(presets.pick, presets.menuBtn, presets.file, typeSlot);
+      full.side.append(matrix);
+    } else {
+      top.append(presets.pick, presets.menuBtn, presets.file, typeSlot);
+      pageMod.append(matrix);
+    }
+    dirty = true;
+    if (voice) sync();
+  };
+  /**
+   * Decide between the pages and the full view from the space the panel body offers: try
+   * the full view (roomy, then dense) and keep it only if nothing overflows. Layout reads
+   * happen here only (after a resize settles, or the oscillators' shapes change).
+   */
+  const decide = () => {
+    const host = el.parentElement;
+    if (!voice || el.hidden || !host || host.clientHeight === 0) return;
+    const cs = getComputedStyle(host);
+    const w = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const hh = host.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    if (isNarrowShell() || w < FULL_MIN_W || hh < FULL_MIN_H) return setView('pages', density);
+    const fits = (e: Element) => e.scrollWidth <= e.clientWidth + 1 && e.scrollHeight <= e.clientHeight + 1;
+    for (const d of ['roomy', 'dense'] as const) {
+      // As many rows of cells as the height allows (at least 5: the envelopes' columns).
+      const rows = Math.min(FULL_MAX_ROWS, Math.floor((hh - FULL_CHROME_H) / CELL_H[d]));
+      if (rows < 5) continue;
+      full.el.style.setProperty('--rows', String(rows));
+      full.el.style.setProperty('--cell-h', `${CELL_H[d]}px`);
+      setView('full', d);
+      if (fits(full.el) && [...full.el.children].every(fits) && fits(host)) return;
+    }
+    setView('pages', 'roomy');
+  };
+  let decideTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Decide once a resize (e.g. a panel collapsing: a short transition) has settled. */
+  const scheduleDecide = (ms = 90) => {
+    clearTimeout(decideTimer);
+    decideTimer = setTimeout(decide, ms);
+  };
+  let shapeKey = '';
+  const shapesOf = (v: VoiceParams) => `${model.wavetable(v.wavetableId)?.shape}|${model.wavetable(v.synth.b.wavetableId)?.shape}|${el.hidden}`;
+
   onThemeChange(() => (dirty = true));
   new ResizeObserver(() => (dirty = true)).observe(el);
+  queueMicrotask(() => {
+    // The panel body: its size comes from the shell layout, never from this content.
+    if (el.parentElement) new ResizeObserver(() => scheduleDecide()).observe(el.parentElement, { box: 'border-box' });
+  });
 
   return {
     el,
@@ -828,11 +858,18 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     markDirty() {
       dirty = true;
     },
+    get view() {
+      return view;
+    },
     frame(v) {
       voice = v;
       const limited = !!bridge.status.unisonLimited && model.playing;
       if (guardNote.hidden === limited) guardNote.hidden = !limited;
-
+      if (full.guard.hidden === limited) full.guard.hidden = !limited;
+      if (view === 'full') {
+        if (full.frame(v, dirty, model.playing)) dirty = false;
+        return;
+      }
       if (page === 'osc') {
         const canvas = pad.canvas.hidden ? scope : pad.canvas;
         if (isOnScreen(canvas) && (dirty || model.playing)) {

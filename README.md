@@ -29,7 +29,9 @@ port (`plugin/`). If you change the core's output on purpose, regenerate the fix
 (`npx vitest run -u tests/golden.test.ts`) and update the port (see `docs/PLUGIN.md`).
 
 The smoke test uses `/usr/bin/google-chrome` by default (`CHROME=/path` to override;
-`SHOTS=dir` saves screenshots at 1440×900, 1180×820, 1920×1080 and 390×844, dark and light).
+`SHOTS=dir` saves screenshots at 1440×900, 1180×820, 1920×1080 and 390×844, dark and light,
+plus `collapse-*.png`: the default layout, Sequence collapsed with a Synth voice at both laptop
+sizes, Generate + Sequence collapsed and the maximized Timeline).
 
 ## GitHub Pages
 
@@ -53,6 +55,33 @@ the Timeline strip, and Voice | Sequence. Panels scroll internally when their co
 doesn't fit. Narrower screens get one scrolling column
 of the same panels, each collapsible. Dark theme by default; the sun / moon button
 switches (the choice is remembered).
+
+- **Collapsing panels** (≥ 900 px): the chevron at the left of each panel header collapses
+  it. Next to an open neighbour it becomes a slim vertical strip, which takes the width
+  back for the neighbour (e.g. Sequence collapsed: the Voice panel spans the row); when
+  its whole row is collapsed (or it is the Timeline) it becomes a header-height bar and
+  the other rows take the height. Strips and bars keep a one-line status — Generate: the
+  tab (“Seed · batch of 8”), Wavetables: the shown wavetable, Timeline: the count and
+  selection, Voice: the voice and its type, Sequence: “→ V1 · 16 steps · 1.3” (the bar.beat
+  position while playing) — and a click expands them. **Maximize** (the button at the right
+  of a header, or double-click the header) gives that panel the whole content area (the
+  others collapse); click it again to restore the arrangement from before. A maximized
+  Timeline shows its waveforms in lanes (column by column, top to bottom). The arrangement
+  is saved with the session; the phone column keeps its own (there the chevrons collapse
+  sections as before; Wavetables starts collapsed).
+- **Synth voice, full view**: when the Voice panel has room for it (e.g. Sequence collapsed
+  at 1440×900 or 1180×820, or other rows collapsed), a Synth voice shows every control at
+  once instead of the section tabs: Osc A and Osc B (wavetable, octave / semitones / fine,
+  unison copies / detune / spread, level, window and position — X / Y on 2D / Rows — with a
+  small scope or X/Y pad each), Mix (sub level / waveform / octave, noise and its colour,
+  ring, FM, sync), Filter (mode, cutoff, resonance, drive, saturate, key tracking, envelope
+  amount, velocity), the Amp / Filter / Pitch / Mod envelopes, LFO 1–3, Output (level, pan,
+  width, octave, glide / legato, bend range), the presets and the mod matrix. Controls are
+  small knobs: drag up / down (Shift: fine), or focus one and use the arrow keys (PageUp /
+  PageDown: bigger steps, Home / End); double-click resets tuning, unison, pan and ± amounts. The
+  value shows under each knob, or — when height is tight — in place of its label while you
+  hover, focus or drag it. The choice follows the panel's size, not the window's; when the
+  full view doesn't fit, the tabbed pages return.
 
 - **Generate → Seed**: pick from the library (basic waves, formula presets by
   category, Perlin noise, cellular automaton, simulations — dynamical systems,
@@ -240,7 +269,7 @@ switches (the choice is remembered).
 - **Session** (transport bar): your work is saved in the browser automatically (IndexedDB,
   a second or two after each change and when the tab is hidden) and restored on reload —
   waveforms, wavetables, voices (Synth settings included), your voice presets, sequences, tempo, the selected voice tab and Generate
-  tab, Breed parents and the Breed operator / bias / walk / mutation / batch mode; not
+  tab, collapsed / maximized panels (wide and phone layouts separately), Breed parents and the Breed operator / bias / walk / mutation / batch mode; not
   undo history. The menu shows the autosave status and has **New session**
   (asks first; clears the autosaved copy), **Export…** (one `.mkwz` file) and
   **Import…** (asks first; replaces the current session). If the browser blocks storage
@@ -276,3 +305,4 @@ when other modifier keys are held. Controls show theirs in tooltips (and `aria-k
 | Delete / Shift+Delete | Wavetables editor: empty / remove the selected slot |
 | Alt / Ctrl / ⌘ (while dragging) | Copy instead of move within a wavetable |
 | Esc | MIDI popover: cancel Learn; while dragging a waveform: cancel the drag (no other shortcut acts during a drag) |
+| ↑ / ↓ (← / →) | Synth full view knob (when focused): step the value; PageUp / PageDown or Shift+↑ / ↓: bigger steps; Home / End: minimum / maximum |

@@ -68,7 +68,9 @@ src/
                         bridge.ts (AudioContext owner, state → messages, mip building)
   ui/                   Plain DOM + canvas panels (no framework), styles.css tokens
                         (dark default, [data-theme=light]); dom.ts panel() = one shell
-                        panel (header tools, body; collapsible on the narrow shell);
+                        panel (header: collapse, tools, maximize; collapsed strip / bar
+                        with a status; body); layout.ts the shell layout state (collapsed /
+                        maximized panels per layout, saved as UI prefs);
                         context.ts UiState (selected voice tab, shared by voices.ts
                         and sequences.ts); canvas.ts drawing + theme (setTheme,
                         stored in localStorage); transport.ts the top bar;
@@ -82,7 +84,10 @@ src/
                         drop zones); waveDrag.ts (pointer-event waveform drags: ghost,
                         drop zones, auto-scroll); voicePad.ts (X/Y pad of
                         a 2D / Rows voice or Synth oscillator); synthPanel.ts (the
-                        Synth voice's Osc · Mix · Filter · Env · Mod pages); presets.ts
+                        Synth voice's Osc · Mix · Filter · Env · Mod pages, or the full
+                        view when the panel has room); synthFull.ts (the full view: every
+                        control as knob groups); knob.ts (small rotary control,
+                        role=slider, and choice cells); presets.ts
                         (preset picker, ⋯ menu, voice copy / paste); playing.ts (what a voice plays, as the
                         engine resolves it); midi.ts (transport MIDI picker,
                         LED, popover with routing and CC map); shortcuts.ts
@@ -244,7 +249,8 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   interpolation and user wavetables, stored verbatim so new fields round-trip without
   schema changes; decode validates known fields and keeps unknown ones), voices (all
   params; unknown keys kept, bad values → defaults), sequences, BPM, and UI prefs
-  (`UiState.exportPrefs()`: the selected voice tab, the Generate tab, the Breed operator, bias, walk, mutation and batch mode; Breed parents are model state). Not saved: undo
+  (`UiState.exportPrefs()`: the selected voice tab, the Generate tab, the shell layout —
+  `layoutWide` / `layoutNarrow`: `{ collapsed: PanelKey[], max, restore }` —, the Breed operator, bias, walk, mutation and batch mode; Breed parents are model state). Not saved: undo
   history, transport play state. Theme, timeline view and MIDI settings stay per browser
   in localStorage.
   - Two parts: **meta** (`SessionMeta`, small, JSON-safe, `format` + `version`), rewritten
@@ -336,11 +342,54 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 
 ## UI layout
 
-- **Wide shell (≥ 900 px)**: `.app` is a 100dvh grid (8 px gutters): a 40 px transport
-  bar, then `.shell` with three columns (45 / 22 / 33 fr) and three rows
-  (55 fr / timeline strip 110 px (100 px under 840 px tall, 124 px on large screens) /
-  45 fr): `gen gen wt` · `tl tl tl` · `voice seq seq`. No page scroll; each panel
-  body scrolls if its content overflows. The Seed tab fills Generate (library column;
+- **Wide shell (≥ 900 px)**: `.app` is a 100dvh grid (8 px gutters; one `minmax(0, 1fr)`
+  column, so content never widens it): a 40 px transport bar, then `.shell`, a flex column
+  of three rows — `#shell-top` (Generate 67 | Wavetables 33, flex 55), the Timeline strip
+  (110 px; 100 px under 840 px tall, 124 px on large screens) and `#shell-bottom` (Voice 45
+  | Sequence 55, flex 45). `.shell-row` is `display: contents` in the phone column, so the
+  panels keep one order there. No page scroll; each panel body scrolls if its content
+  overflows.
+- **Collapsing** (`ui/layout.ts`): one controller holds, per layout (wide / narrow), the
+  collapsed panels and the maximized one with the arrangement to restore; it is saved with
+  the session (UI prefs `layoutWide` / `layoutNarrow`; pure helpers `toggled`,
+  `maximized`, `wideShapes`, `parseLayoutState` are unit-tested). It only writes classes,
+  never reads layout: `.panel.collapsed` + `data-shape` = `strip` (collapsed beside an open
+  sibling: `flex: 0 0 32px`, a vertical `writing-mode` button with the title and status)
+  or `bar` (its whole row collapsed, or the Timeline: the row / strip becomes `flex: 0 0
+  34px`, the button horizontal), and on `.shell` `top-collapsed` / `tl-collapsed` /
+  `bottom-collapsed` (both outer rows collapsed: the Timeline grows) and `data-max`.
+  `flex-grow` / `flex-basis` transition in 160 ms (none with reduced motion); canvases
+  follow through their ResizeObservers. A collapsed panel's `isOpen()` is false, so its
+  views don't draw; `onToggle` marks them dirty on expand. Each panel gives a status
+  function (`Panel.setStatus`), polled ≤ 5 / s from the frame loop only while collapsed.
+  Maximize (header button or double-click on the header's empty parts) collapses all the
+  others; any manual collapse / expand ends it (the restore point is dropped). The
+  Wavetables editor (`wt-editing`, Generate hidden) counts Wavetables as alone in its row,
+  and opening it expands Wavetables in both layouts.
+- **Timeline lanes**: when the strip is taller than two cells (≥ 193 px, e.g. maximized)
+  the waveforms run in lanes, column by column (index = column × lanes + lane), one lane per
+  96 px; hit testing, carets and scrolling to the selection use the same mapping
+  (`#timeline-grid[data-lanes]`). At its usual height it is one lane, as before.
+- **Synth voice, full view** (`ui/synthFull.ts`): the Synth panel shows either its pages or
+  every control at once. A ResizeObserver on the Voice panel body (border box, so the
+  panel's own content can't feed back), debounced 90 ms (a collapse transition settles
+  first), and a change of the oscillators' wavetable shapes trigger `decide()`: below
+  860 × 180 px of body (or on the narrow shell) the pages; otherwise it tries the full view
+  roomy (46 px cells, values under the knobs) then dense (35 px cells, the value replaces
+  the label on hover / focus / drag), with as many rows of cells per column as the height
+  allows (`--rows`, 5–9), and keeps the first that doesn't overflow (scroll sizes of the
+  view, its two parts and the body). The groups are CSS grids flowing in columns of
+  `--rows` cells (`grid-auto-flow: column`; labels and selects have no intrinsic width,
+  so a group is exactly its columns wide) and share the spare width; the envelopes are one
+  group with a column each. The presets, the type select and the mod matrix are the
+  pages' own elements, moved into the side column while the full view shows (so their ids
+  and handlers stay). Knobs (`ui/knob.ts`): `role="slider"` with `aria-valuenow` / `-min` /
+  `-max` / `-valuetext`, arrow / Page / Home / End keys (each press one undo step; Shift+←/→
+  stays the page-wide waveform move), pointer drag with capture (`touch-action: none`;
+  160 px for the full range, Shift ×4 finer; release = one undo step), double-click resets
+  tuning, unison, pan and ± amounts (`reset`); the arc is an SVG path with `pathLength` 100 and a dash array. At 1440×900
+  and 1180×820 with only Sequence collapsed it fits (roomy at 1440, dense at 1180, also
+  with both oscillators on 2D wavetables); the Synth panel body has 6 / 8 px padding. The Seed tab fills Generate (library column;
   formula row; wave + spectrum flex; batch row + strip), and so does Mutate (library
   column | source + parameters row; wave + spectrum flex; batch row + strip; the batch
   row wraps when the column is narrower than ~700 px, via a container query), and so
@@ -353,8 +402,8 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   classes (`.gen-tab`, `.gen-lib`, `.gen-strip`, …).
 - **Narrow shell (< 900 px)**: the same panels in the same order, one scrolling
   column, each collapsible (Wavetables starts collapsed); the transport bar is sticky.
-- **Wavetables editor**: `.shell.wt-editing` hides Generate and gives Wavetables the
-  whole first row (`grid-area: 1 / 1 / 2 / 4`); the panel body becomes a 200 px list |
+- **Wavetables editor**: `.shell.wt-editing` hides Generate, so Wavetables takes the
+  whole first row; the panel body becomes a 200 px list |
   view | 244 px write-head grid (one column on the narrow shell: the list a scrolling
   row, the view 240 px tall). The view is a virtualized canvas like the Timeline (a
   sticky stage in a scroller sized to the content; only visible slots drawn; redrawn when
@@ -431,7 +480,7 @@ UI events ──► AppModel (actions, emits topics) ──► UI sections (redr
 - The audio thread never runs an FFT or allocates per sample. LFO/window/mip
   resolution runs every 64 samples (fixed per-voice arrays of 8 live tables).
 - UI: one rAF loop, ≤ 25 fps while playing. Sections redraw only when open (not
-  collapsed on the narrow shell), on screen (IntersectionObserver; this also covers
+  collapsed, on either shell), on screen (IntersectionObserver; this also covers
   content scrolled out of a panel) and dirty or animating. The timeline is a
   virtualized horizontal strip on one sticky canvas (only visible cells drawn; cell
   pitch 63 px, height = strip height), with voice-window tints / edges / bands drawn

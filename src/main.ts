@@ -14,6 +14,7 @@ import { setTheme, storedTheme, throttle } from './ui/canvas';
 import { UiState, type FrameView, type UiContext } from './ui/context';
 import { h } from './ui/dom';
 import { buildGenerate } from './ui/generate';
+import { layout } from './ui/layout';
 import { buildMidi } from './ui/midi';
 import { buildSequences } from './ui/sequences';
 import { buildSessionMenu, downloadBytes, showNotice, stamp, type SessionHooks } from './ui/session';
@@ -112,6 +113,8 @@ if (plugin) {
 }
 
 // ---- UI ----
+// Collapsed / maximized panels: saved with the session's UI prefs (per layout).
+layout.init(ctx.ui);
 const generate = buildGenerate(ctx);
 const timeline = buildTimeline(ctx);
 const wavetables = buildWavetables(ctx);
@@ -150,13 +153,13 @@ root.replaceChildren(
     'main',
     { class: 'shell' },
     h('h1', { class: 'sr-only' }, 'mkwavez — evolving wavetable synth'),
-    generate.el,
-    wavetables.el,
+    // Rows of the wide shell (display: contents in the phone column).
+    h('div', { class: 'shell-row', id: 'shell-top' }, generate.el, wavetables.el),
     timeline.el,
-    voices.el,
-    sequences.el,
+    h('div', { class: 'shell-row', id: 'shell-bottom' }, voices.el, sequences.el),
   ),
 );
+layout.refresh();
 
 installShortcuts(ctx, { togglePlay: () => void togglePlay(ctx) });
 
@@ -175,7 +178,10 @@ model.on('notice', () => {
 const views: FrameView[] = [generate.view, timeline.view, wavetables.view, voices.view, sequences.view];
 const limiter = throttle(40);
 const loop = (now: number) => {
-  if (!model.playing || limiter(now)) for (const v of views) v.frame(now);
+  if (!model.playing || limiter(now)) {
+    for (const v of views) v.frame(now);
+    layout.tick(now);
+  }
   requestAnimationFrame(loop);
 };
 requestAnimationFrame(loop);
@@ -188,7 +194,7 @@ bridge.onStatus = (s) => {
 };
 
 // Debug handle for the console and smoke tests.
-(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, setTheme, midi, webMidi, saver, session, plugin };
+(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, layout, setTheme, midi, webMidi, saver, session, plugin };
 
 for (const n of boot.notices) {
   showNotice(

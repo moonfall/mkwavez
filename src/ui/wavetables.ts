@@ -4,6 +4,7 @@ import { Mix } from '../core/wavetablePlayback';
 import { cssColor, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, isNarrowShell, panel, voiceColorVar } from './dom';
+import { layout } from './layout';
 import { playingMix, voicePositions } from './playing';
 import { buildWavetableEditor } from './wavetableEditor';
 
@@ -55,8 +56,8 @@ function lastWritten(wt: Wavetable): { x: number; y: number } | null {
  */
 export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model, bridge } = ctx;
-  // Collapsed by default on the narrow shell.
-  const sec = panel('sec-wavetables', 'Wavetables', { collapsed: true });
+  // Collapsed by default in the phone column (layout.ts).
+  const sec = panel('sec-wavetables', 'Wavetables', 'wt');
   let current: WavetableId = model.wavetables[0].id;
   const cur = () => model.wavetable(current) ?? model.wavetables[0];
 
@@ -72,6 +73,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
     if (on === expanded) return;
     expanded = on;
     document.querySelector('.shell')?.classList.toggle('wt-editing', on);
+    layout.refresh();
     sec.el.classList.toggle('expanded', on);
     if (on) sec.open();
     for (const e of [chips, box, summary, newBtn, editBtn]) e.hidden = on;
@@ -418,6 +420,10 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
   model.on('voices', refresh);
   model.on('transport', () => (dirty = true));
   sec.onToggle(() => (dirty = true));
+  sec.setStatus(() => {
+    const wt = cur();
+    return `${expanded ? 'Editing ' : ''}${wt.name} · ${shapeLabel(wt)} · ${wt.live ? 'Live' : 'Frozen'}`;
+  });
   new ResizeObserver(() => (dirty = true)).observe(box);
   onThemeChange(() => (dirty = true));
   refresh();

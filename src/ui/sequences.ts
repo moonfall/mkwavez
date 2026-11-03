@@ -58,7 +58,7 @@ let clipboard: number[] | null = null;
  */
 export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const { model, bridge, ui } = ctx;
-  const sec = panel('sec-sequences', 'Sequence');
+  const sec = panel('sec-sequences', 'Sequence', 'seq');
   sec.meta.id = 'seq-summary';
   /** Shown sequence per voice (when a voice has more than one). */
   const shownSeq = new Map<number, number>();
@@ -314,6 +314,13 @@ export function buildSequences(ctx: UiContext): { el: HTMLElement; view: FrameVi
   model.on('transport', () => (dirty = true));
   onThemeChange(() => (dirty = true));
   sec.onToggle(() => (dirty = true));
+  // Collapsed: "→ V1 · 16 steps · 1.3" (the transport position while playing).
+  sec.setStatus(() => {
+    const v = ui.voiceId === null ? undefined : model.voice(ui.voiceId);
+    const s = cur();
+    if (!v) return 'No voice selected';
+    return `→ ${v.name}${s ? ` · ${s.length} steps` : ' · no sequence'}${model.playing ? ` · ${playPos()}` : ''}`;
+  });
   new ResizeObserver(() => (dirty = true)).observe(box);
   sync();
 
