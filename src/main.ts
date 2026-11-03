@@ -1,11 +1,14 @@
 import './ui/styles.css';
+import { MidiController } from './app/midi';
 import { AppModel } from './app/model';
 import { AudioBridge } from './audio/bridge';
+import { WebMidi } from './browser/webMidi';
 import { generateBasic } from './core/generators';
 import { setTheme, storedTheme, throttle } from './ui/canvas';
 import { UiState, type FrameView, type UiContext } from './ui/context';
 import { h } from './ui/dom';
 import { buildGenerate } from './ui/generate';
+import { buildMidi } from './ui/midi';
 import { buildSequences } from './ui/sequences';
 import { buildTimeline } from './ui/timeline';
 import { buildTransport } from './ui/transport';
@@ -41,6 +44,15 @@ model.setBatchTarget(v1.id, true);
 model.select(model.timeline[0].id);
 model.clearUndo();
 
+// ---- MIDI: input events go straight to the router and the worklet (not via the frame loop) ----
+const midi = new MidiController(model, (evs) => bridge.sendMidi(evs), () => ctx.ui.voiceId, {
+  get: (k) => localStorage.getItem(k),
+  set: (k, v) => localStorage.setItem(k, v),
+});
+const webMidi = new WebMidi();
+webMidi.onMessage = (data, source) => midi.handle(data, source);
+webMidi.onSourceLost = (source) => midi.sourceLost(source);
+
 // ---- UI ----
 const generate = buildGenerate(ctx);
 const timeline = buildTimeline(ctx);
@@ -49,7 +61,7 @@ const voices = buildVoices(ctx);
 const sequences = buildSequences(ctx);
 const root = document.getElementById('app')!;
 root.replaceChildren(
-  buildTransport(ctx),
+  buildTransport(ctx, buildMidi(ctx, midi, webMidi)),
   h(
     'main',
     { class: 'shell' },
@@ -71,9 +83,12 @@ const loop = (now: number) => {
 };
 requestAnimationFrame(loop);
 
+// A remembered MIDI input (not 'off') reconnects on load; 'off' never prompts for access.
+if (midi.settings.input !== 'off') void webMidi.select(midi.settings.input);
+
 bridge.onStatus = (s) => {
   document.body.dataset.step = String(s.step);
 };
 
 // Debug handle for the console and smoke tests.
-(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, setTheme };
+(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, setTheme, midi, webMidi };

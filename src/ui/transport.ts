@@ -2,8 +2,11 @@ import { currentTheme, setTheme } from './canvas';
 import type { UiContext } from './context';
 import { h, icon, ICONS } from './dom';
 
-/** Transport bar: name, play/stop, tempo, undo, status (tables, sample rate, audio), theme. */
-export function buildTransport(ctx: UiContext): HTMLElement {
+/**
+ * Transport bar: name, play/stop, tempo, undo, `extra` (the MIDI controls), status (tables,
+ * sample rate, audio), theme.
+ */
+export function buildTransport(ctx: UiContext, extra: Node | null = null): HTMLElement {
   const { model, bridge } = ctx;
   const play = h('button', { class: 'play primary', id: 'play', 'aria-label': 'Play' }, icon(ICONS.play));
   const undoCount = h('span', { class: 'undo-count' }, '0');
@@ -95,6 +98,7 @@ export function buildTransport(ctx: UiContext): HTMLElement {
     tempo,
     undo,
     h('span', { class: 'grow' }),
+    extra,
     status,
     theme,
   );

@@ -283,10 +283,125 @@ canvas {
   align-items: center;
   justify-content: center;
 }
+/* MIDI: LED + input picker + short status + popover button (popover in the top layer). */
+.midi {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.midi-led {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.midi-led[data-state='on'] {
+  background: color-mix(in srgb, var(--new) 45%, var(--surface));
+}
+.midi-led[data-state='error'] {
+  background: var(--danger);
+}
+.midi-led.blink {
+  background: var(--new);
+  box-shadow: 0 0 6px var(--new);
+}
+.transport .midi select {
+  height: 28px;
+  width: auto;
+  max-width: 170px;
+  min-width: 70px;
+  flex: 0 1 auto;
+  font-size: 12px;
+}
+.midi-status {
+  font-size: 12px;
+  color: var(--danger);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 130px;
+}
+.transport .midi-open {
+  font-size: 12px;
+  padding: 0 8px;
+}
+.midi-pop {
+  position: fixed;
+  inset: 52px 8px auto auto;
+  margin: 0;
+  width: min(360px, calc(100vw - 16px));
+  max-height: calc(100dvh - 64px);
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.35);
+  font-size: 12px;
+}
+.midi-pop[hidden] {
+  display: none;
+}
+.midi-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.midi-pop p {
+  margin: 8px 0;
+}
+.midi-msg {
+  color: var(--text-2);
+}
+.midi-msg-error {
+  color: var(--danger);
+}
+.midi-omni {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.midi-cc {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+}
+.midi-cc-row {
+  display: grid;
+  grid-template-columns: 1fr auto 56px 118px auto;
+  align-items: center;
+  gap: 6px;
+}
+.midi-cc-pre {
+  color: var(--muted);
+}
+.midi-cc-row input[type='number'] {
+  height: 24px;
+  width: 56px;
+  padding: 0 4px;
+}
+.midi-learn.seg-on {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
 @media (max-width: 640px) {
   .transport .status,
   .undo-label {
     display: none;
+  }
+  .midi-status {
+    display: none;
+  }
+  .transport .midi select {
+    max-width: 96px;
   }
 }
 @media (max-width: 420px) {

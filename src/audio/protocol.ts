@@ -1,5 +1,6 @@
 /** Messages between the main thread and the AudioWorklet (structured-clone plain data). */
 import type { EngineStatus } from '../core/engine/engine';
+import type { MidiVoiceEvent } from '../core/midi';
 import type { SequenceData } from '../core/sequence';
 import type { VoiceParams } from '../core/voice';
 
@@ -16,6 +17,8 @@ export type ToWorklet =
   | { type: 'sequence/set'; sequence: SequenceData }
   | { type: 'sequence/remove'; id: number }
   | { type: 'transport'; playing: boolean; bpm: number }
+  /** Routed MIDI note / bend events, applied in order (see SynthEngine.applyMidi). */
+  | { type: 'midi'; events: MidiVoiceEvent[] }
   /** Ops applied in order, atomically (no audio rendered in between). */
   | { type: 'batch'; ops: ToWorklet[] };
 

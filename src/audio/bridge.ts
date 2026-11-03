@@ -5,6 +5,7 @@
  */
 import type { AppModel } from '../app/model';
 import { emptyStatus, type EngineStatus } from '../core/engine/engine';
+import type { MidiVoiceEvent } from '../core/midi';
 import { buildMipSet } from '../core/mipmap';
 import type { TableId, WaveTable } from '../core/table';
 import { playbackIds } from '../core/wavetable';
@@ -30,6 +31,7 @@ export class AudioBridge {
   onState?: (s: AudioState) => void;
   onStatus?: (s: EngineStatus) => void;
 
+  private stateFns: ((s: AudioState) => void)[] = [];
   private ctx: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
   private sentTables = new Set<TableId>();
@@ -84,9 +86,15 @@ export class AudioBridge {
     }
   }
 
+  /** Extra state listeners (besides `onState`, which the transport bar owns). */
+  onStateChange(fn: (s: AudioState) => void): void {
+    this.stateFns.push(fn);
+  }
+
   private setState(s: AudioState): void {
     this.state = s;
     this.onState?.(s);
+    for (const fn of this.stateFns) fn(s);
   }
 
   private onMessage(m: FromWorklet): void {
@@ -216,6 +224,15 @@ export class AudioBridge {
         this.post({ type: 'sequence/remove', id });
       }
     }
+  }
+
+  /**
+   * Routed MIDI events, straight from the MIDI input handler (not the frame loop). They
+   * join this task's batch, so a CC's voice/set and a note land in the same quantum.
+   * Dropped while audio isn't running.
+   */
+  sendMidi(events: readonly MidiVoiceEvent[]): void {
+    if (events.length) this.post({ type: 'midi', events: [...events] });
   }
 
   private syncTransport(): void {
