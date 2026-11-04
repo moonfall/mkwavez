@@ -14,6 +14,7 @@ import { KS_MAX_PASS, ksExcite, ksPasses } from '../core/generators';
 import { KMAX } from '../core/constants';
 import { SEQ_SOURCES, sequenceValues } from '../core/generators';
 import type { SequenceParams } from '../core/generators';
+import { rdState, StepCache, type RdParams, type RdState } from '../core/generators';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -794,5 +795,30 @@ viz('number-sequences', {
     const v = sequenceValues(i.params as unknown as SequenceParams, i.index);
     if (Math.round(i.params.source) === 4) rhythmCircle(g, w, h, c, v);
     else valueCells(g, w, h, c, v);
+  },
+});
+
+// Reaction-diffusion: V around the ring over time (downward), the shown snapshot outlined.
+const rdCache = new StepCache<RdState>(2, 64);
+viz('reaction-diffusion', {
+  axis: (i) => ['', `V around the ring · step ${Math.max(0, Math.round(i.params.start)) + i.index * clamp(Math.round(i.params.steps), 1, 1000)}`, ''],
+  draw: (g, w, h, i, c) => {
+    const steps = clamp(Math.round(i.params.steps), 1, 1000);
+    const start = Math.max(0, Math.round(i.params.start));
+    const last = start + (i.count - 1) * steps;
+    const nr = clamp(Math.floor(h / 3), 8, 48);
+    const at = Array.from({ length: nr }, (_, r) => Math.round((last * r) / (nr - 1)));
+    const shownStep = start + i.index * steps;
+    // The row nearest the shown snapshot shows exactly that snapshot.
+    let best = 0;
+    at.forEach((s, r) => {
+      if (Math.abs(s - shownStep) < Math.abs(at[best] - shownStep)) best = r;
+    });
+    at[best] = shownStep;
+    const rows = at.map((s) => rdState(i.params as unknown as RdParams, i.seed, s, rdCache).slice());
+    const hi = Math.max(1e-9, ...rows.map((r) => Math.max(...r)));
+    const heat = heatScale(c);
+    cells(g, 0, 0, w, h, rows, (v) => heat((v / hi) * 2 - 1));
+    rowMark(g, 0, 0, w, h, nr, best, c.line);
   },
 });
