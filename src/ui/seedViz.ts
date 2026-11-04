@@ -5,20 +5,34 @@
  * library id; builders without one (basic waves, plain spectral sums, …) hide the plot.
  * Formula presets draw the unedited preset (seed.ts hides the plot once it is edited).
  */
+import { KMAX } from '../core/constants';
+import {
+  caRows,
+  contourPoints,
+  DYN_MAP_LABELS,
+  dynControl,
+  dynIterate,
+  KS_MAX_PASS,
+  ksExcite,
+  ksPasses,
+  LIFE_RULES,
+  lifeBoard,
+  rdState,
+  SEQ_SOURCES,
+  sequenceValues,
+  splinePoints,
+  splineRaw,
+  StepCache,
+  type Board,
+  type LifeParams,
+  type RdParams,
+  type RdState,
+  type SequenceParams,
+  type SplineParams,
+} from '../core/generators';
+import { fbm, noiseField } from '../core/perlin';
 import type { ParamValue } from '../core/table';
 import { parseColor } from './canvas';
-import { fbm, noiseField } from '../core/perlin';
-import { caRows } from '../core/generators';
-import { DYN_MAP_LABELS, dynControl, dynIterate } from '../core/generators';
-import { KS_MAX_PASS, ksExcite, ksPasses } from '../core/generators';
-import { KMAX } from '../core/constants';
-import { SEQ_SOURCES, sequenceValues } from '../core/generators';
-import type { SequenceParams } from '../core/generators';
-import { rdState, StepCache, type RdParams, type RdState } from '../core/generators';
-import { LIFE_RULES, lifeBoard, StepCache as LifeCache, type Board, type LifeParams } from '../core/generators';
-import { splinePoints, splineRaw } from '../core/generators';
-import type { SplineParams } from '../core/generators';
-import { contourPoints } from '../core/generators';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -828,7 +842,7 @@ viz('reaction-diffusion', {
 });
 
 // Life-like CA: the board at the shown generation; the line read (row / column / diagonal) highlighted.
-const lifeCache = new LifeCache<Board>(2, 64);
+const lifeCache = new StepCache<Board>(2, 64);
 viz('life-like-ca', {
   axis: (i) => {
     const gen = Math.max(0, Math.round(i.params.start)) + i.index * clamp(Math.round(i.params.step), 1, 16);
