@@ -98,6 +98,14 @@ export function mutateBatch(req: MutateRequest, source: WaveTable, mate?: WaveTa
   return out;
 }
 
+/**
+ * The mutation revision a recipe was made at: an integer from 1 to MUTATION_REV; anything
+ * else (absent — recipes from before revisions — or not a valid revision) is 1.
+ */
+export function recipeRev(v: unknown): number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MUTATION_REV ? v : 1;
+}
+
 /** Re-render a 'mutate' recipe; `resolve` supplies parent table data by id. */
 export function renderMutateRecipe(r: Recipe, resolve: (id: TableId) => Float32Array | undefined): Float32Array {
   const src = resolve(r.parents[0]);
@@ -110,8 +118,7 @@ export function renderMutateRecipe(r: Recipe, resolve: (id: TableId) => Float32A
     ctx = { breedPool: [mate] };
   }
   const amount = Number(r.params.amount);
-  // The mutation revision the recipe was made at (recipes from before revisions: 1).
-  const rev = r.params.rev === undefined ? 1 : Number(r.params.rev);
+  const rev = recipeRev(r.params.rev);
   if (r.params.mode === 'chain') {
     let x = src;
     const steps = (r.batch?.index ?? 0) + 1;

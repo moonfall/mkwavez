@@ -28,7 +28,7 @@ The first run of this report (main 2821b1b) found the problems below; each is fi
 | *Digits of π*: 8 identical waveforms (n only rotated the digits) | a new 16-digit window per waveform: `seq(p, 0, 16, 0, 16*n)` | static, path 0 dB, 100% duplicates, 18.6 | path 57 dB, 0% duplicates, 77.9 |
 | *Spline* default batch barely moves | default batch adds a point per waveform | travel 5.2 dB (path 6), default 44.2 | travel 23 dB (path 42), default 71.6 |
 | *Reverse* no-op below 0.5, silent at 0.5 | phases morph toward the reversed cycle's, magnitudes kept | silent waveforms in 8 batches | none (now phase-only, by nature) |
-| *Hard sync* chained at 1 silent from step 4 | read ratio capped so the lowest harmonic stays ≤ h36.5 | silent in 3 chain batches, chain score 57.7 | none, chain score 71.6 |
+| *Hard sync* chained at 1 silent from step 4 | where revision 1 is silent, the ratio drops to keep the lowest harmonic at h71.5 (single applications otherwise unchanged) | silent in 3 chain batches, chain score 57.7 | none, chain score 69.5 |
 | *Decimate* near no-op at 0.25 | hold 2^(7·a^0.35) samples (same ends) | 0.1 / 0.0 / 0.1 dB at 0.25, score 28.7 | 4.6 / 1.6 / 4.2 dB, score 47.1 |
 | *Resonant low-pass* near no-op at 0.25 | cutoff 1.5·96^(1−a) (h144 → h1.5) | 0.8 / 0.1 / 0.8 dB at 0.25, score 40.7 | 5.6 / 0.9 / 5.6 dB, score 54.3 |
 | Breed, 3 parents at bias 0.5 = parent B: every child is B | default bias between two parents (¾ for three) | 100% duplicates, path 0 | Crossfade path 29 dB, Genetic 60 dB, 0% duplicates |
@@ -279,7 +279,7 @@ Formula presets (15): mean overall 68.6, mean default 68.6; generator / paramete
 - **Source-dependent mutations.** Many waveshapers (*Self phase mod*, *Noise warp*, *Phase warp*, *Chebyshev mix*, *Rectify*, *Logistic shaper*, *Ring mod*, *Palindrome*) change the formant wave by 9–25 dB but a saw by ≤ 1 dB at 0.25. A likely reason: smearing energy between neighbouring harmonics barely changes a dense, smooth 1/k spectrum in dB, while it fills the valleys of a formant spectrum.
 - **Weak at 0.25.** *Decimate* and *Resonant low-pass* now act from small amounts (4.6 and 5.6 dB on a saw at 0.25). Still weak: *Crush* (28 levels at 0.25, about 1 dB), *Blur*, *Comb*, *Jitter* and *Spread up* (1–3 dB). In all, 21 of the 48 mutations change a saw by ≤ 2 dB at 0.25 (23 before).
 - **Reverse is a phase morph.** Each harmonic's phase moves toward the reversed cycle's, magnitudes kept, so it is phase-only here (0.0 dB) and never silent. On a sine-phase waveform (saw, square, any sum of sines) the reversed cycle is the same sound; on others the waveform changes shape, which matters before a nonlinear step.
-- **Chains.** *Hard sync* chained at amount 1 no longer collapses: the read ratio is capped so the source's lowest harmonic lands at most at h36.5, and the non-integer cap leaves a sync edge that brings the low harmonics back for the next step (chain score 72). *Toward sine*, *Smooth* and *Spectral contrast* chained at 1 collapse to ≤ 3 harmonics within a few steps, which is expected.
+- **Chains.** *Hard sync* chained at amount 1 no longer collapses: where revision 1 would be silent the read ratio drops so the source's lowest harmonic lands at h71.5, and that non-integer ratio leaves a sync edge that brings the low harmonics back for the next step; single applications are otherwise unchanged. *Toward sine*, *Smooth* and *Spectral contrast* chained at 1 collapse to ≤ 3 harmonics within a few steps, which is expected.
 - **Phase-only by design.** *Zero phase*, *Schroeder phase*, *Phase randomize*, *Scramble* and *Reverse* leave every magnitude untouched (0.0 dB), and *Half-cycle swap* at amount 1 is −x(t+½), with the same magnitudes. These change the cycle's shape and matter before a nonlinear step, not on their own.
 - **Lin vs log.** Lin batches generally score higher than log batches. Log crowds 7 of 8 waveforms into small amounts, which for most mutations means near-duplicates.
 
@@ -287,8 +287,8 @@ Each mutation × {saw, formant, noisy} × amounts {0.1, 0.25, 0.5, 1} × {lin, l
 
 | Mutation | Group | Mean score | Effect @ 0.25 lin (saw / formant / noisy, dB) | Effect @ 1 (mean) | Score lin / log / chain | Dup | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| Hard sync | Waveshape | 74.8 | 5.1 / 17.7 / 7.9 | 19.6 | 76 / 77 / 72 | 0% |  |
 | Stretch | Spectral | 74.6 | 5.0 / 18.0 / 9.6 | 16.2 | 77 / 66 / 81 | 10% |  |
+| Hard sync | Waveshape | 74.1 | 5.1 / 17.7 / 7.9 | 19.6 | 76 / 77 / 70 | 0% |  |
 | Window impose | Time | 71.5 | 5.9 / 15.4 / 7.4 | 18.9 | 75 / 76 / 64 | 6% |  |
 | Self phase mod | Waveshape | 68.4 | 0.6 / 24.6 / 10.7 | 12.8 | 68 / 67 / 70 | 3% |  |
 | Phase warp | Waveshape | 65.1 | 0.9 / 17.6 / 6.3 | 12.2 | 62 / 57 / 76 | 15% |  |

@@ -41,6 +41,9 @@ describe('mutateBatch', () => {
     const { rev: _, ...oldParams } = rv.recipe.params;
     const old = renderRecipe({ ...rv.recipe, params: oldParams }, { resolveTable: resolve });
     expect(old.every((v) => v === 0)).toBe(true);
+    // An invalid revision counts as 1 too.
+    for (const bad of ['2', 2.5, 0, 99, null, Number.NaN])
+      expect(same(renderRecipe({ ...rv.recipe, params: { ...oldParams, rev: bad as never } }, { resolveTable: resolve }), old), String(bad)).toBe(true);
     expect(same(old, mutate('reverse', saw.data, 0.5, 1, {}, 1))).toBe(true);
     // Hard sync chained at 1: revision 1 goes silent from the 4th step, revision 2 never.
     const chain = mutateBatch({ mutation: 'sync', amount: 1, seed: 3, mode: 'chain', count: 8 }, saw);

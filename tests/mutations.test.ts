@@ -154,6 +154,22 @@ describe('mutations (core port)', () => {
     expect((lp1[70] * 70) / lp1[1]).toBeLessThan(0.5);
   });
 
+  it('Hard sync: a single application is revision 1 wherever that is audible, on any source', () => {
+    const N = 2048;
+    const sineAt = (k: number) => Float32Array.from({ length: N }, (_, i) => Math.sin((2 * Math.PI * k * i) / N));
+    const saw = generateBasic('saw', 0).data;
+    const peakOf = (x: Float32Array) => x.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    for (const x of [saw, src, sineAt(10), sineAt(20), sineAt(40), sineAt(64)])
+      for (let a = 0; a <= 1.0001; a += 0.05) {
+        const v1 = mutate('sync', x, a, 0, {}, 1);
+        const v2 = mutate('sync', x, a, 0);
+        if (peakOf(v1) > 0) expect(maxDiff(v1, v2), `a ${a.toFixed(2)}`).toBe(0);
+        else expect(peakOf(v2), `a ${a.toFixed(2)}: revision 1 silent, revision 2 audible`).toBeGreaterThan(0.5);
+      }
+    // sin(40p): the knob acts until the read leaves the band (revision 1 then went silent).
+    expect(maxDiff(mutate('sync', sineAt(40), 0.25, 0), sineAt(40))).toBeGreaterThan(0.1);
+  });
+
   it('Decimate and Resonant low-pass act at the default amount (0.25), with the same ends as revision 1', () => {
     const saw = generateBasic('saw', 0).data;
     const formant = generateBasic('square', 0).data;

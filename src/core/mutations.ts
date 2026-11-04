@@ -6,8 +6,8 @@
  * Revisions: a mutation whose mapping was changed keeps its old behaviour at the old
  * revision, so stored recipes re-render as they were made. Recipes and Shape steps record
  * the revision they were made at (`rev`); those without one are revision 1.
- *  - 2: Reverse morphs the harmonic phases (never silent); Hard sync caps its read ratio
- *       on high-only sources (chains stay audible); Decimate and Resonant low-pass act from
+ *  - 2: Reverse morphs the harmonic phases (never silent); Hard sync falls back to a lower
+ *       ratio only where revision 1 is silent (chains stay audible); Decimate and Resonant low-pass act from
  *       small amounts (their old curves spent the first third of the range above the band).
  */
 import { KMAX, TABLE_SIZE } from './constants';
@@ -37,7 +37,7 @@ export const MUTATIONS = [
     group: 'Waveshape',
     id: 'sync',
     label: 'Hard sync',
-    hint: 'Read x at i·r mod N, r = 1 + 3a (capped so the lowest harmonic stays below h36: chains stay audible)',
+    hint: 'Read x at i·r mod N, r = 1 + 3a (where that would be silent, e.g. chained at 1, r drops so it stays audible)',
   },
   { group: 'Waveshape', id: 'ring', label: 'Ring mod', hint: '× (1−a) + a·sin(m·p), m = 2–7 seeded', seeded: true },
   { group: 'Waveshape', id: 'rect', label: 'Rectify', hint: 'Blend toward 2·|x| − 1' },
@@ -108,8 +108,8 @@ export type MutationId = (typeof MUTATIONS)[number]['id'];
 /** The current mutation revision (new recipes and Shape steps record it; see the header). */
 export const MUTATION_REV = 2;
 
-/** Hard sync (rev ≥ 2): the result's lowest harmonic stays at or below this (non-integer: a sync edge stays). */
-const SYNC_CAP = 36.5;
+/** Hard sync (rev ≥ 2) fallback: the source's lowest harmonic lands here (non-integer: a sync edge stays). */
+const SYNC_FALLBACK = KMAX - 0.5;
 /** Hard sync: harmonics below this fraction of the strongest don't count as the lowest. */
 const SYNC_FLOOR = 1e-3;
 export type MutationInfo = (typeof MUTATIONS)[number];
@@ -331,19 +331,24 @@ export function mutate(
     case 'pm':
       return shapeFrom((i) => lerpAt(x, i + a * N * 0.3 * x[i]));
     case 'sync': {
-      let r = 1 + a * 3;
-      if (rev >= 2 && r > 1) {
-        // Reading a source whose lowest harmonic is L at ratio r puts it at L·r: a chain at
-        // a = 1 (r = 4 per step) left the band (silence) from the 4th step. Capped so L·r
-        // stays at SYNC_CAP — not an integer, so the restart leaves a sync edge, which
-        // brings the low harmonics back for the next step.
+      const r = 1 + a * 3;
+      const read = (q: number) => Float64Array.from({ length: N }, (_, i) => lerpAt(x, (i * q) % N));
+      const y = shape(read(r));
+      if (rev >= 2 && r > 1 && y.every((v) => v === 0)) {
+        // Only where revision 1 is silent: a source whose lowest harmonic is L read at an
+        // integer-like ratio r puts everything at L·r > KMAX — e.g. a chain at a = 1 (r = 4
+        // per step) from its 4th step. Fall back to the largest ratio that keeps L in the
+        // band, minus half a harmonic: not an integer, so the restart leaves a sync edge,
+        // which brings the low harmonics back for the next chain step. Everywhere else the
+        // result is revision 1's, exactly.
         const m = harmonicMagnitudes(x, KMAX);
         const floor = Math.max(...m) * SYNC_FLOOR;
         let L = 1;
         while (L < KMAX && !(m[L] >= floor)) L++;
-        if (L * r > SYNC_CAP) r = Math.max(1, SYNC_CAP / L);
+        const q = Math.max(1, SYNC_FALLBACK / L);
+        if (q < r) return shape(read(q));
       }
-      return shapeFrom((i) => lerpAt(x, (i * r) % N));
+      return y;
     }
     case 'ring': {
       const m = 2 + rand.int(6);

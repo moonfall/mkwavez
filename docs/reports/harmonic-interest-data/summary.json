@@ -2117,21 +2117,6 @@
  ],
  "mutate": [
   {
-   "item": "sync",
-   "label": "Hard sync",
-   "group": "Waveshape",
-   "meanScore": 74.8,
-   "effectSaw": 5.1,
-   "effectFormant": 17.7,
-   "effectNoisy": 7.9,
-   "effectFull": 19.6,
-   "scoreLin": 75.9,
-   "scoreLog": 77,
-   "scoreChain": 71.6,
-   "dupFrac": 0,
-   "notes": ""
-  },
-  {
    "item": "stretch",
    "label": "Stretch",
    "group": "Spectral",
@@ -2144,6 +2129,21 @@
    "scoreLog": 66.1,
    "scoreChain": 80.8,
    "dupFrac": 0.1,
+   "notes": ""
+  },
+  {
+   "item": "sync",
+   "label": "Hard sync",
+   "group": "Waveshape",
+   "meanScore": 74.1,
+   "effectSaw": 5.1,
+   "effectFormant": 17.7,
+   "effectNoisy": 7.9,
+   "effectFull": 19.6,
+   "scoreLin": 75.9,
+   "scoreLog": 77,
+   "scoreChain": 69.5,
+   "dupFrac": 0,
    "notes": ""
   },
   {

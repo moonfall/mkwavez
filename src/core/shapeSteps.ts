@@ -256,7 +256,8 @@ export function normalizeStep(raw: unknown, id: string): ShapeStep | null {
     }
     case 'mutation': {
       const ids = MUTATION_CHOICES.map((m) => m.id);
-      const rev = typeof o.rev === 'number' && o.rev >= 2 ? { rev: Math.min(MUTATION_REV, Math.round(o.rev)) } : {};
+      // A valid later revision is kept; anything else (absent, invalid) is revision 1.
+      const rev = typeof o.rev === 'number' && Number.isInteger(o.rev) && o.rev >= 2 && o.rev <= MUTATION_REV ? { rev: o.rev } : {};
       return { ...base, op, mutation: pick(o.mutation, ids, 'smooth'), ...rev };
     }
     case 'gain':

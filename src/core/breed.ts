@@ -293,7 +293,8 @@ export function breed(parents: readonly Float32Array[], params: BreedParams): Fl
   const seed = params.seed >>> 0;
   let y = breedRaw(params.op, parents, w, seed);
   const amt = mutationAmount(params.rate, w);
-  if (amt > 0) y = mutate('jitter', y, amt, deriveSeed(seed, MUTATION_STREAM));
+  // Jitter at revision 1, pinned: a later revision of it must not change stored Breed recipes.
+  if (amt > 0) y = mutate('jitter', y, amt, deriveSeed(seed, MUTATION_STREAM), {}, 1);
   return y;
 }
 
