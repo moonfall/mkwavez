@@ -153,6 +153,28 @@ switches (the choice is remembered).
   select the last waveform added (undo restores the selection); Add +N refuses batches of
   copies (a sweep at bias 0; a generation with nothing seeded or one parent holding all
   the weight) and both need two parents.
+- **Generate → Sample**: waveforms from audio. Sources (left column): **Input** (a
+  microphone or line input) and **Tab / system audio** (a shared tab's or the system's
+  audio) in the browser — each meters, records takes (up to 60 s; optionally starting on
+  sound and stopping on silence) and always keeps the last 10 s for **Grab**; **mkwavez
+  output** renders a voice holding a note (1–10 s, through its own filter, unison and
+  envelopes) as a take, in the browser and the plugin alike; **Audio file…** opens or
+  takes dropped files (WAV, AIFF, MP3, AAC, Ogg, FLAC: whatever the browser decodes; the
+  plugin opens them through its own dialog). Takes stay until the page reloads. Click the
+  take to set the cursor, drag to select, double-click for all (←/→ move the cursor).
+  Three modes: **Single cycle** — a fixed repeating waveform at the cursor: the pitch
+  detected (YIN; or set by hand, with fine tune), several cycles averaged, the cut snapped
+  to a zero crossing and its loop seam crossfaded; the strip shows the next cycle groups
+  (the shared N) to pick the cleanest. **Series** — frames across the selection to scan
+  later (its own frame count, up to 256): evenly, at onsets or where the timbre changes,
+  each at its tracked or a fixed pitch, optionally smoothed into its neighbours; Add batch
+  can also make them a 1D wavetable named after the take. **Harmonic snapshot** — cycles
+  rebuilt from the partials measured across the selection (window, harmonic count, phases
+  measured / zero / Schroeder, off-harmonic energy folded or dropped, a noise floor), for
+  noisy, chorused or slightly inharmonic sounds. Either way the fundamental is
+  phase-aligned for smooth scanning (or left as cut). The basis plot shows the cut in the
+  take, the frames as a stack, or the measured partials. Sampled waveforms are saved with
+  the session as samples (the take isn't).
 - **Generate → Grid**: build a 2D block of waveforms from two batch operations.
   **Columns**: another tab's batch (Seed, Mutate, Breed or Shape — exactly what its Add +N
   would add, Shape chip included; N is the shared batch size, “Edit in …” jumps there) or

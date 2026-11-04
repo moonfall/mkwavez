@@ -138,14 +138,21 @@ hard folding can alias below h72; a drawing can sweep (start → end drawing) bu
 no symmetry tool or grid snapping yet. On phones the chain list sits above the plot (it
 doesn't collapse like the libraries).
 
-## M4 — Sample tab
+## M4 — Sample tab (done)
 
-- Mic (getUserMedia) and file input; waveform view of the recording.
-- Pitch detection (YIN / autocorrelation), manual override.
-- Single-cycle extraction: zero-crossing/phase-aligned cycle, resampled to 2048,
-  then shape().
-- Batch: N cycles spread across a recording (evenly or by onset), giving a timeline
-  trajectory of the sound's evolution.
+- Sources: input device and tab / system audio (browser: recorder worklet, takes up to
+  60 s, start on sound / stop on silence, Grab = the last 10 s), mkwavez output (a voice
+  rendered offline through the TS engine — browser and plugin), audio files (open / drop;
+  the plugin's native dialog). Takes kept until reload.
+- Pitch detection (YIN through an FFT autocorrelation), manual override, fine tune.
+- Single cycle: zero-crossing cut, cycles averaged, seam crossfade, aligned or as cut;
+  candidates = the next cycle groups.
+- Series: frames across a selection (even, onsets, timbre change), tracked or fixed pitch,
+  smoothing; its own frame count; Add batch can make a 1D wavetable.
+- Harmonic snapshot: partials measured over a window (fold / drop off-harmonic energy,
+  floor), resynthesised with measured / zero / Schroeder phases.
+- Not yet: live input in the plugin (needs an audio input / sidechain bus and capture in
+  the native engine); a take's waveform zoom; saving takes with the session.
 
 ## Wavetables — phase 1 (done)
 

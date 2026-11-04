@@ -157,6 +157,7 @@ async function run(label, url, browser) {
   await wordingCheck(page, 'after Synth voice');
   await page.click('#voice-tab-1');
   await page.waitForTimeout(500);
+  await sampleChecks(page, tlCount);
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/${label}-mobile.png`, fullPage: true });
   // Stress: fill past the cap while playing; eviction keeps the cap and the worklet catches up.
   const t0 = Date.now();
@@ -282,6 +283,147 @@ async function run(label, url, browser) {
   }
   assert(errors.length === 0, `no console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
   await page.close();
+}
+
+/** A 16-bit mono WAV of `seconds` at `sr` from f(t) (for the Sample tab's file import). */
+function wavBytes(seconds, sr, f) {
+  const n = Math.round(seconds * sr);
+  const b = Buffer.alloc(44 + n * 2);
+  b.write('RIFF', 0);
+  b.writeUInt32LE(36 + n * 2, 4);
+  b.write('WAVE', 8);
+  b.write('fmt ', 12);
+  b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20);
+  b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(sr, 24);
+  b.writeUInt32LE(sr * 2, 28);
+  b.writeUInt16LE(2, 32);
+  b.writeUInt16LE(16, 34);
+  b.write('data', 36);
+  b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) b.writeInt16LE(Math.max(-32767, Math.min(32767, Math.round(f(i / sr) * 32767))), 44 + i * 2);
+  return b;
+}
+
+/**
+ * Generate → Sample (wide shell): an audio file becomes a take (its pitch detected); Single
+ * cycle's strip is N cycle candidates and Add shown adds one sampled waveform; Series uses its
+ * own frame count and Add batch also makes a 1D wavetable named after the take; Harmonic
+ * snapshot adds without one when unticked; dragging on the take selects; resampling renders a
+ * voice as a take; the live input (Chrome's fake microphone) meters, records and grabs; every
+ * mode fits the panel without scrolling at 1440 × 900 and 1180 × 820. Restores the phone viewport.
+ */
+async function sampleChecks(page, tlCount) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.click('#tab-sample');
+  await page.waitForTimeout(200);
+  assert((await page.isVisible('#smp-empty')) && (await page.isDisabled('#smp-add-batch')), 'Sample: empty until there is a take');
+  // A file: a 220 Hz tone brightening over 3 s.
+  let ph = 0;
+  const wav = wavBytes(3, 44100, (t) => {
+    ph += (2 * Math.PI * 220) / 44100;
+    let s = 0;
+    for (let k = 1; k <= 12; k++) s += Math.pow(k, -(2.2 - (1.4 * t) / 3)) * Math.sin(k * ph);
+    return 0.3 * s * Math.min(1, t * 20);
+  });
+  await page.setInputFiles('#smp-file', { name: 'tone.wav', mimeType: 'audio/wav', buffer: wav });
+  const N = Number(await page.inputValue('#smp-n'));
+  await page.waitForFunction((n) => document.querySelectorAll('.smp-take').length === 1 && document.querySelectorAll('#smp-strip .gen-card').length === n, N, { timeout: 5000 });
+  assert((await page.textContent('#smp-take-name')) === 'tone' && (await page.textContent('#smp-take-meta')).includes('A3'), 'a file becomes a take; its pitch is detected (A3)');
+  const hz = Number(await page.inputValue('#smp-hz'));
+  assert(Math.abs(hz - 220) < 1, `Single cycle at the detected pitch (${hz} Hz); ${N} candidates (the shared N)`);
+  // Add shown: one sampled waveform.
+  const n0 = await tlCount();
+  await page.click('#smp-add-shown');
+  const r1 = await M(() => window.mkwavez.model.timeline.at(-1).recipe);
+  assert((await tlCount()) === n0 + 1 && r1.op === 'sample' && r1.params.mode === 'Single cycle' && r1.params.take === 'tone', `Add shown adds a sampled waveform (${JSON.stringify(r1.params)})`);
+  // Series: its own frame count; Add batch makes a wavetable too.
+  await page.click('#smp-mode-1');
+  await page.fill('#smp-frames-n', '12');
+  await page.press('#smp-frames-n', 'Enter');
+  await page.waitForFunction(() => document.querySelectorAll('#smp-strip .gen-card').length === 12, null, { timeout: 5000 });
+  assert(Number(await page.inputValue('#smp-n')) === N, `Series: 12 frames (its own count; the shared N stays ${N})`);
+  const wts0 = await M(() => window.mkwavez.model.wavetables.length);
+  await page.click('#smp-add-batch');
+  const wt = await M(() => {
+    const m = window.mkwavez.model;
+    const w = m.wavetables.at(-1);
+    return { name: w.name, slots: w.rows[0].length, shape: w.shape, last: m.timeline.at(-1).recipe.params.mode, count: m.wavetables.length };
+  });
+  assert(
+    (await tlCount()) === n0 + 13 && wt.count === wts0 + 1 && wt.name === 'tone' && wt.shape === '1d' && wt.slots === 12 && wt.last === 'Series',
+    `Series Add batch: 12 frames and a 1D wavetable “tone” of them (${JSON.stringify(wt)})`,
+  );
+  // Dragging on the take selects a region: the frames move into it.
+  const firstLabel = async () => (await page.textContent('#smp-strip .gen-card:nth-child(1) .gen-card-label')).trim();
+  const before = await firstLabel();
+  const box = await page.locator('#smp-take').boundingBox();
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.9, box.y + box.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForFunction((b) => document.querySelector('#smp-strip .gen-card .gen-card-label').textContent.trim() !== b, before, { timeout: 3000 });
+  const at0 = Number((await firstLabel()).match(/([\d.]+) s/)?.[1]);
+  assert(Math.abs(at0 - 1.5) < 0.03, `dragging on the take selects: the first frame moves to the selection start (${await firstLabel()})`);
+  // Harmonic snapshot, without a wavetable.
+  await page.click('#smp-mode-2');
+  await page.uncheck('#smp-make-wt');
+  await page.waitForFunction(() => document.querySelectorAll('#smp-strip .gen-card').length === 12, null, { timeout: 5000 });
+  const wts1 = await M(() => window.mkwavez.model.wavetables.length);
+  const n1 = await tlCount();
+  await page.click('#smp-add-batch');
+  assert(
+    (await tlCount()) === n1 + 12 && (await M(() => window.mkwavez.model.wavetables.length)) === wts1 && (await M(() => window.mkwavez.model.timeline.at(-1).recipe.params.mode)) === 'Harmonic snapshot',
+    'Harmonic snapshot Add batch: 12 rebuilt cycles, no wavetable when unticked',
+  );
+  await page.check('#smp-make-wt');
+  // Every mode fits without scrolling (1440 × 900, 1180 × 820).
+  for (const [w, h] of [
+    [1440, 900],
+    [1180, 820],
+  ]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(150);
+    for (const m of [0, 1, 2]) {
+      await page.click(`#smp-mode-${m}`);
+      await page.waitForTimeout(150);
+      const over = await M(() => {
+        const b = document.querySelector('#sec-generate .panel-body');
+        return b.scrollHeight - b.clientHeight;
+      });
+      assert(over <= 0, `${w}×${h}: Sample (${['Single cycle', 'Series', 'Harmonic'][m]}) fits without scrolling (+${over} px)`);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.click('#smp-mode-0');
+  // Resample: render V1 holding C3.
+  await page.click('#smp-src-output');
+  await page.selectOption('#smp-note', '48');
+  await page.fill('#smp-len', '1');
+  await page.click('#smp-render');
+  await page.waitForFunction(() => document.querySelectorAll('.smp-take').length === 2, null, { timeout: 5000 });
+  const rn = (await page.textContent('#smp-take-name')).trim();
+  await page.waitForFunction(() => Math.abs(Number(document.querySelector('#smp-hz').value) - 130.8) < 1, null, { timeout: 5000 });
+  assert(rn.startsWith('V1') && rn.endsWith('C3'), `resample renders the voice holding the note as a take (${rn}, 130.8 Hz)`);
+  // Live input (the fake microphone): meters, records, grabs.
+  await page.click('#smp-src-input');
+  await page.waitForFunction(() => document.querySelector('#smp-meter .smp-db').textContent !== '—', null, { timeout: 8000 });
+  assert(true, 'live input opens and meters');
+  await page.click('#smp-record');
+  await page.waitForTimeout(1500);
+  await page.click('#smp-record');
+  await page.waitForFunction(() => document.querySelectorAll('.smp-take').length === 3 || document.querySelector('#smp-status').textContent.includes('silence'), null, { timeout: 5000 });
+  const recorded = await M(() => document.querySelectorAll('.smp-take').length);
+  await page.click('#smp-grab');
+  await page.waitForTimeout(200);
+  const after = await M(() => document.querySelectorAll('.smp-take').length);
+  assert(recorded === 3 && after === 4, `live input records a take and grabs the last seconds (${recorded}, ${after} takes)`);
+  await page.click('#smp-src-file'); // closes the input
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.click('#tab-seed');
+  await page.waitForTimeout(150);
 }
 
 /**
@@ -3730,7 +3872,8 @@ async function sessionChecks(label, url, browser) {
 const browser = await chromium.launch({
   executablePath: CHROME,
   headless: true,
-  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
+  // A fake microphone (a beep) without a permission prompt, for Generate → Sample's live input.
+  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
 });
 let failed = false;
 const servers = [];

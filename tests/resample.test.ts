@@ -50,3 +50,21 @@ describe('resample (offline voice render)', () => {
     expect(again.data).toEqual(take.data);
   });
 });
+
+describe('adding a batch as a wavetable (Sample → Series)', () => {
+  it('adds the tables and a 1D wavetable of them, uniquely named, in one undo step', () => {
+    const m = new AppModel(16);
+    m.clearUndo();
+    const gen = ['sine', 'tri', 'saw'].map((w) => generateBasic(w as 'sine', 0));
+    const wt = m.addAsWavetable(gen, 'Take 1')!;
+    expect(wt.name).toBe('Take 1');
+    expect(wt.shape).toBe('1d');
+    expect(wt.rows[0]).toEqual(m.timeline.slice(-3).map((t) => t.id));
+    expect(m.addAsWavetable(gen, 'Take 1')!.name).toBe('Take 1 2');
+    const n = m.timeline.length;
+    m.undo();
+    expect(m.timeline.length).toBe(n - 3);
+    expect(m.wavetables.some((w) => w.name === 'Take 1 2')).toBe(false);
+    expect(m.wavetables.some((w) => w.name === 'Take 1')).toBe(true);
+  });
+});

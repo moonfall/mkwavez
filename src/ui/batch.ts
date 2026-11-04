@@ -9,17 +9,17 @@ export const MAX_BATCH = 64;
 /** − N + stepper over the shared batch size; ids `${p}-n`, `${p}-n-dec`, `${p}-n-inc`. */
 export function buildStepper(
   p: string,
-  opts: { count(): number; setCount(n: number): void },
+  opts: { count(): number; setCount(n: number): void; max?: number; label?: string; short?: string },
 ): { el: HTMLElement; sync(n: number): void } {
   const input = h('input', {
     type: 'number',
     id: `${p}-n`,
     min: 1,
-    max: MAX_BATCH,
+    max: opts.max ?? MAX_BATCH,
     step: 1,
     value: opts.count(),
     inputmode: 'numeric',
-    'aria-label': 'Batch size N',
+    'aria-label': opts.label ?? 'Batch size N',
   });
   input.addEventListener('change', () => {
     const v = Math.round(Number(input.value));
@@ -30,7 +30,7 @@ export function buildStepper(
     'div',
     { class: 'gen-stepper', role: 'group', 'aria-label': 'Batch size' },
     h('button', { id: `${p}-n-dec`, 'aria-label': 'Fewer waveforms', onclick: () => opts.setCount(opts.count() - 1) }, '−'),
-    h('label', { class: 'gen-n-label' }, 'N', input),
+    h('label', { class: 'gen-n-label', title: opts.label ?? 'Batch size N' }, opts.short ?? 'N', input),
     h('button', { id: `${p}-n-inc`, 'aria-label': 'More waveforms', onclick: () => opts.setCount(opts.count() + 1) }, '+'),
   );
   return {

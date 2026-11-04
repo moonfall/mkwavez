@@ -6,6 +6,7 @@ import { MAX_BATCH } from './batch';
 import { buildSeedPanel } from './seed';
 import { buildShapePanel } from './shapeTab';
 import { buildGridPanel } from './gridTab';
+import { buildSamplePanel } from './sampleTab';
 
 export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const sec = panel('sec-generate', 'Generate', 'gen');
@@ -87,19 +88,14 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   });
   panels.set('Grid', grid.el);
 
-  // ---- placeholders ----
-  const soon: Record<string, string> = {
-    Sample: 'Extract single cycles from the microphone or an audio file.',
-  };
-  for (const name of ['Sample']) {
-    const p = h(
-      'div',
-      { role: 'tabpanel', id: `panel-${name.toLowerCase()}`, class: 'placeholder' },
-      h('strong', {}, `${name}: coming soon`),
-      h('p', { class: 'hint', style: 'margin:6px 0 0' }, soon[name]),
-    );
-    panels.set(name, p);
-  }
+  // ---- Sample panel ----
+  const sample = buildSamplePanel(ctx, {
+    count: () => count,
+    setCount,
+    onCount,
+    active: () => sec.isOpen() && currentTab === 'Sample',
+  });
+  panels.set('Sample', sample.el);
   sec.body.append(...panels.values());
   // The open tab is saved with the session (and follows an imported one).
   const savedTab = () => ctx.ui.pref('generateTab', 'Seed', (v) => tabNames.includes(v as (typeof tabNames)[number]));
@@ -126,8 +122,9 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
         breed.view.frame(now);
         shapeTab.view.frame(now);
         grid.view.frame(now);
+        sample.view.frame(now);
         // The open tab's preview feeds the Preview wavetables (unchanged data is a no-op).
-        const views: Record<string, GenerateView> = { Seed: seed.view, Mutate: mutate.view, Breed: breed.view, Shape: shapeTab.view, Grid: grid.view };
+        const views: Record<string, GenerateView> = { Seed: seed.view, Mutate: mutate.view, Breed: breed.view, Shape: shapeTab.view, Grid: grid.view, Sample: sample.view };
         const p = views[currentTab]?.preview();
         if (p) ctx.model.setPreview(p.batch, p.shown, p.grid ?? null);
       },

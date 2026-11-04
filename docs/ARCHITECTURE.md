@@ -21,6 +21,8 @@ src/
                         asFormula.ts ("Edit as formula": a library entry's params →
                         the equivalent formula; basic presets' source expressions),
                         seed.ts (Seed library entries + seedTable/seedBatch),
+                        (core/sample/: pitch.ts YIN pitch, extract.ts single cycle /
+                        series frames, harmonic.ts harmonic snapshots, for the Sample tab)
                         renderRecipe() to re-render a table from its recipe
                         (mutations need env.resolveTable for parent data)
     mutations.ts        prototype mutations (identity at amount 0; amount-mapping
@@ -97,7 +99,10 @@ src/
                         its basis plot: what each builder is based on), mutate.ts
                         (Mutate tab), breed.ts (Breed tab), shapeTab.ts (Shape
                         tab: chain column, step settings, the drawable plot, Apply
-                        to, Write back) and gridTab.ts (Grid tab: columns from
+                        to, Write back), sampleTab.ts (Sample tab: sources, takes,
+                        Single cycle / Series / Harmonic snapshot; browser/audioCapture.ts
+                        file decoding and live capture through audio/recorderWorklet.ts;
+                        app/resample.ts renders a voice offline as a take) and gridTab.ts (Grid tab: columns from
                         another tab's batch(), rows, preview grid, Into, Add grid); shapeOnAdd.ts (the Shape chip in Seed /
                         Mutate / Breed batch rows); library.ts (the
                         shared library list) and batch.ts (N stepper, card strip)

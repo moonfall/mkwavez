@@ -37,6 +37,7 @@ import {
   duplicateWavetable,
   FIRST_USER_WAVETABLE_ID,
   LAST_BATCH_WAVETABLE_ID,
+  make1D,
   moveSlot,
   newWavetable,
   normalizeWrite,
@@ -899,6 +900,19 @@ export class AppModel {
       this.voices = this.voices.map((v) => (v.id === into.voiceId ? { ...v, wavetableId: done.id, ...fullWindow(done) } : v));
     this.emit('wavetables', 'voices');
     return done;
+  }
+
+  /**
+   * Add a batch (selected as usual) and make it a new 1D wavetable named after `name` (made
+   * unique), in one undo step (the add's). Returns the wavetable, or null if the add was refused.
+   */
+  addAsWavetable(gen: readonly GeneratedTable[], name: string): Wavetable | null {
+    const added = this.addTables(gen, true);
+    if (!added.length) return null;
+    const wt = make1D(this.newWavetableId(), this.uniqueName(name.trim() || 'Wavetable'), added.map((t) => t.id));
+    this.wavetables = [...this.wavetables, wt];
+    this.emit('wavetables');
+    return wt;
   }
 
   /** A fresh user wavetable id (never reused, not even after undo / delete). */

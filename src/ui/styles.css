@@ -2944,10 +2944,12 @@ button.gen-card.failed .gen-card-label::after {
   }
   /* The batch row on one line where the panel is narrow (beside Wavetables): the "Batch" and
      "Seed" captions are for screen readers only, the buttons a little tighter. */
-  #panel-seed .gen-batch-head {
+  #panel-seed .gen-batch-head,
+  #panel-sample .gen-batch-head {
     gap: 6px 8px;
   }
   #panel-seed .gen-batch-head > .gen-h,
+  #panel-sample .gen-batch-head > .gen-h,
   #panel-seed .gen-seedbox > span:first-child {
     position: absolute;
     width: 1px;
@@ -2956,12 +2958,55 @@ button.gen-card.failed .gen-card-label::after {
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  #panel-seed .gen-adds button {
+  #panel-seed .gen-adds button,
+  #panel-sample .gen-adds button {
     padding: 0 10px;
   }
   /* The viewer gives way last: even Additive designer's 14 parameters fit at 1180 × 820. */
-  #panel-seed .gen-viewer {
+  #panel-seed .gen-viewer,
+  #panel-sample .gen-viewer {
     min-height: 52px;
+  }
+  /* Sample: the take view stays a fixed strip; the source column scrolls its takes only. */
+  #panel-sample .smp-src {
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* Height is scarce beside Wavetables (1180 × 820): a slimmer take view and gaps. */
+  #panel-sample .gen-main {
+    gap: 6px;
+  }
+  #panel-sample .smp-takebox {
+    height: 44px;
+  }
+  #panel-sample .smp-opt {
+    min-height: 24px;
+  }
+  /* One head line: the take's details give way first. */
+  #panel-sample .smp-head {
+    flex-wrap: nowrap;
+  }
+  #panel-sample .smp-head > * {
+    flex: none;
+  }
+  #panel-sample .smp-head > .smp-meta {
+    flex: 0 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #panel-sample .smp-head > .grow {
+    flex: 1 1 0;
+  }
+  #panel-sample .seed-params .field.smp-pitch > select {
+    grid-column: 2;
+  }
+  #panel-sample .seed-params .field.smp-pitch > input {
+    grid-column: 3;
+    width: 64px;
+    height: 22px;
+    font-size: 11px;
   }
   .seed-params > .seed-formula {
     grid-column: span 2;
@@ -3019,6 +3064,235 @@ button.gen-card.failed .gen-card-label::after {
     gap: 4px;
     padding: 0 0 2px;
   }
+}
+
+/* ---- sample (Generate → Sample) ---- */
+.smp-src {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.smp-h {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.smp-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.smp-opt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.smp-opt:has(input:checked) {
+  background: var(--accent-bg);
+  color: var(--accent-text);
+}
+.smp-opt input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.smp-opt small {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+.smp-srcbox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.smp-sel {
+  width: 100%;
+  min-width: 0;
+}
+.smp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.smp-row > select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+input.smp-num {
+  width: 64px;
+}
+.smp-unit {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.smp-shared {
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.smp-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 10px var(--font-mono);
+  color: var(--text-2);
+}
+.smp-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.smp-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--new) 70%, var(--v2) 88%, var(--danger));
+}
+button.smp-rec {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+button.smp-rec.on {
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+  font-weight: 600;
+}
+.smp-chk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.smp-chk input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.smp-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.smp-takes {
+  flex: 1 1 auto;
+  min-height: 26px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.smp-take {
+  display: flex;
+  align-items: center;
+  border-radius: 5px;
+}
+.smp-take.on {
+  background: var(--surface-2);
+  outline: 1px solid var(--accent);
+}
+button.smp-take-pick {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  text-align: left;
+}
+button.smp-take-pick small {
+  font: 10px var(--font-mono);
+  color: var(--muted);
+}
+button.smp-take-x {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+}
+.smp-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 26px;
+}
+.smp-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+.smp-modes button {
+  height: 24px;
+  font-size: 11px;
+  padding: 0 9px;
+}
+.smp-takebox {
+  position: relative;
+  height: 56px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.smp-takebox canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+.smp-tag {
+  position: absolute;
+  top: 3px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--accent-bg);
+  color: var(--accent-text);
+  font: 10px var(--font-mono);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.smp-tag:empty {
+  display: none;
+}
+.smp-empty {
+  margin: 0;
+  padding: 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.smp-tab.smp-none .smp-params,
+.smp-tab.smp-none .gen-viewer,
+.smp-tab.smp-none .gen-batch {
+  opacity: 0.45;
+}
+.smp-tab.smp-drop {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
 }
 
 /* ---- mutate (library, views, strip: the shared gen-* components above) ---- */
