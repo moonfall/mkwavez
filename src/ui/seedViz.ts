@@ -354,3 +354,16 @@ viz('superformula', {
     polar(g, w, h, (p) => Math.pow(Math.pow(Math.abs(Math.cos(1.5 * p)), m) + Math.pow(Math.abs(Math.sin(1.5 * p)), m), -0.5), c.accent);
   },
 });
+
+// CZ phase distortion: the phase map t → φ(t), knee at t = d = 0.5 − 0.45u (φ = 0.5).
+viz('cz-phase-dist', {
+  axis: (i) => ['t 0', `phase map · knee at t ${f2(0.5 - 0.45 * i.u)}`, '1'],
+  draw: (g, w, h, i, c) => {
+    const d = 0.5 - 0.45 * i.u;
+    const s = scale(w, h, 0, 1, 0, 1);
+    rules(g, s, w, h, [0.5], [0.5], c.grid);
+    plot(g, s, (t) => t, 0, 1, c.muted, 1, 2, [3, 3]);
+    plot(g, s, (t) => (t < d ? t / (2 * d) : 0.5 + (t - d) / (2 * (1 - d))), 0, 1, c.accent, 1.8, 400);
+    dot(g, s.x(d), s.y(0.5), 3, c.line);
+  },
+});
