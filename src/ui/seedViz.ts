@@ -402,3 +402,25 @@ viz('sync-sweep', {
     plot(g, s, (p) => (p % TAU < 1e-9 && p > 0 ? NaN : Math.sin(r * (p % TAU))), 0, 2 * TAU, c.accent, 1.8, 800);
   },
 });
+
+// Pluck position: a string pulled into a triangle at x = 0.05 + 0.45u of its length.
+viz('pluck-position', {
+  axis: (i) => ['nut', `plucked at ${f2(0.05 + 0.45 * i.u)}`, 'bridge'],
+  draw: (g, w, h, i, c) => {
+    const x = 0.05 + 0.45 * i.u;
+    const s = scale(w, h, 0, 1, -0.4, 1.1, 10);
+    rules(g, s, w, h, [], [0], c.grid, [3, 3]);
+    g.strokeStyle = c.accent;
+    g.lineWidth = 1.8;
+    g.beginPath();
+    g.moveTo(s.x(0), s.y(0));
+    g.lineTo(s.x(x), s.y(0.8));
+    g.lineTo(s.x(1), s.y(0));
+    g.stroke();
+    for (const e of [0, 1]) {
+      g.fillStyle = c.line;
+      g.fillRect(s.x(e) - 1.5, s.y(0) - 7, 3, 14);
+    }
+    dot(g, s.x(x), s.y(0.8), 3.5, c.line);
+  },
+});
