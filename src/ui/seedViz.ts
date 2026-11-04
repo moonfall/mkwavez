@@ -11,6 +11,7 @@ import { fbm, noiseField } from '../core/perlin';
 import { caRows } from '../core/generators';
 import { DYN_MAP_LABELS, dynControl, dynIterate } from '../core/generators';
 import { KS_MAX_PASS, ksExcite, ksPasses } from '../core/generators';
+import { KMAX } from '../core/constants';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -750,5 +751,36 @@ viz('karplus-strong', {
       g.fillStyle = k === i.index ? c.accent : c.muted;
       g.fillRect(x - (k === i.index ? 1.5 : 0.5), y - (k === i.index ? 6 : 3), k === i.index ? 3 : 1, k === i.index ? 12 : 6);
     }
+  },
+});
+
+// Additive designer: the slope envelope k^−s and the formant boost, harmonics 1…KMAX.
+viz('additive-designer', {
+  axis: (i) => ['h1', `k^−${f2(i.params.slope + (i.params.slopeEnd - i.params.slope) * i.u)} × formant boost`, `h${KMAX}`],
+  draw: (g, w, h, i, c) => {
+    const p = i.params;
+    const slope = p.slope + (p.slopeEnd - p.slope) * i.u;
+    const move = Math.pow(2, p.shift * i.u);
+    const odd = 1 + Math.min(0, p.balance);
+    const even = 1 - Math.max(0, p.balance);
+    const formants = [
+      [p.f1, p.w1, p.g1],
+      [p.f2, p.w2, p.g2],
+      [p.f3, p.w3, p.g3],
+    ];
+    const boost = (k: number) => 1 + formants.reduce((sum, [cc, ww, gg]) => (gg > 0 ? sum + gg * Math.exp(-(((k - cc * move) / Math.max(0.25, ww)) ** 2)) : sum), 0);
+    const maxBoost = Math.max(...Array.from({ length: KMAX }, (_, k) => boost(k + 1)));
+    const s = scale(w, h, 0.5, KMAX + 0.5, 0, 1.08);
+    g.strokeStyle = c.muted;
+    g.lineWidth = 1;
+    g.beginPath();
+    for (let k = 1; k <= KMAX; k++) {
+      const a = Math.pow(k, -slope) * (k === 1 ? 1 : k % 2 ? odd : even);
+      g.moveTo(s.x(k), s.y(0));
+      g.lineTo(s.x(k), s.y(a));
+    }
+    g.stroke();
+    plot(g, s, (k) => boost(k) / maxBoost, 1, KMAX, c.accent, 1.6, 400);
+    for (const [cc, , gg] of formants) if (gg > 0 && cc * move <= KMAX) dot(g, s.x(cc * move), s.y(boost(cc * move) / maxBoost), 2.5, c.accent);
   },
 });
