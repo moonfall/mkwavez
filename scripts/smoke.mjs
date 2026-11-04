@@ -2238,6 +2238,10 @@ async function shapeChecks(page, tlCount) {
   // Sweep: N cards, Add +N adds N shape waveforms; the source stays selected.
   await page.click('#shape-sweep');
   assert((await chain()).steps[1].amountEnd !== undefined && (await page.isVisible('#shape-amount-end')), 'Sweep adds the batch end amount');
+  assert(
+    !!(await page.$('#shape-step-2 .shape-step-sweep.on svg')) && !(await page.$('#shape-step-1 .shape-step-sweep.on')) && (await page.getAttribute('#shape-step-2 .shape-step-sweep', 'title')).startsWith('Sweeps 0% →'),
+    'the chain list shows the swept step’s ramp',
+  );
   await page.waitForFunction(() => document.querySelectorAll('#shape-strip .gen-card').length === 8, null, { timeout: 3000 });
   assert(await page.isVisible('#shape-add-batch'), 'Sweep gives N cards and Add +N');
   const n0 = await tlCount();

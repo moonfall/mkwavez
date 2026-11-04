@@ -412,13 +412,32 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   /** The step the view last followed: a newly selected step (any way) brings its view. */
   let viewFor: string | null = null;
 
+  /** A step's sweep in its row: a ramp from its amount to its end amount (empty when it doesn't sweep). */
+  const sweepMark = (s: Step): HTMLElement => {
+    const el = h('span', { class: 'shape-step-sweep', 'aria-hidden': 'true' });
+    if (s.amountEnd === undefined) return el;
+    const y = (a: number) => (10 - a * 9).toFixed(1);
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 11');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '11');
+    const poly = document.createElementNS(ns, 'polygon');
+    poly.setAttribute('points', `0,10.5 0,${y(s.amount)} 16,${y(s.amountEnd)} 16,10.5`);
+    svg.append(poly);
+    el.append(svg);
+    el.title = `Sweeps ${pct(s.amount)} → ${pct(s.amountEnd)} across the batch`;
+    el.classList.add('on');
+    if (!s.on) el.classList.add('off');
+    return el;
+  };
   let rowSig = '';
   let dragId: string | null = null;
   const thumbs: HTMLCanvasElement[] = [];
   const renderList = () => {
     const c = chain();
     const si = selIndex();
-    const sig = JSON.stringify([c.steps.map((s) => [s.id, s.op, s.on, stepSummary(s)]), si]);
+    const sig = JSON.stringify([c.steps.map((s) => [s.id, s.op, s.on, stepSummary(s), s.amount, s.amountEnd ?? null]), si]);
     if (sig === rowSig) return;
     const hadFocus = list.contains(document.activeElement);
     rowSig = sig;
@@ -450,7 +469,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
               toggleStep(s.id);
             },
           }),
-          h('span', { class: 'shape-step-name' }, h('b', {}, `${i + 1} · ${stepInfo(s.op).label}`), h('span', {}, stepSummary(s))),
+          h('span', { class: 'shape-step-name' }, h('b', {}, `${i + 1} · ${stepInfo(s.op).label}`), h('span', {}, sweepMark(s), stepSummary(s))),
           thumb,
           h(
             'button',

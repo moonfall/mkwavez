@@ -3063,6 +3063,21 @@ button.shape-step-on.on {
   color: var(--muted);
   text-decoration: line-through;
 }
+.shape-step-sweep.on {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+.shape-step-sweep svg {
+  display: block;
+}
+.shape-step-sweep svg polygon {
+  fill: var(--accent);
+  opacity: 0.85;
+}
+.shape-step-sweep.off svg polygon {
+  fill: var(--muted);
+}
 canvas.shape-step-thumb {
   width: 40px;
   height: 18px;
