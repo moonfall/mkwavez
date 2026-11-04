@@ -4502,7 +4502,8 @@ button.br-clear:hover {
   display: flex;
 }
 .grid-box .seg button {
-  flex: 1 1 0;
+  flex: 1 1 auto;
+  padding: 0 8px;
 }
 .grid-box > .gen-stepper {
   align-self: flex-start;

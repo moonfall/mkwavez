@@ -131,7 +131,9 @@ export function buildGridPanel(ctx: UiContext, opts: GridPanelOpts): { el: HTMLE
       const ids = (model.wavetable(LAST_BATCH_WAVETABLE_ID)?.rows[0] ?? []).filter((x): x is TableId => x !== null);
       const cols = ids.map((id) => model.table(id)).filter((t): t is WaveTable => !!t);
       if (!cols.length) return { error: 'Last batch is empty: add a batch first' };
-      return { cols, fresh: null };
+      const key = `last|${cols.map((t) => t.id).join(',')}`;
+      if (colsCache?.key !== key) colsCache = { key, v: { cols, fresh: null } };
+      return colsCache.v;
     }
     const r = opts.sources[P.source].batch(deadline);
     if (!('tables' in r)) return r;
@@ -562,7 +564,22 @@ export function buildGridPanel(ctx: UiContext, opts: GridPanelOpts): { el: HTMLE
   return {
     el,
     view: {
-      preview: () => null,
+      // The whole grid (once every cell is computed), row-major, the selected cell shown:
+      // Preview batch becomes this grid in 2D while the tab is open.
+      preview() {
+        const j = job;
+        if (!j || !('cols' in colsState) || doneCount(j) < j.cols.length * j.n || opRows(P.rows, row1) !== j.n) return null;
+        const { w, h: hh } = gridDims(j.cols.length, P.rows, P.swap);
+        const batch: Float32Array[] = [];
+        for (let y = 0; y < hh; y++)
+          for (let x = 0; x < w; x++) {
+            const d = P.swap ? cellData(j, y, x) : cellData(j, x, y);
+            if (!d) return null;
+            batch.push(d);
+          }
+        const s = gridXY(selCell.c, selCell.r, P.swap);
+        return { batch, shown: s.y * w + s.x, grid: { w, h: hh } };
+      },
       batch: () => ({ error: 'Grid: use Add grid' }),
       frame() {
         if (!opts.active() || !isOnScreen(el)) return;

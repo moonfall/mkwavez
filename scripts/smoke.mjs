@@ -2294,6 +2294,17 @@ async function gridChecks(page) {
     (await page.isVisible('#panel-grid')) && (await page.textContent('#grid-size')) === '6 × 5' && (await page.textContent('#grid-add-batch')) === 'Add grid (30)' && (await genFits()),
     'Grid tab: Seed columns × Shape rows, 6 × 5 previewed, fits the Generate panel',
   );
+  // While Grid is open, Preview batch is the grid in 2D; a voice on it plays the whole grid.
+  await page.waitForFunction(() => window.mkwavez.model.wavetable(6).shape === '2d', null, { timeout: 5000 });
+  const pv = await M(() => {
+    const m = window.mkwavez.model;
+    const wt = m.wavetable(6);
+    m.updateVoice(1, { wavetableId: 6 });
+    m.clearUndo();
+    const v = m.voice(1);
+    return { w: wt.rows[0].length, h: wt.rows.length, win: [v.windowStart, v.windowEnd, v.windowStartY, v.windowEndY].join() };
+  });
+  assert(pv.w === 6 && pv.h === 5 && pv.win === '0,5,0,4', `Preview batch becomes the 6 × 5 grid in 2D; V1 on it covers it all (${JSON.stringify(pv)})`);
   // A cell shows what made it.
   const box = await (await page.$('#grid-canvas')).boundingBox();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height - 6);
@@ -2332,6 +2343,10 @@ async function gridChecks(page) {
   assert(cells === '......../..####../..####../..####../......../........', `grid placed into the write window (${cells})`);
   await page.selectOption('#grid-into', 'new');
   await page.click('#tab-seed');
+  await page.waitForFunction(() => window.mkwavez.model.wavetable(6).shape === '1d', null, { timeout: 5000 });
+  const v1 = await M(() => window.mkwavez.model.voice(1));
+  assert(v1.windowStartY === 0 && v1.windowEndY === 0 && v1.windowEnd === (await M(() => window.mkwavez.model.wavetable(6).rows[0].length - 1)), 'back on Seed: Preview batch is 1D again, V1 over the whole batch');
+  await M(() => window.mkwavez.model.updateVoice(1, { wavetableId: 0 }));
 }
 
 async function shapeChecks(page, tlCount) {

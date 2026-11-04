@@ -161,7 +161,10 @@ switches (the choice is remembered).
   applied to each column; it warns when the rows wouldn't differ. **Row 1 = columns** puts
   the columns themselves in row 1 (on by default, turned off when the chain's first row
   starts far from the column); **⇄ Swap** runs the columns down Y instead. The preview
-  shows the whole grid; click a cell to see it over its column and what made it. **Into**:
+  shows the whole grid; click a cell to see it over its column and what made it. While
+  the tab is open the **Preview batch** wavetable is this grid in 2D (the selected cell is
+  **Preview**), so a voice on it can scan the grid on its X/Y pad before anything is
+  added; other tabs turn it back into a 1D batch. **Into**:
   a new 2D wavetable (the selected voice then plays it, window over the whole grid), the
   selected voice's window on its 2D wavetable, or a wavetable's write window — an existing
   window sets the grid's size (N = its width, rows = its height). **Add grid** (A or N)

@@ -149,6 +149,8 @@ export class AppModel {
   /** Generate's unadded waveforms (ids from PREVIEW_ID_BASE; never saved or undone) and the shown one. */
   previewTables: readonly WaveTable[] = [];
   previewShownId: TableId | null = null;
+  /** The preview's grid size (Generate → Grid): Preview batch is then 2D, row-major; null = 1D. */
+  previewGrid: { readonly w: number; readonly h: number } | null = null;
   private previewById = new Map<TableId, WaveTable>();
   private nextPreviewId = PREVIEW_ID_BASE;
   private tableIds = new IdAllocator(1);
@@ -197,11 +199,16 @@ export class AppModel {
     const sel = this.selectedId !== null && this.byId.has(this.selectedId) ? this.selectedId : null;
     const shown = this.previewShownId !== null && this.previewById.has(this.previewShownId) ? this.previewShownId : null;
     const batch = this.previewTables.map((t) => t.id);
+    const g = this.previewGrid && this.previewGrid.w * this.previewGrid.h === batch.length ? this.previewGrid : null;
+    // 1D: one row of the batch. Grid: h rows of w, a fixed 2D wavetable.
+    const want: TableId[][] = g ? Array.from({ length: g.h }, (_, y) => batch.slice(y * g.w, (y + 1) * g.w)) : [batch];
     const all = (w: Wavetable): Wavetable => {
-      const row = w.rows[0] ?? [];
-      if (w.rows.length === 1 && row.length === batch.length && row.every((id, i) => id === batch[i])) return w;
+      const same = w.shape === (g ? '2d' : '1d') && w.rows.length === want.length && w.rows.every((r, y) => r.length === want[y].length && r.every((id, x) => id === want[y][x]));
+      if (same) return w;
       changed = true;
-      return { ...w, rows: [batch], head: { x: batch.length, y: 0 } };
+      return g
+        ? { ...w, shape: '2d', fixed: true, rows: want, head: { x: 0, y: 0 } }
+        : { ...w, shape: '1d', fixed: false, rows: want, head: { x: batch.length, y: 0 } };
     };
     this.wavetables = this.wavetables.map((w) =>
       w.builtin === 'selection' ? one(sel)(w) : w.builtin === 'preview' ? one(shown)(w) : w.builtin === 'previewBatch' ? all(w) : w,
@@ -214,11 +221,14 @@ export class AppModel {
    * Unchanged data keeps its preview table (and id), so the engine only receives new ones.
    * Not undoable, not saved; emits 'preview'.
    */
-  setPreview(batch: readonly Float32Array[], shown: number): void {
+  setPreview(batch: readonly Float32Array[], shown: number, grid: { w: number; h: number } | null = null): void {
     const old = new Map(this.previewTables.map((t) => [t.data, t]));
     const tables = batch.map((data) => old.get(data) ?? makeTable(this.nextPreviewId++, { data, recipe: { op: 'preview', params: {}, seed: 0, parents: [] } }));
     const shownId = tables[Math.max(0, Math.min(tables.length - 1, shown))]?.id ?? null;
-    if (shownId === this.previewShownId && tables.length === this.previewTables.length && tables.every((t, i) => t === this.previewTables[i])) return;
+    const g = grid && grid.w * grid.h === tables.length ? { w: grid.w, h: grid.h } : null;
+    const sameGrid = g === this.previewGrid || (!!g && !!this.previewGrid && g.w === this.previewGrid.w && g.h === this.previewGrid.h);
+    if (sameGrid && shownId === this.previewShownId && tables.length === this.previewTables.length && tables.every((t, i) => t === this.previewTables[i])) return;
+    this.previewGrid = g;
     this.previewTables = tables;
     this.previewById = new Map(tables.map((t) => [t.id, t]));
     this.previewShownId = shownId;
@@ -237,17 +247,22 @@ export class AppModel {
   private followPreviewBatch(before: Wavetable | undefined): boolean {
     const after = this.wavetable(PREVIEW_BATCH_WAVETABLE_ID);
     if (!before || !after || before === after) return false;
-    const oldLen = before.rows[0]?.length ?? 0;
+    const oldW = before.rows[0]?.length ?? 0;
+    const oldH = before.shape === '2d' ? before.rows.length : 1;
+    const reshaped = before.shape !== after.shape;
     const full = fullWindow(after);
     const id = PREVIEW_BATCH_WAVETABLE_ID;
+    // A window over the whole batch (or any window, when it changes between 1D and a grid) covers the whole new one.
+    const whole = (w: { windowStart: number; windowEnd: number; windowStartY: number; windowEndY: number }) =>
+      reshaped || (w.windowStart === 0 && w.windowEnd >= oldW - 1 && (before.shape !== '2d' || (w.windowStartY === 0 && w.windowEndY >= oldH - 1)));
     let moved = false;
     this.voices = this.voices.map((v) => {
       let n = v;
-      if (n.wavetableId === id) n = n.windowStart === 0 && n.windowEnd >= oldLen - 1 ? { ...n, ...full } : clampVoiceWindow(n, after);
+      if (n.wavetableId === id) n = whole(n) ? { ...n, ...full } : clampVoiceWindow(n, after);
       const b = n.synth.b;
-      if (b.wavetableId === id)
-        n = b.windowStart === 0 && b.windowEnd >= oldLen - 1 ? { ...n, synth: { ...n.synth, b: { ...b, windowStart: full.windowStart, windowEnd: full.windowEnd } } } : clampOscB(n, after);
-      const same = n.windowStart === v.windowStart && n.windowEnd === v.windowEnd && n.synth.b.windowStart === v.synth.b.windowStart && n.synth.b.windowEnd === v.synth.b.windowEnd;
+      if (b.wavetableId === id) n = whole(b) ? { ...n, synth: { ...n.synth, b: { ...b, ...full } } } : clampOscB(n, after);
+      const keys = ['windowStart', 'windowEnd', 'windowStartY', 'windowEndY'] as const;
+      const same = keys.every((k) => n[k] === v[k] && n.synth.b[k] === v.synth.b[k]);
       if (same) return v;
       moved = true;
       return n;

@@ -290,6 +290,10 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   window or a write window — whose own write head skips that add (`skipWrites`). Each
   Generate tab's `batch(deadline)` gives exactly what its Add +N would add (Shape chip
   included), computed within the frame budget with stable identities, for the columns.
+- **Preview grid**: `setPreview(batch, shown, grid)` with `grid {w, h}` (Grid tab, once
+  every cell is computed; row-major) makes Preview batch a fixed 2D wavetable of h rows;
+  without it, 1D. `followPreviewBatch` keeps a voice window that covered the whole batch
+  (any window, when the shape changes) over the whole new one, else clamps it.
 - **Adds** (`AppModel.addTables`): write into every live wavetable, then pin, then evict
   from the timeline, then drop evicted ids from the (non-pinning) wavetables, then voice
   windows follow; one undo snapshot covers all of it (timeline, wavetables, windows).

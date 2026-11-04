@@ -84,6 +84,8 @@ export interface FrameView {
 export interface GeneratePreview {
   batch: readonly Float32Array[];
   shown: number;
+  /** Grid tab: the batch is a w × h grid, row-major (Preview batch becomes 2D). */
+  grid?: { w: number; h: number };
 }
 
 /** A Generate tab's view: frames, plus its current preview (null while not complete). */

@@ -6,7 +6,7 @@ import { columnRef, gridDims, gridLimit, gridRowTable, gridXY, opRows, relDiff, 
 import { FACTORY_CHAINS } from '../src/core/shapeFactory';
 import { EMPTY_CHAIN } from '../src/core/shapeChain';
 import type { GeneratedTable, WaveTable } from '../src/core/table';
-import { cellAt, wavetableDims } from '../src/core/wavetable';
+import { cellAt, PREVIEW_BATCH_WAVETABLE_ID, PREVIEW_WAVETABLE_ID, wavetableDims } from '../src/core/wavetable';
 
 const model = () => {
   const m = new AppModel();
@@ -103,5 +103,33 @@ describe('AppModel.addGrid', () => {
     // Out of bounds: refused, nothing added.
     expect(m.addGrid({ columns: { kind: 'existing', ids: cols.map((c) => c.id) }, rows, row1: false, swap: true, into: { kind: 'cells', wtId: g.id, x0: 3, y0: 4 } })).toBeNull();
     expect(m.timeline.length).toBe(n0 + 6);
+  });
+});
+
+describe('Preview batch as a grid', () => {
+  it('setPreview with a grid makes Preview batch 2D (row-major); voices over the whole batch keep the whole grid', () => {
+    const m = model();
+    const data = (k: number) => Float32Array.from({ length: 2048 }, (_, i) => Math.sin((2 * Math.PI * (k + 1) * i) / 2048));
+    m.setPreview([data(0), data(1), data(2)], 0);
+    m.updateVoice(1, { wavetableId: PREVIEW_BATCH_WAVETABLE_ID });
+    expect(m.voice(1)!.windowEnd).toBe(2);
+    const six = [0, 1, 2, 3, 4, 5].map(data);
+    m.setPreview(six, 4, { w: 3, h: 2 });
+    const wt = m.wavetable(PREVIEW_BATCH_WAVETABLE_ID)!;
+    expect(wt.shape).toBe('2d');
+    expect(wavetableDims(wt)).toEqual({ w: 3, h: 2 });
+    expect(wt.rows[1][1]).toBe(m.previewTables[4].id);
+    expect(m.wavetable(PREVIEW_WAVETABLE_ID)!.rows[0][0]).toBe(m.previewTables[4].id);
+    const v = m.voice(1)!;
+    expect([v.windowStart, v.windowEnd, v.windowStartY, v.windowEndY]).toEqual([0, 2, 0, 1]);
+    // Back to a 1D batch: the whole of it.
+    m.setPreview([data(7), data(8)], 1);
+    const w1 = m.wavetable(PREVIEW_BATCH_WAVETABLE_ID)!;
+    expect(w1.shape).toBe('1d');
+    expect(w1.rows).toEqual([m.previewTables.map((t) => t.id)]);
+    expect([m.voice(1)!.windowStart, m.voice(1)!.windowEnd]).toEqual([0, 1]);
+    // A size that doesn't match the batch is ignored (1D).
+    m.setPreview(six, 0, { w: 4, h: 2 });
+    expect(m.wavetable(PREVIEW_BATCH_WAVETABLE_ID)!.shape).toBe('1d');
   });
 });

@@ -127,9 +127,9 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
         shapeTab.view.frame(now);
         grid.view.frame(now);
         // The open tab's preview feeds the Preview wavetables (unchanged data is a no-op).
-        const views: Record<string, GenerateView> = { Seed: seed.view, Mutate: mutate.view, Breed: breed.view, Shape: shapeTab.view };
+        const views: Record<string, GenerateView> = { Seed: seed.view, Mutate: mutate.view, Breed: breed.view, Shape: shapeTab.view, Grid: grid.view };
         const p = views[currentTab]?.preview();
-        if (p) ctx.model.setPreview(p.batch, p.shown);
+        if (p) ctx.model.setPreview(p.batch, p.shown, p.grid ?? null);
       },
     },
   };
