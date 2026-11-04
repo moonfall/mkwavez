@@ -18,6 +18,7 @@ import { rdState, StepCache, type RdParams, type RdState } from '../core/generat
 import { LIFE_RULES, lifeBoard, StepCache as LifeCache, type Board, type LifeParams } from '../core/generators';
 import { splinePoints, splineRaw } from '../core/generators';
 import type { SplineParams } from '../core/generators';
+import { contourPoints } from '../core/generators';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -861,5 +862,45 @@ viz('spline', {
     rules(g, s, w, h, P.map((_, j) => j / P.length), [0], c.grid);
     plot(g, s, (t) => x[Math.min(x.length - 1, Math.floor(t * x.length))], 0, 1, c.line, 1.2, Math.ceil(w));
     P.forEach((v, j) => dot(g, s.x(j / P.length), s.y(v), 3, c.accent));
+  },
+});
+
+// Glyph contour: the traced outline, skewed as the table is.
+viz('glyph-contour', {
+  axis: (i) => ['', `“${String(i.inputs?.glyph ?? '')}” outline · radius vs angle`, ''],
+  draw: (g, w, h, i, c) => {
+    const pts = contourPoints(String(i.inputs?.contour ?? ''));
+    if (pts.length < 6) return;
+    const skewEnd = Math.round(i.params.batch) === 0 ? i.params.skew : i.params.skewEnd;
+    const sk = i.params.skew + (skewEnd - i.params.skew) * i.u;
+    const xs = pts.map((v, k) => (k % 2 ? v : v + sk * (pts[k + 1] - 0.5)));
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    for (let k = 0; k < xs.length; k += 2) {
+      x0 = Math.min(x0, xs[k]);
+      x1 = Math.max(x1, xs[k]);
+      y0 = Math.min(y0, xs[k + 1]);
+      y1 = Math.max(y1, xs[k + 1]);
+    }
+    const span = Math.max(x1 - x0, y1 - y0, 1e-6);
+    const k = (Math.min(w, h) - 12) / span;
+    const ox = w / 2 - ((x0 + x1) / 2) * k;
+    const oy = h / 2 - ((y0 + y1) / 2) * k;
+    g.fillStyle = c.grid;
+    g.strokeStyle = c.accent;
+    g.lineWidth = 1.6;
+    g.lineJoin = 'round';
+    g.beginPath();
+    for (let j = 0; j < xs.length; j += 2) {
+      const x = ox + xs[j] * k;
+      const y = oy + xs[j + 1] * k;
+      if (j) g.lineTo(x, y);
+      else g.moveTo(x, y);
+    }
+    g.closePath();
+    g.fill();
+    g.stroke();
   },
 });
