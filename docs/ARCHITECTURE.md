@@ -128,6 +128,9 @@ src/
                         autosave wiring, frame loop
 tests/                  vitest unit tests (core + AppModel)
 scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
+scripts/harmonics/      harmonic-interest evaluation (npm run eval:harmonics; run.mjs loads
+                        the TS through Vite's module runner): metrics, score, report →
+                        docs/reports/harmonic-interest.md + harmonic-interest-data/
 ```
 
 ## Data model

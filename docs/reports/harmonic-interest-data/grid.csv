@@ -1,0 +1,10 @@
+columns,rows,row1,stepX,stepY,dupX,dupY,scoreX,scoreY
+additive-designer,mutate fold · lin · 0.25,true,3.9,2.5,0,0,76.1,70.8
+additive-designer,mutate smooth · lin · 1,true,2.1,5.5,0,0,63.7,71.1
+additive-designer,shape Low-pass opening,false,1,2.7,0.59,0.04,40.1,71.4
+karplus-strong,mutate fold · lin · 0.25,true,8.2,2.6,0,0,78.5,68
+karplus-strong,mutate smooth · lin · 1,true,6.2,5.7,0.18,0.11,61.3,62.5
+karplus-strong,shape Low-pass opening,false,6.1,2.3,0.09,0.07,66.2,63.1
+fm-sweep,mutate fold · lin · 0.25,true,7.7,4.3,0,0,70.5,66.7
+fm-sweep,mutate smooth · lin · 1,true,6.4,4,0.04,0.23,58.9,50.6
+fm-sweep,shape Low-pass opening,true,6.6,3.9,0.13,0.21,59.2,46.5

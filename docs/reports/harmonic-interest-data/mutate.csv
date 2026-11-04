@@ -1,0 +1,49 @@
+item,label,group,meanScore,effectSaw,effectFormant,effectNoisy,effectFull,scoreLin,scoreLog,scoreChain,dupFrac,notes
+stretch,Stretch,Spectral,74.6,5,18,9.6,16.2,76.9,66.1,80.8,0.1,
+window,Window impose,Time,71.5,5.9,15.4,7.4,18.9,74.5,75.8,64.3,0.06,
+sync,Hard sync,Waveshape,70.2,5.1,17.7,7.9,19.6,75.9,77,57.7,0.05,silent waveforms in 3 batch(es): saw · chain · 1; formant · chain · 1; noisy · chain · 1
+pm,Self phase mod,Waveshape,68.4,0.6,24.6,10.7,12.8,68.1,66.7,70.4,0.03,
+warp,Phase warp,Waveshape,65.1,0.9,17.6,6.3,12.2,61.9,57.2,76.3,0.15,
+fold,Fold,Waveshape,64.9,7.6,14.8,6.2,14.3,66.5,58.8,69.4,0.11,
+foldSmooth,Fold + smooth,Waveshape,64.7,8.1,13.2,7,15.8,65.7,58.9,69.5,0.11,
+nwarp,Noise warp,Waveshape,64.6,1,15.1,5.9,10.4,63.5,58.1,72.2,0.12,
+hshift,Harmonic shift,Spectral,64.1,5.5,17.5,8.3,18.3,65.4,54.9,72,0.24,
+repeat,Window & repeat,Time,58.1,11.2,14.7,13.7,19.6,67.4,63.8,43.1,0.19,
+cheby,Chebyshev mix,Nonlinear,57.7,0.7,12.8,4.8,11.6,54.4,49.8,68.9,0.27,
+rect,Rectify,Waveshape,57.5,0.8,13.5,4,13.2,55,49,68.3,0.29,
+slew,Slew limit,Time,56.2,4.1,8.4,3.7,12.3,58.4,46.4,63.9,0.31,
+smooth,Smooth,Spectral,55.5,7.4,6.3,12.1,18.2,60.4,49.6,56.5,0.29,chain @ 1 collapses to ≤ 3 harmonics
+mirror,Spectrum mirror,Spectral,55.5,5,13.8,6.9,19.4,59.3,59.4,47.7,0.31,
+toNoise,Toward noise,Morph,55.4,3,8.8,3.1,9.3,51.7,46,68.7,0.27,
+palindrome,Palindrome,Time,54.9,0.7,11.6,4.2,15,51.1,44,69.6,0.31,
+grains,Granular shuffle,Time,54.9,7.1,12.8,8.2,10.6,50.5,43.4,70.7,0.44,
+flatten,Spectral flatten,Spectral,53.9,6.3,4.3,5.3,24.4,57.8,50.2,53.7,0.33,
+ring,Ring mod,Waveshape,52.9,0.4,11.2,1.9,13.1,47.5,40.8,70.3,0.38,
+contrast,Spectral contrast,Spectral,52.4,8.4,7.3,9.1,14.2,58.9,55.6,42.7,0.27,chain @ 1 collapses to ≤ 3 harmonics
+logisticShape,Logistic shaper,Nonlinear,51,0.3,8.6,3.8,13.9,50.3,42.7,60.2,0.37,
+toTri,Toward triangle,Morph,50.7,3.5,6.4,5.2,18.5,52.5,50.7,48.9,0.36,
+toSquare,Toward square,Morph,50,3,8.7,6.5,13,53.4,51.6,45.1,0.33,
+asym,Asymmetric saturation,Nonlinear,49.5,2.3,8.7,2.7,9.2,47.4,40.8,60.4,0.39,
+multiples,Multiples sieve,Spectral,49.5,4.1,3,4.1,17.2,49.5,42.9,56.1,0.37,
+formant,Formant,Spectral,47.4,2.4,2.6,2.4,15.8,44.2,38.1,60.1,0.44,
+spread,Spread up,Spectral,47.4,1.9,2.8,2,5.8,34.5,36,71.6,0.45,
+fibsieve,Fibonacci sieve,Spectral,47,4.4,4,4.5,17,50.9,45,45.1,0.44,
+sineShape,Sine-map shaper,Nonlinear,46.8,1.3,5.4,1.6,14.9,46.7,36.9,56.8,0.5,
+primes,Prime sieve,Spectral,45.3,4,3.4,4.1,15,47.4,43.6,44.8,0.47,
+selfConv,Self-convolution,Spectral,44.2,2.3,1.8,2.1,11.4,41.1,36,55.5,0.46,
+toSine,Toward sine,Morph,44.1,4.7,1.2,4.8,20,47.9,42,42.3,0.52,chain @ 1 collapses to ≤ 3 harmonics
+stutter,Stutter,Time,43.9,0.6,0.4,4.2,8.7,44,33.6,53.9,0.53,≈ no-op on 2 of 3 refs @ default
+jitter,Jitter,Random,43.2,1.2,2.2,1.2,7,34.8,32.2,62.6,0.49,
+toSaw,Toward saw,Morph,42.8,0,7.4,4.3,6,47.9,43.2,37.3,0.55,
+halfSwap,Half-cycle swap,Time,42.8,3.9,4.1,4.1,0,48.7,41.4,38.2,0.5,
+odd,Odd only,Spectral,42.5,3.4,3.4,3.5,14,42.4,41,44.1,0.52,
+comb,Comb,Spectral,42,1.5,1.2,1.5,10.5,34.9,31.9,59.3,0.53,
+reslp,Resonant low-pass,Spectral,40.7,0.8,0.1,0.8,15.5,39.9,32.1,50.1,0.61,near no-op @ default
+blur,Blur,Spectral,34.6,0.2,2.3,1.5,4.4,31.3,29.1,43.5,0.71,
+crush,Crush,Waveshape,33.8,0.8,1.6,0.3,6.6,39.6,30.9,30.9,0.69,≈ no-op on 2 of 3 refs @ default
+reverse,Reverse,Time,29.8,0,0,3.7,0,34.5,28.8,26,0.78,≈ no-op on 2 of 3 refs @ default; silent waveforms in 8 batch(es): saw · lin · 0.5; saw · log · 0.5; saw · chain · 0.5
+decimate,Decimate,Time,28.7,0.1,0,0.1,9.6,31.6,26.2,28.3,0.84,near no-op @ default
+zeroPhase,Zero phase,Phase,20.1,0,0,0,0,20.1,20.1,20.1,1,phase-only
+phaseRandom,Phase randomize,Phase,20.1,0,0,0,0,20.1,20.1,20.1,1,phase-only
+schroeder,Schroeder phase,Phase,20.1,0,0,0,0,20.1,20.1,20.1,1,phase-only
+scramble,Scramble,Random,20.1,0,0,0,0,20.1,20.1,20.1,1,phase-only

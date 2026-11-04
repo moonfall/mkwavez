@@ -23,6 +23,7 @@ npx tsc --noEmit   # typecheck
 npm run build      # typecheck + production build to dist/
 npm run smoke      # build, then headless-Chrome smoke test against preview and dev servers
 npm run bench      # CPU benchmark: 8 Synth voices at 48 kHz (time per render quantum)
+npm run eval:harmonics  # harmonic-interest evaluation → docs/reports/harmonic-interest.md
 ```
 
 `npm test` includes `tests/golden.test.ts`, which pins the core's numbers for the C++

@@ -1,0 +1,18 @@
+item,label,kind,effectSaw,effectFormant,effectNoisy,effectSine,sigSaw,centroidSaw,pathLsd,meanScore
+talking-vowels,Talking vowels,sweeps,9.8,18,14.1,23.9,72,11.5,21.8,85.5
+west-coast-fold,West-coast fold,sweeps,8.2,18.1,8.9,20.4,71,14.8,45.6,74.2
+pwm-anything,PWM from anything,sweeps,14.2,24.5,16.7,17.2,72,15.8,44.8,66.7
+clip-ramp,Clip ramp (sweep),sweeps,5.5,11.4,6.6,14.4,72,14.2,13.3,61.3
+lowpass-opening,Low-pass opening,sweeps,11.2,12.6,17.9,0,71.9,9.2,15.2,57.3
+hollow-out,Hollow out,sweeps,9.3,19.3,13.3,0,67.5,14,12.7,54.1
+phaser-comb,Phaser comb,sweeps,9.5,13.2,12.9,0,65.3,9.9,32.7,54.1
+ensemble-drift,Ensemble drift,seed per waveform,0.6,2.1,1.1,0,72,14.8,4.4,39.1
+bright-limit,"Bright, limited",static,11.3,22,6.7,0,72,20.7,0,18.6
+diode-grit,Diode grit,static,7.6,9,8.3,14.2,72,8.4,0,18.5
+soft-clip,Soft clip,static,4.4,10.8,4.6,17.5,72,13,0,18.2
+tape-warmth,Tape warmth,static,4.6,7.8,3.3,12.8,72,11.9,0,18.1
+drawbar-organ,Drawbar organ,static,8.5,25.1,16.8,17.3,30,4.2,0,17.7
+phase-scatter,Phase scatter,seed per waveform,0,0,0,0,72,14.8,0,17.6
+warm-fold-organ,Warm fold organ,static,11.4,17.3,9,18.8,44,4.5,0,17.5
+metallic,Metallic,static,8.4,21.4,11.6,0,53,11.6,0,16.1
+odd-darker,"Odd only, darker",static,11.4,18.1,16.4,1.8,35,3.5,0,15.8
