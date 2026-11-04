@@ -17,6 +17,7 @@ import {
   FILTER_MODE_LABELS,
   FILTER_MODES,
   FILTER_SPREAD_OCTAVES,
+  MAX_POLY,
   type FilterMode,
   type OscSource,
   type SynthParams,
@@ -459,6 +460,8 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const mixRing = row('syn-mix-ring', 'Ring A×B', (v) => v.synth.ringLevel, sw('ringLevel'), linear(0, 1), pct);
   const glide = row('syn-glide', 'Glide', (v) => v.synth.glide, sw('glide'), timeTaper(2), (x) => (x < 0.002 ? 'off' : secs(x)));
   const legato = check('syn-legato', 'Legato only', (v) => v.synth.glideLegato, (x) => ({ synth: { glideLegato: x } }), 'Glide only between overlapping notes');
+  const polyRow = intRow('syn-poly', 'Voices', (v) => v.synth.poly, sw('poly'), () => [1, MAX_POLY], (x) => (x === 1 ? 'mono' : `${x}`));
+  polyRow.el.title = 'Notes the voice plays at once (1 = monophonic: legato, glide between held notes)';
   const bend = intRow('syn-bend', 'Bend', (v) => v.synth.bendRange, sw('bendRange'), () => [0, 24], (x) => `±${x} st`);
   const pan = row('syn-pan', 'Pan', (v) => v.synth.pan, sw('pan'), linear(-1, 1), panText);
   const outLevel = row('syn-out', 'Output', (v) => v.level, (x) => ({ level: x }), linear(0, 1), pct);
@@ -470,7 +473,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     'div',
     { class: 'syn-page syn-page-2col', id: 'syn-page-mix', role: 'tabpanel' },
     h('div', { class: 'crows' }, mixA.el, mixB.el, mixSub.el, lineRow('', subWave.el, subOct.el), mixNoise.el, lineRow('', noiseType.el, syncChk.el), mixRing.el, fmRow.el),
-    h('div', { class: 'crows' }, outLevel.el, pan.el, width.el, oct.el, glide.el, lineRow('', legato.el), bend.el),
+    h('div', { class: 'crows' }, outLevel.el, pan.el, width.el, polyRow.el, oct.el, glide.el, lineRow('', legato.el), bend.el),
   );
 
   // ---- Filter page ----
@@ -686,6 +689,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     glide,
     legato,
     bend,
+    polyRow,
     pan,
     outLevel,
     oct,

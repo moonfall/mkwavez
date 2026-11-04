@@ -10,7 +10,7 @@
 import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
 import { TABLE_SIZE } from '../core/constants';
-import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, type FilterMode, type OscSource, type SynthParams } from '../core/synth';
+import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MAX_POLY, type FilterMode, type OscSource, type SynthParams } from '../core/synth';
 import { isPeriodicShape, LFO_DIVS, LFO_RATE_MAX_HZ, LFO_RATE_MIN_HZ, LFO_SHAPE_LABELS, LFO_SHAPES, type LfoDiv, type LfoParams, type LfoShape } from '../core/modulation';
 import type { VoicePatch, VoiceParams } from '../core/voice';
 import { shapeLabel } from '../core/wavetable';
@@ -394,6 +394,7 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
   // position per oscillator, the LFOs' stereo phases) ----
   const out = group('synf-out', 'Output', [
     K('synf-out-level', 'Level', (v) => v.level, (x) => ({ level: x }), linear(0, 1), pct, { name: 'Output level' }).el,
+    K('synf-poly', 'Voices', (v) => v.synth.poly, sw('poly'), linear(1, MAX_POLY), (x) => (x === 1 ? 'mono' : `${x}`), { int: true, name: 'Notes the voice plays at once (1 = monophonic)', reset: 8 }).el,
     K('synf-oct', 'Octave', (v) => v.octave, (x) => ({ octave: x }), linear(-2, 2), (x) => signed(x), { int: true, name: 'Voice octave', reset: 0 }).el,
     K('synf-glide', 'Glide', (v) => v.synth.glide, sw('glide'), timeTaper(2), (x) => (x < 0.002 ? 'off' : kSecs(x)), { name: 'Glide' }).el,
     C('synf-legato', 'Legato', OFF_ON, (v) => v.synth.glideLegato, (x) => ({ synth: { glideLegato: x } }), { name: 'Glide only between overlapping notes', pressed: (x) => x }).el,

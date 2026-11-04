@@ -37,6 +37,10 @@ inline constexpr double CROSSFADE_SEC = 0.006;
 inline constexpr double TYPE_FADE_SEC = 0.01;
 /** CPU guard: unison copies all sounding Synth voices may play together. */
 inline constexpr int UNISON_BUDGET = 32;
+/** Notes beyond each voice's own that polyphonic Synth voices share. */
+inline constexpr int NOTE_POOL = 24;
+/** Seed ids of the pool notes' SynthVoices (POOL_SEED + index). */
+inline constexpr int32_t POOL_SEED = 0x7000;
 
 struct VoiceStatus {
     int32_t id = 0;
@@ -65,28 +69,48 @@ struct Retired {
 
 namespace detail {
 
+/** A note slot: a voice's own note or a pool note (the TS NoteSlot). */
+struct NoteState {
+    Adsr env;
+    double freq = 110;
+    int64_t gateRemaining = 0;
+    double vel = 1;
+    /** The Synth path (constructed in place on first use; no heap). */
+    std::optional<SynthVoice> syn;
+    /** MIDI key (-1: sequencer note / none) and allocation order. */
+    int key = -1;
+    uint64_t age = 0;
+    /** Gate on: attack, decay or sustain. */
+    bool held() const { return env.stage == Adsr::Attack || env.stage == Adsr::Decay || env.stage == Adsr::Sustain; }
+};
+
 /** Per-voice audio-thread state (see the TS VoiceRuntime). */
-struct VoiceRuntime {
+struct VoiceRuntime : NoteState {
     bool used = false;
     VoiceParams params;
-    Adsr env;
     /** The Simple voice's oscillator. */
     WtOsc osc;
     double lfoPhase = 0, lfoPhaseY = 0;
-    double freq = 110;
-    int64_t gateRemaining = 0;
     double gain = 0;
-    double vel = 1;
     NoteStack notes;
     double bendTarget = 0, bendSemis = 0, bendFrom = 1, bendTo = 1;
     double pos = 0, posY = 0;
     bool removing = false;
-    /** The Synth path (constructed in place when the voice first becomes a Synth voice; no heap). */
-    std::optional<SynthVoice> syn;
     /** Simple (0) ↔ Synth (1) crossfade. */
     double typeMix = 0;
     /** Mod wheel / channel pressure 0..1. */
     double wheel = 0, pressure = 0;
+    /** Pitch of the last note (poly glide). */
+    double lastPitch = 0;
+    bool hasLastPitch = false;
+};
+
+/** A pooled note of a polyphonic Synth voice. */
+struct PolyNote : NoteState {
+    VoiceRuntime* owner = nullptr;
+    /** The voice it last played for (a new owner clears its table mixes). */
+    const VoiceRuntime* lastOwner = nullptr;
+    int index = 0;
 };
 
 } // namespace detail
@@ -152,6 +176,8 @@ public:
 
 private:
     using VoiceRuntime = detail::VoiceRuntime;
+    using NoteState = detail::NoteState;
+    using PolyNote = detail::PolyNote;
     struct WavetableSlot {
         WavetableId id = -1;
         const PackedWavetable* wt = nullptr;
@@ -168,7 +194,13 @@ private:
     void applyParams(VoiceRuntime& v, const VoiceParams& p);
     void gateOff(VoiceRuntime& v);
     void synthNote(VoiceRuntime& v, double vel, bool legato, bool retrigger);
-    void controlSynth(VoiceRuntime& v, int blockLen);
+    void controlSynth(VoiceRuntime& v, int blockLen, NoteState& n);
+    bool isPoly(const VoiceRuntime& v) const;
+    void releaseNote(VoiceRuntime& v, NoteState& n);
+    void releaseAll(VoiceRuntime& v);
+    NoteState& allocate(VoiceRuntime& v, int key);
+    void startNote(VoiceRuntime& v, NoteState& n, double freq, double vel, double vel01, int key, bool legato);
+    bool hasNotes(const VoiceRuntime& v) const;
     double simpleSample(VoiceRuntime& v, double e, double blockT);
     void renderMixed(VoiceRuntime& v, double blockT, double& l, double& r);
     void control(int blockLen);
@@ -191,6 +223,8 @@ private:
     std::array<VoiceRuntime, MAX_VOICES> pool{};
     std::array<VoiceRuntime*, MAX_VOICES> voices{}; // creation order; nVoices used
     int nVoices = 0;
+    std::array<PolyNote, NOTE_POOL> notePool{};
+    uint64_t noteAge = 0;
     std::array<SequenceData, MAX_SEQUENCES> sequences{};
     int nSequences = 0;
 

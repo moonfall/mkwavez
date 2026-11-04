@@ -48,6 +48,8 @@ public:
     void noteOn(const VoiceParams& p, double pitch, double vel, bool legato, bool retrigger, bool sounding);
     void gateOff(const VoiceParams& p);
     void resync(const VoiceParams& p, double pitch, bool gated, bool sounding);
+    /** A pooled note taken over by another voice: forget its table mixes and cutoff smoothing. */
+    void reclaim();
     void control(const VoiceParams& p, const SynthControl& c);
     /** One sample (amp envelope value `e`) into outL / outR; returns the mid. */
     double render(const VoiceParams& p, double e, double blockT, const TableMap& tables);

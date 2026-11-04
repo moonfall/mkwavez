@@ -140,6 +140,7 @@ juce::var encode(const SynthParams& s) {
     set(o, "bPosSpread", s.bPosSpread);
     set(o, "noiseWidth", s.noiseWidth);
     set(o, "filterSpread", s.filterSpread);
+    set(o, "poly", s.poly);
     return o;
 }
 
@@ -238,6 +239,8 @@ SynthParams decode(const juce::var& o) {
     s.bPosSpread = num(o, "bPosSpread", d.bPosSpread, 0, 1);
     s.noiseWidth = num(o, "noiseWidth", d.noiseWidth, 0, 1);
     s.filterSpread = num(o, "filterSpread", d.filterSpread, -1, 1);
+    // Saved before polyphony: monophonic, as it was.
+    s.poly = (int) num(o, "poly", 1, 1, MAX_POLY, true);
     return s;
 }
 

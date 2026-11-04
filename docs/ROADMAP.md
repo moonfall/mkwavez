@@ -275,7 +275,8 @@ Open:
 - Per-voice type Simple | Synth. Simple is the original voice, unchanged (tested
   sample-identical to the engine before Synth voices); existing / migrated voices (session
   v3 → v4) are Simple. "+" offers Synth or Simple; a type switch crossfades (10 ms) and is
-  undoable. Voices stay monophonic (note stack, legato, sequences, MIDI routing shared).
+  undoable. Voices were monophonic (note stack, legato, sequences, MIDI routing shared);
+  Synth voices are polyphonic since stage 5.
 - Stage 1: osc A (the voice's wavetable / window / position) and osc B (own source) with
   octave / coarse / fine / level, sub (sine / square, −1 / −2 oct), seeded white / pink
   noise, ring A × B; ZDF SVF LP12 / HP / BP / notch + LP24 (cascaded), cutoff, resonance to
@@ -298,6 +299,13 @@ Open:
   LFO driving per-channel destinations (positions, levels, cutoff, amp); new matrix
   destinations A pan, B pan, filter spread; width applies to every stereo source; the CPU
   guard counts double-read copies twice. No change to the wavetables.
+- Stage 5 (polyphony): `synth.poly` 1–8 (Init 8; saved voices without it stay mono, as
+  are the Sub bass and Sync lead presets). Poly 1 is the monophonic path, unchanged. A
+  polyphonic voice's own path plays one note; the rest come from a pool of 24 notes shared
+  by all voices (also the CPU cap). Same key → its note; else a silent note; else steal
+  the quietest released, then the oldest. Poly glide from the last note's pitch; sequencer
+  steps get a note each (tails overlap). Simple voices stay monophonic. Mix page "Voices",
+  full view Output "Voices".
 
 Decisions / deviations:
 - New voices from "+" are offered as Synth (first in the menu) or Simple; both start on
@@ -351,7 +359,7 @@ Known gaps:
 - Worklet memory: ~16 KB per table (≈ 64 MB at the 4096 cap). Consider only sending
   tables inside some voice window, or dropping level 0 for distant tables.
 - Blend crossfade and LFO are block-rate (64 samples) with ramped crossfade; gain is
-  smoothed. (Synth voices now have a filter; MIDI input is done; polyphony not started.)
+  smoothed. (Synth voices now have a filter; MIDI input is done; Synth voices are polyphonic.)
 - Sequencer: no swing, velocity, per-step probability, or scale choice; multiple
   sequences on one voice just retrigger it (monophonic, last note wins).
 - Formula language is JS (browser-only); a portable expression parser is needed for

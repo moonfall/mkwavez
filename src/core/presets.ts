@@ -99,7 +99,7 @@ export const FACTORY_PRESETS: readonly VoicePreset[] = [
   factory(
     'bass',
     'Sub bass',
-    { aOct: -1, aLevel: 0.75, subLevel: 0.7, subOct: 1, filterMode: 'lp24', cutoff: 320, resonance: 0.2, envAmount: 0.35, fDecay: 0.25, fSustain: 0.1, keyTrack: 0.3, glide: 0.05, glideLegato: true, sat: 0.2, mods: mods() },
+    { aOct: -1, aLevel: 0.75, subLevel: 0.7, subOct: 1, filterMode: 'lp24', cutoff: 320, resonance: 0.2, envAmount: 0.35, fDecay: 0.25, fSustain: 0.1, keyTrack: 0.3, glide: 0.05, glideLegato: true, sat: 0.2, poly: 1, mods: mods() },
     { a: src(LAST_BATCH_WAVETABLE_ID, 0.25), attack: 0.003, decay: 0.3, sustain: 0.85, release: 0.12 },
   ),
   factory(
@@ -137,6 +137,7 @@ export const FACTORY_PRESETS: readonly VoicePreset[] = [
     'lead',
     'Sync lead',
     {
+      poly: 1,
       aCoarse: 12,
       bLevel: 0,
       sync: true,

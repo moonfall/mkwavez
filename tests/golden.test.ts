@@ -217,6 +217,7 @@ const SYNTH_SCALARS = [
   'glide', 'glideLegato', 'bendRange', 'pan', 'mAttack', 'mDecay', 'mSustain', 'mRelease', 'mMode', 'sync', 'fm',
   'aUnison', 'aDetune', 'aSpread', 'bUnison', 'bDetune', 'bSpread', 'sat', 'width',
   'aPan', 'bPan', 'aPhaseSpread', 'bPhaseSpread', 'aPosSpread', 'bPosSpread', 'noiseWidth', 'filterSpread',
+  'poly',
 ] as const;
 const SYNTH_ENUMS: Partial<Record<(typeof SYNTH_SCALARS)[number], readonly string[]>> = {
   subWave: SUB_WAVES,
@@ -272,11 +273,14 @@ type SynthOverrides = Partial<Omit<SynthParams, 'b' | 'lfos' | 'mods'>> & {
   mods?: ModSlot[];
 };
 
-/** DEFAULT_SYNTH with overrides (LFOs merge per index; mods replace from slot 0). */
+/**
+ * DEFAULT_SYNTH with overrides (LFOs merge per index; mods replace from slot 0). Monophonic
+ * unless `poly` is given (the scenarios before polyphony are mono; 'poly' sets it).
+ */
 function synth(o: SynthOverrides = {}): SynthParams {
   const lfos = DEFAULT_SYNTH.lfos.map((l, i) => ({ ...l, ...(o.lfos?.[i] ?? {}) }));
   const mods = DEFAULT_SYNTH.mods.map((m, i) => o.mods?.[i] ?? (o.mods ? { src: 'none', dst: 'none', amt: 0 } as ModSlot : m));
-  return { ...DEFAULT_SYNTH, ...o, b: { ...DEFAULT_SYNTH.b, ...(o.b ?? {}) }, lfos, mods } as SynthParams;
+  return { ...DEFAULT_SYNTH, poly: 1, ...o, b: { ...DEFAULT_SYNTH.b, ...(o.b ?? {}) }, lfos, mods } as SynthParams;
 }
 
 type Op = [frame: number, code: number, ...args: number[]];
@@ -671,6 +675,42 @@ const SCENARIOS: Scenario[] = [
       [15000, OP.noteOff, 1, 57],
       [15000, OP.noteOff, 1, 50],
       [17000, OP.noteOff, 2, 62],
+    ],
+  },
+  {
+    // Polyphony: a 4-note voice (chord, a fifth key steals the oldest, the same key again
+    // reuses its note, poly glide, note offs, then poly → 1 releasing the pool notes, a
+    // switch to Simple and back), and a polyphonic sequencer voice whose release tails
+    // overlap, removed while sounding.
+    name: 'poly',
+    sampleRate: 48000,
+    frames: 20000,
+    ops: [
+      ...WAVES.slice(0, 4).map((_, i): Op => [0, OP.table, i + 1, i]),
+      wavetableOp(0, 0, '1d', 'blend', [[1, 2, 3, 4]]),
+      voiceOp(0, { id: 1, type: 'synth', windowEnd: 3, position: 0.3, release: 0.15, synth: synth({ poly: 4, bLevel: 0.3, aUnison: 2, aSpread: 0.5, glide: 0.03, glideLegato: false, cutoff: 1500 }) }),
+      voiceOp(0, { id: 2, type: 'synth', windowEnd: 3, position: 0.8, level: 0.5, release: 0.4, synth: synth({ poly: 3, cutoff: 900, noiseLevel: 0.05 }) }),
+      sequenceOp(0, 1, 2, [0, 2, 4, 7], 0.3, '1/16'),
+      [0, OP.transport, 1, 170],
+      [30, OP.noteOn, 1, 48, 100],
+      [400, OP.noteOn, 1, 55, 90],
+      [800, OP.noteOn, 1, 60, 80],
+      [1200, OP.noteOn, 1, 64, 70],
+      [2500, OP.noteOn, 1, 67, 110],
+      [3500, OP.noteOff, 1, 55],
+      [3600, OP.noteOn, 1, 55, 60],
+      [5000, OP.noteOff, 1, 60],
+      [6000, OP.noteOff, 1, 64],
+      voiceOp(8000, { id: 1, type: 'synth', windowEnd: 3, position: 0.3, release: 0.15, synth: synth({ poly: 1, bLevel: 0.3, aUnison: 2, aSpread: 0.5, glide: 0.03, glideLegato: false, cutoff: 1500 }) }),
+      [9000, OP.noteOn, 1, 72, 100],
+      voiceOp(10000, { id: 1, type: 'synth', windowEnd: 3, position: 0.3, release: 0.15, synth: synth({ poly: 4, bLevel: 0.3, cutoff: 1500 }) }),
+      [10500, OP.noteOn, 1, 50, 100],
+      [11000, OP.noteOn, 1, 57, 100],
+      voiceOp(12000, { id: 1, type: 'simple', windowEnd: 3, position: 0.3, release: 0.15, synth: synth({ poly: 4, bLevel: 0.3, cutoff: 1500 }) }),
+      voiceOp(13500, { id: 1, type: 'synth', windowEnd: 3, position: 0.3, release: 0.15, synth: synth({ poly: 4, bLevel: 0.3, cutoff: 1500 }) }),
+      [14000, OP.noteOn, 1, 62, 100],
+      [15000, OP.allNotesOff, -1],
+      [16000, OP.removeVoice, 2],
     ],
   },
   {

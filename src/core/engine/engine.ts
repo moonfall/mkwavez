@@ -7,6 +7,12 @@
  * rendered exactly as before) or Synth (engine/synthVoice.ts). Note handling, the amp
  * envelope, pitch bend and the sequencer are shared; a type switch crossfades the two
  * paths. The output is stereo: Simple voices are centred (identical left and right).
+ *
+ * Polyphony (Synth voices with `synth.poly` > 1): the voice's own path plays one note and
+ * further notes come from a pool shared by all voices (NOTE_POOL PolyNotes, each with its
+ * own amp envelope and SynthVoice). A key reuses the note already on it; otherwise a silent
+ * note is taken, else one is stolen (the quietest released, else the oldest). With
+ * `poly` 1 the voice is monophonic exactly as before (note stack, legato, glide).
  */
 import { CONTROL_BLOCK } from '../constants';
 import { midiNoteFreq, type MidiVoiceEvent, velocityGain } from '../midi';
@@ -16,7 +22,7 @@ import type { TableId } from '../table';
 import { applyVoicePatch, DEFAULT_VOICE, modulatedPosition, type VoicePatch, type VoiceParams } from '../voice';
 import type { WavetableId } from '../wavetable';
 import type { PackedWavetable } from '../wavetablePlayback';
-import { Adsr } from './adsr';
+import { Adsr, AdsrStage } from './adsr';
 import { NoteStack } from './noteStack';
 import { freqPitch, SynthVoice, type SynthControl } from './synthVoice';
 import { WtOsc } from './wtOsc';
@@ -46,6 +52,42 @@ export const UNISON_BUDGET = 32;
  * under the voice) crossfades over ~6 ms, while slow position moves track exactly.
  */
 export const CROSSFADE_SEC = 0.006;
+
+/** Notes beyond each voice's own that polyphonic Synth voices share (also a CPU cap). */
+export const NOTE_POOL = 24;
+/** Seed ids of the pool notes' SynthVoices (POOL_SEED + index). */
+export const POOL_SEED = 0x7000;
+
+/** A note slot: a voice's own note (VoiceRuntime) or a pool note. */
+interface NoteSlot {
+  readonly env: Adsr;
+  syn: SynthVoice | null;
+  freq: number;
+  vel: number;
+  gateRemaining: number;
+  /** MIDI key it plays (-1: a sequencer note or none). */
+  key: number;
+  /** Allocation order (oldest = smallest). */
+  age: number;
+}
+
+/** A pooled note of a polyphonic Synth voice. */
+class PolyNote implements NoteSlot {
+  owner: VoiceRuntime | null = null;
+  /** The voice it last played for (a new owner clears its table mixes). */
+  lastOwner: VoiceRuntime | null = null;
+  readonly env = new Adsr();
+  syn: SynthVoice | null = null;
+  freq = 110;
+  vel = 1;
+  gateRemaining = 0;
+  key = -1;
+  age = 0;
+  constructor(readonly index: number) {}
+}
+
+/** Gate on (attack, decay or sustain): a held or gated note. */
+const isHeld = (n: NoteSlot) => n.env.stage === AdsrStage.Attack || n.env.stage === AdsrStage.Decay || n.env.stage === AdsrStage.Sustain;
 
 class VoiceRuntime {
   params: VoiceParams;
@@ -79,6 +121,10 @@ class VoiceRuntime {
   /** Mod wheel (CC 1) and channel pressure, 0..1 (Synth voice mod matrix sources). */
   wheel = 0;
   pressure = 0;
+  /** Polyphony: the key this voice's own note plays, its allocation order, the last note's pitch (poly glide). */
+  key = -1;
+  age = 0;
+  lastPitch = Number.NaN;
 
   constructor(p: VoiceParams, sampleRate: number) {
     this.params = p;
@@ -169,6 +215,9 @@ export class SynthEngine {
   };
   /** CPU guard: unison copies were reduced in the last control block. */
   unisonLimited = false;
+  /** Polyphony: notes shared by the polyphonic voices, and the allocation counter. */
+  private readonly pool: PolyNote[] = Array.from({ length: NOTE_POOL }, (_, i) => new PolyNote(i));
+  private noteAge = 0;
 
   constructor(sampleRate: number) {
     this.sampleRate = sampleRate;
@@ -230,6 +279,96 @@ export class SynthEngine {
       syn.vel = v.notes.size ? v.notes.topVelocity / 127 : 1;
       syn.resync(p, freqPitch(v.freq), v.notes.size > 0 || v.gateRemaining > 0, v.env.stage !== IDLE && v.typeMix > 0);
     }
+    for (const n of this.pool) {
+      if (n.owner !== v) continue;
+      n.env.configure(p.attack, p.decay, p.sustain, p.release, this.sampleRate);
+      // No longer polyphonic (or no longer a Synth voice): its extra notes release.
+      if (!this.isPoly(v)) this.releaseNote(v, n);
+    }
+  }
+
+  /** A Synth voice playing more than one note at once. */
+  private isPoly(v: VoiceRuntime): boolean {
+    return v.params.type === 'synth' && v.params.synth.poly > 1 && v.syn !== null;
+  }
+
+  /** Release one note slot (the voice's own or a pool note). */
+  private releaseNote(v: VoiceRuntime, n: NoteSlot): void {
+    n.env.gateOff();
+    n.syn?.gateOff(v.params);
+  }
+
+  /** Release the voice's own note and its pool notes. */
+  private releaseAll(v: VoiceRuntime): void {
+    this.gateOff(v);
+    for (const n of this.pool) if (n.owner === v) this.releaseNote(v, n);
+  }
+
+  /**
+   * A note slot for `key` on a polyphonic voice: the slot already on that key (held or
+   * releasing), else a silent one (the voice's own, then a free pool note while the voice
+   * plays fewer than `poly`), else a stolen one — the quietest released note, else the oldest.
+   */
+  private allocate(v: VoiceRuntime, key: number): NoteSlot {
+    const poly = v.params.synth.poly;
+    if (key >= 0) {
+      if (v.key === key && v.env.stage !== IDLE) return v;
+      for (const n of this.pool) if (n.owner === v && n.key === key && n.env.stage !== IDLE) return n;
+    }
+    if (v.env.stage === IDLE) return v;
+    let owned = 0;
+    for (const n of this.pool) {
+      if (n.owner !== v) continue;
+      if (n.env.stage === IDLE) return n;
+      owned++;
+    }
+    if (owned + 1 < poly) {
+      for (const n of this.pool) {
+        if (n.owner !== null) continue;
+        n.owner = v;
+        n.env.configure(v.params.attack, v.params.decay, v.params.sustain, v.params.release, this.sampleRate);
+        if (!n.syn) n.syn = new SynthVoice(this.sampleRate, POOL_SEED + n.index, CONTROL_BLOCK, v.params.synth.lfos.map((l) => l.phase));
+        else if (n.lastOwner !== v) n.syn.reclaim();
+        n.lastOwner = v;
+        n.syn.resync(v.params, freqPitch(v.freq), false, false);
+        return n;
+      }
+    }
+    // Steal: the quietest released note, else the oldest held one.
+    let best: NoteSlot = v;
+    let bestReleased = !isHeld(v);
+    for (const n of this.pool) {
+      if (n.owner !== v) continue;
+      const released = !isHeld(n);
+      if (released && (!bestReleased || n.env.value < best.env.value)) {
+        best = n;
+        bestReleased = true;
+      } else if (!released && !bestReleased && n.age < best.age) best = n;
+    }
+    return best;
+  }
+
+  /**
+   * Start a note on a polyphonic voice's slot. Glide (when set, and either legato-only is
+   * off or other keys are held) runs from the last note's pitch.
+   */
+  private startNote(v: VoiceRuntime, n: NoteSlot, freq: number, vel: number, vel01: number, key: number, legato: boolean): void {
+    const p = v.params;
+    const s = p.synth;
+    const syn = n.syn!;
+    const pitch = freqPitch(freq);
+    n.freq = freq;
+    n.vel = vel;
+    n.key = key;
+    n.age = ++this.noteAge;
+    const glide = s.glide > 0 && !Number.isNaN(v.lastPitch) && (!s.glideLegato || legato);
+    if (glide) {
+      syn.pitch = v.lastPitch;
+      syn.noteOn(p, pitch, vel01, true, true, true);
+    } else syn.noteOn(p, pitch, vel01, legato, true, n.env.stage !== IDLE);
+    v.lastPitch = pitch;
+    n.env.gateOn();
+    if (n === v) this.resolvePitch(v);
   }
 
   /** Fade the voice out with a short release, then drop it (see control()). */
@@ -240,7 +379,12 @@ export class SynthEngine {
     v.gateRemaining = 0;
     const p = v.params;
     v.env.configure(p.attack, p.decay, p.sustain, REMOVE_RELEASE_SEC, this.sampleRate);
-    this.gateOff(v);
+    for (const n of this.pool) {
+      if (n.owner !== v) continue;
+      n.gateRemaining = 0;
+      n.env.configure(p.attack, p.decay, p.sustain, REMOVE_RELEASE_SEC, this.sampleRate);
+    }
+    this.releaseAll(v);
   }
 
   /** Voices still allocated (including ones fading out). */
@@ -266,7 +410,7 @@ export class SynthEngine {
       this.sub = 0;
     }
     // Stopping releases sequencer notes; held MIDI keys keep sounding.
-    if (!playing && this.playing) for (const v of this.voices) if (!v.notes.size) this.gateOff(v);
+    if (!playing && this.playing) for (const v of this.voices) if (!v.notes.size) this.releaseAll(v);
     this.playing = playing;
   }
 
@@ -288,8 +432,16 @@ export class SynthEngine {
   noteOn(voiceId: number, freq: number, gateSamples: number): void {
     const v = this.findVoice(voiceId);
     if (!v || v.notes.size) return;
+    if (this.isPoly(v)) {
+      // Each step a note of its own (tails overlap).
+      const n = this.allocate(v, -1);
+      n.gateRemaining = Math.max(1, Math.round(gateSamples));
+      this.startNote(v, n, freq, 1, 1, -1, false);
+      return;
+    }
     v.freq = freq;
     v.vel = 1;
+    v.key = -1;
     v.gateRemaining = Math.max(1, Math.round(gateSamples));
     this.synthNote(v, 1, false, true);
     v.env.gateOn();
@@ -308,7 +460,15 @@ export class SynthEngine {
     const v = this.findVoice(voiceId);
     if (!v) return;
     const legato = v.notes.size > 0;
+    if (this.isPoly(v)) {
+      v.notes.push(note, velocity);
+      const n = this.allocate(v, note);
+      n.gateRemaining = 0;
+      this.startNote(v, n, midiNoteFreq(note, v.params.octave), velocityGain(velocity), Math.min(127, velocity) / 127, note, legato);
+      return;
+    }
     v.notes.push(note, velocity);
+    v.key = note;
     v.freq = midiNoteFreq(note, v.params.octave);
     v.vel = velocityGain(velocity);
     v.gateRemaining = 0;
@@ -328,9 +488,18 @@ export class SynthEngine {
     const wasTop = v.notes.top === note;
     // Still held by another channel / input (Omni): nothing changes.
     if (!v.notes.remove(note)) return;
+    if (this.isPoly(v)) {
+      // The note's slot(s); with no key left, any slot still holding a key (e.g. one started
+      // before the voice became polyphonic) releases too.
+      const all = v.notes.size === 0;
+      if ((v.key === note || (all && v.key >= 0)) && isHeld(v)) this.releaseNote(v, v);
+      for (const n of this.pool) if (n.owner === v && (n.key === note || (all && n.key >= 0)) && isHeld(n)) this.releaseNote(v, n);
+      return;
+    }
     if (!v.notes.size) {
       this.gateOff(v);
     } else if (wasTop) {
+      v.key = v.notes.top;
       v.freq = midiNoteFreq(v.notes.top, v.params.octave);
       v.vel = velocityGain(v.notes.topVelocity);
       this.synthNote(v, v.notes.topVelocity / 127, true, false);
@@ -343,7 +512,7 @@ export class SynthEngine {
     for (const v of this.voices) {
       if (v.removing || (voiceId >= 0 && v.params.id !== voiceId) || !v.notes.size) continue;
       v.notes.clear();
-      this.gateOff(v);
+      this.releaseAll(v);
     }
   }
 
@@ -408,6 +577,7 @@ export class SynthEngine {
         o.y = o.yB = v.osc.indexY;
       }
       o.env = v.env.value;
+      for (const n of this.pool) if (n.owner === v && n.env.value > o.env) o.env = n.env.value;
       o.note = v.notes.top;
     }
     return out;
@@ -467,6 +637,20 @@ export class SynthEngine {
           right += this.outR;
         }
       }
+      // Pool notes (polyphonic Synth voices), after every voice's own path.
+      for (let k = 0; k < NOTE_POOL; k++) {
+        const n = this.pool[k];
+        const v = n.owner;
+        if (v === null) continue;
+        if (n.gateRemaining > 0 && --n.gateRemaining === 0) this.releaseNote(v, n);
+        if (n.env.stage === IDLE) continue;
+        const e = n.env.next();
+        const syn = n.syn!;
+        const m = v.typeMix;
+        syn.render(v.params, e, blockT, this.tables);
+        left += syn.outL * m * (syn.panL0 + (syn.panL1 - syn.panL0) * blockT);
+        right += syn.outR * m * (syn.panR0 + (syn.panR1 - syn.panR0) * blockT);
+      }
       if (outR) {
         out[i] = left * MASTER_GAIN;
         outR[i] = right * MASTER_GAIN;
@@ -490,8 +674,20 @@ export class SynthEngine {
   }
 
   private control(blockLen: number): void {
-    if (this.voices.some((v) => v.removing && v.env.stage === IDLE)) {
-      this.voices = this.voices.filter((v) => !(v.removing && v.env.stage === IDLE));
+    // Pool notes: free the silent ones (and any whose voice is gone).
+    for (const n of this.pool) {
+      if (n.owner !== null && (n.env.stage === IDLE || !n.owner.syn)) {
+        n.owner = null;
+        n.key = -1;
+        n.gateRemaining = 0;
+      }
+    }
+    if (this.voices.some((v) => v.removing && v.env.stage === IDLE && !this.hasNotes(v))) {
+      this.voices = this.voices.filter((v) => !(v.removing && v.env.stage === IDLE && !this.hasNotes(v)));
+      for (const n of this.pool) {
+        if (n.owner !== null && !this.voices.includes(n.owner)) n.owner = null;
+        if (n.lastOwner !== null && !this.voices.includes(n.lastOwner)) n.lastOwner = null;
+      }
     }
     // CPU guard: unison copies of the Synth voices holding a note (release tails don't
     // count: they would make every note-on look like two voices). Over the budget each
@@ -501,6 +697,14 @@ export class SynthEngine {
     let copies = 0;
     for (const v of this.voices) {
       if (!v.syn || v.params.type !== 'synth' || (!v.notes.size && v.gateRemaining <= 0)) continue;
+      const s = v.params.synth;
+      const xa = s.aPhaseSpread > 0 || s.aPosSpread > 0 ? 2 : 1;
+      const xb = s.bPhaseSpread > 0 || s.bPosSpread > 0 ? 2 : 1;
+      copies += s.aUnison * xa + (s.bLevel > 0 || s.ringLevel > 0 || s.fm > 0 || s.sync ? s.bUnison * xb : 0);
+    }
+    for (const n of this.pool) {
+      const v = n.owner;
+      if (v === null || !isHeld(n)) continue;
       const s = v.params.synth;
       const xa = s.aPhaseSpread > 0 || s.aPosSpread > 0 ? 2 : 1;
       const xb = s.bPhaseSpread > 0 || s.bPosSpread > 0 ? 2 : 1;
@@ -529,9 +733,17 @@ export class SynthEngine {
       if (!synthOnly) this.resolve(v);
       if (v.syn && (v.params.type === 'synth' || v.typeMix > 0)) this.controlSynth(v, blockLen);
     }
+    for (const n of this.pool) if (n.owner !== null) this.controlSynth(n.owner, blockLen, n);
   }
 
-  private controlSynth(v: VoiceRuntime, blockLen: number): void {
+  /** The voice has pool notes still sounding. */
+  private hasNotes(v: VoiceRuntime): boolean {
+    for (const n of this.pool) if (n.owner === v && n.env.stage !== IDLE) return true;
+    return false;
+  }
+
+  /** One control block of a Synth path: the voice's own (`n` = the voice) or a pool note's. */
+  private controlSynth(v: VoiceRuntime, blockLen: number, n: NoteSlot = v): void {
     const p = v.params;
     const s = p.synth;
     const c = this.ctl;
@@ -540,11 +752,11 @@ export class SynthEngine {
     c.wtA = this.wavetables.get(p.wavetableId);
     c.wtB = this.wavetables.get(s.b.wavetableId);
     c.slew = this.slew;
-    c.gainTarget = p.mute ? 0 : p.level * (1 - s.velAmp + s.velAmp * v.vel);
+    c.gainTarget = p.mute ? 0 : p.level * (1 - s.velAmp + s.velAmp * n.vel);
     c.bpm = this.bpm;
     c.wheel = v.wheel;
     c.pressure = v.pressure;
-    v.syn!.control(p, c);
+    n.syn!.control(p, c);
 
   }
 

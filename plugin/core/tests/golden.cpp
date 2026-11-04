@@ -243,7 +243,7 @@ TEST("golden: resolveMix (400 random wavetables and queries)") {
 
 // ---- engine scenarios (opcodes as in tests/golden.test.ts) ----
 
-const char* const SCENARIOS[] = {"sequence", "midi2d", "steplen", "synth", "synthEdit", "synthGuard", "stereo", "rows"};
+const char* const SCENARIOS[] = {"sequence", "midi2d", "steplen", "synth", "synthEdit", "synthGuard", "stereo", "poly", "rows"};
 /** Synth voices: the same bound as the rest (measured: well under it). */
 constexpr double SYNTH_TOL = 2e-6;
 
@@ -270,6 +270,7 @@ SynthParams decodeSynth(const std::vector<double>& op, size_t i) {
     s.sat = d(); s.width = d();
     s.aPan = d(); s.bPan = d(); s.aPhaseSpread = d(); s.bPhaseSpread = d(); s.aPosSpread = d(); s.bPosSpread = d();
     s.noiseWidth = d(); s.filterSpread = d();
+    s.poly = (int) d();
     s.b.wavetableId = (int) d(); s.b.windowStart = (int) d(); s.b.windowEnd = (int) d(); s.b.windowStartY = (int) d();
     s.b.windowEndY = (int) d(); s.b.position = d(); s.b.positionY = d();
     for (auto& l : s.lfos) {

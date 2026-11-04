@@ -16,6 +16,8 @@ enum class NoiseType : uint8_t { white, pink };
 enum class PitchTarget : uint8_t { a, b, ab };
 
 inline constexpr int MAX_UNISON = 4;
+/** Most notes one Synth voice plays at once. */
+inline constexpr int MAX_POLY = 8;
 inline constexpr double FM_DEPTH = 1.5;
 inline constexpr double FILTER_ENV_OCTAVES = 6;
 inline constexpr double FILTER_VEL_OCTAVES = 4;
@@ -81,6 +83,8 @@ struct SynthParams {
     double aPosSpread = 0, bPosSpread = 0;
     double noiseWidth = 0;
     double filterSpread = 0;
+    /** Polyphony 1..MAX_POLY (1 = monophonic). Saved data without it is monophonic. */
+    int poly = 8;
 };
 
 /** Semitone offset of an oscillator's tuning. */

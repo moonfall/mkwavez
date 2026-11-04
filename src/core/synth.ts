@@ -155,9 +155,16 @@ export interface SynthParams {
   readonly noiseWidth: number;
   /** Filter cutoff spread −1..1: the left cutoff moves down and the right up (1 = FILTER_SPREAD_OCTAVES apart). */
   readonly filterSpread: number;
+  /**
+   * Polyphony: notes the voice plays at once, 1..MAX_POLY. 1 = monophonic (last-note
+   * priority, legato, glide between held notes). Saved data without it is monophonic.
+   */
+  readonly poly: number;
 }
 
 export const MAX_UNISON = 4;
+/** Most notes one Synth voice plays at once. */
+export const MAX_POLY = 8;
 /** Phase modulation depth at FM 1, in cycles of osc A. */
 export const FM_DEPTH = 1.5;
 
@@ -247,6 +254,7 @@ export const DEFAULT_SYNTH: SynthParams = {
   bPosSpread: 0,
   noiseWidth: 0,
   filterSpread: 0,
+  poly: 8,
 };
 
 /** Amp ADSR of a new Synth voice (Simple voices keep their own defaults). */
@@ -304,6 +312,7 @@ export const SYNTH_RANGES: Readonly<Partial<Record<keyof SynthParams, readonly [
   bPosSpread: [0, 1],
   noiseWidth: [0, 1],
   filterSpread: [-1, 1],
+  poly: [1, MAX_POLY, true],
 };
 
 
@@ -390,6 +399,8 @@ export function normalizeSynth(raw: unknown, fallbackSource: OscSource = DEFAULT
     if (k === 'b') out.b = normalizeSource(v, fallbackSource);
     else if (k === 'lfos') out.lfos = Array.from({ length: LFO_COUNT }, (_, i) => normalizeLfo(Array.isArray(v) ? v[i] : undefined, DEFAULT_SYNTH.lfos[i]));
     else if (k === 'mods') out.mods = Array.isArray(v) ? Array.from({ length: MOD_SLOTS }, (_, i) => normalizeSlot(v[i])) : EMPTY_MODS;
+    // Saved before polyphony: monophonic, as it was (new voices get the Init patch's).
+    else if (k === 'poly') out.poly = v === undefined ? 1 : clampNum(v, 1, SYNTH_RANGES.poly);
 
     else if (typeof def === 'number') out[k] = clampNum(v, def, SYNTH_RANGES[k]);
     else if (typeof def === 'boolean') out[k] = typeof v === 'boolean' ? v : def;

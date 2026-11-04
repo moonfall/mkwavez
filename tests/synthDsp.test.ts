@@ -267,7 +267,8 @@ describe('Synth voice in the engine', () => {
     ];
     for (const s of extremes) {
       const e = engine();
-      e.setVoice(synthVoice(1, s, { level: 1 }));
+      // One note's path (polyphony would sum overlapping release tails).
+      e.setVoice(synthVoice(1, { poly: 1, ...s }, { level: 1 }));
       for (const note of [0, 36, 69, 127]) {
         e.applyMidi({ type: 'noteOn', voiceId: 1, note, velocity: 127 });
         e.applyMidi({ type: 'bend', voiceId: 1, semitones: 2 });

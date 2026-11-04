@@ -316,7 +316,8 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   source, sub (wave, octave, level), noise (type, level), ring, FM, hard sync, unison per
   osc (copies, detune, spread), filter (mode, cutoff Hz, resonance, drive, key track, env /
   velocity amounts), saturation, filter ADSR, pitch envelope (A, D, ± semitones, target),
-  velocity → amp, glide (+ legato only), bend range, pan, width, the stereo controls
+  velocity → amp, glide (+ legato only), bend range, polyphony (`poly` 1..8; missing in
+  saved data → 1, like the matrix), pan, width, the stereo controls
   (oscillator pan `aPan` / `bPan`, stereo phase `aPhaseSpread` / `bPhaseSpread` 0..½
   cycle, stereo position `aPosSpread` / `bPosSpread`, `noiseWidth`, `filterSpread` ±1),
   three LFOs (each with a stereo phase, `stereo` 0..½), the mod
@@ -711,6 +712,21 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   (L + R) / 2). Simple voices are added to both channels unchanged, so a session of Simple
   voices renders sample-identically to the engine before Synth voices
   (`tests/simpleVoice.test.ts` against the frozen `tests/fixtures/mainEngine.ts`).
+- Polyphony (`synth.poly` > 1, Synth voices only): the voice's own runtime is one note
+  slot; further notes come from `NOTE_POOL` (24) PolyNotes shared by every voice, each with
+  its amp envelope, gate countdown, velocity, key, age and a SynthVoice (seeded
+  `POOL_SEED + index`; allocated on first use — in C++ constructed in place in a fixed
+  pool). Allocation (`allocate`): the slot already on that key (held or releasing), else a
+  silent slot (the voice's own, then an idle owned note, then a free pool note while the
+  voice holds fewer than `poly`), else steal the quietest released slot, else the oldest.
+  A pool note changing voices drops its table mixes (`SynthVoice.reclaim`) and is resynced
+  (envelopes, filters). Glide runs from the last note's pitch (when set, and legato-only is
+  off or other keys are held). Note off releases the key's slots (with no key left, any
+  slot holding a key). Sequencer steps take a slot each (key −1), so tails overlap. Pool
+  notes render after all voices (same order in C++), scaled by their voice's Simple ↔
+  Synth mix; idle ones are freed at the next control block. Fewer notes / no longer Synth
+  / removal releases them. The CPU guard counts every held note's copies. Status `env` is
+  the loudest of the voice's notes. `poly` 1 runs the monophonic code unchanged.
 - Note handling, gate, amp ADSR (the voice's attack / decay / sustain / release), bend
   smoothing and the sequencer are shared; a Synth voice's `SynthVoice` (allocated on the
   command thread when it first becomes Synth) adds the rest. Switching type crossfades the

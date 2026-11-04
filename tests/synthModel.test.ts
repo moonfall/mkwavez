@@ -138,7 +138,7 @@ describe('Synth voices in sessions', () => {
       const { type: _t, synth, ...rest } = v;
       const { type: _t0, synth: _s0, ...rest0 } = st.voices[i];
       expect(rest).toEqual(rest0);
-      expect({ ...synth, b: undefined }).toEqual({ ...DEFAULT_SYNTH, mods: EMPTY_MODS, b: undefined });
+      expect({ ...synth, b: undefined }).toEqual({ ...DEFAULT_SYNTH, mods: EMPTY_MODS, poly: 1, b: undefined });
       expect(synth.b.wavetableId).toBe(v.wavetableId);
       expect([synth.b.windowStart, synth.b.windowEnd, synth.b.position]).toEqual([v.windowStart, v.windowEnd, v.position]);
     }
@@ -172,7 +172,7 @@ describe('Synth voices in sessions', () => {
 
   it('normalizeSynth: missing synth → the Init patch with osc B on the given source', () => {
     const src = { ...DEFAULT_SYNTH.b, wavetableId: 2, windowEnd: 3 };
-    expect(normalizeSynth(undefined, src)).toEqual({ ...DEFAULT_SYNTH, mods: EMPTY_MODS, b: src });
+    expect(normalizeSynth(undefined, src)).toEqual({ ...DEFAULT_SYNTH, mods: EMPTY_MODS, poly: 1, b: src });
     expect(normalizeSynth({ ...DEFAULT_VOICE.synth }).cutoff).toBe(DEFAULT_SYNTH.cutoff);
   });
 });

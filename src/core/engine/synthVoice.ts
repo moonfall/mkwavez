@@ -459,6 +459,20 @@ export class SynthVoice {
 
   private lastBend = 0;
 
+  /**
+   * A pooled note taken over by another voice (polyphony): forget the previous voice's
+   * table mixes (Step holds included; the next resolve starts at the new voice's), its
+   * right-channel readers and the cutoff smoothing.
+   */
+  reclaim(): void {
+    for (const o of [this.a, this.b, this.aR, this.bR]) {
+      o.clear();
+      o.heldId = o.targetId = -1;
+    }
+    this.rA = this.rB = false;
+    this.cutS = Number.NaN;
+  }
+
   /** Block-end phase increments of A, B and the sub from the current pitch state. */
   private pitches(p: VoiceParams, bendSemis: number): void {
     const s = p.synth;

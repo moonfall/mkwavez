@@ -15,6 +15,7 @@ SynthEngine::SynthEngine(double sampleRate)
       slew(CONTROL_BLOCK / (CROSSFADE_SEC * sampleRate)) {
     typeStep = 1 / (TYPE_FADE_SEC * sampleRate);
     ctl.tables = &tables;
+    for (int i = 0; i < NOTE_POOL; ++i) notePool[(size_t) i].index = i;
 }
 
 // ---- tables / wavetables ----
@@ -74,7 +75,8 @@ void SynthEngine::collectZombies() {
     if (nZombies == 0) return;
     // Pointers voices may still read (Simple osc + Synth A / B and their right-channel mixes), sorted for lookup.
     constexpr int PER_VOICE = 5 * (WtOsc::MAX_LIVE + 1);
-    const void* live[MAX_VOICES * PER_VOICE];
+    constexpr int PER_NOTE = 4 * (WtOsc::MAX_LIVE + 1);
+    const void* live[MAX_VOICES * PER_VOICE + NOTE_POOL * PER_NOTE];
     int nLive = 0;
     const auto add = [&](const MipSet* t) { live[nLive++] = t; };
     for (int i = 0; i < nVoices; ++i) {
@@ -82,6 +84,8 @@ void SynthEngine::collectZombies() {
         v.osc.forEachTable(add);
         if (v.syn) v.syn->forEachTable(add);
     }
+    for (const PolyNote& n : notePool)
+        if (n.syn) n.syn->forEachTable(add);
     std::sort(live, live + nLive);
     int kept = 0;
     for (int z = 0; z < nZombies; ++z) {
@@ -129,6 +133,9 @@ void SynthEngine::setVoice(const VoiceParams& p) {
         slot.used = true;
         slot.params = p;
         slot.env = Adsr{};
+        slot.key = -1;
+        slot.age = 0;
+        slot.hasLastPitch = false;
         slot.osc = WtOsc{};
         slot.lfoPhase = p.lfoPhase;
         slot.lfoPhaseY = p.lfoPhaseY;
@@ -164,6 +171,95 @@ void SynthEngine::applyParams(VoiceRuntime& v, const VoiceParams& p) {
         v.syn->vel = v.notes.size ? v.notes.topVelocity() / 127.0 : 1;
         v.syn->resync(p, freqPitch(v.freq), v.notes.size > 0 || v.gateRemaining > 0, v.env.stage != Adsr::Idle && v.typeMix > 0);
     }
+    for (PolyNote& n : notePool) {
+        if (n.owner != &v) continue;
+        n.env.configure(p.attack, p.decay, p.sustain, p.release, sr);
+        if (!isPoly(v)) releaseNote(v, n);
+    }
+}
+
+bool SynthEngine::isPoly(const VoiceRuntime& v) const {
+    return v.params.type == VoiceType::synth && v.params.synth.poly > 1 && v.syn.has_value();
+}
+
+void SynthEngine::releaseNote(VoiceRuntime& v, NoteState& n) {
+    n.env.gateOff();
+    if (n.syn) n.syn->gateOff(v.params);
+}
+
+void SynthEngine::releaseAll(VoiceRuntime& v) {
+    gateOff(v);
+    for (PolyNote& n : notePool)
+        if (n.owner == &v) releaseNote(v, n);
+}
+
+bool SynthEngine::hasNotes(const VoiceRuntime& v) const {
+    for (const PolyNote& n : notePool)
+        if (n.owner == &v && n.env.stage != Adsr::Idle) return true;
+    return false;
+}
+
+SynthEngine::NoteState& SynthEngine::allocate(VoiceRuntime& v, int key) {
+    const int poly = v.params.synth.poly;
+    if (key >= 0) {
+        if (v.key == key && v.env.stage != Adsr::Idle) return v;
+        for (PolyNote& n : notePool)
+            if (n.owner == &v && n.key == key && n.env.stage != Adsr::Idle) return n;
+    }
+    if (v.env.stage == Adsr::Idle) return v;
+    int owned = 0;
+    for (PolyNote& n : notePool) {
+        if (n.owner != &v) continue;
+        if (n.env.stage == Adsr::Idle) return n;
+        ++owned;
+    }
+    if (owned + 1 < poly) {
+        for (PolyNote& n : notePool) {
+            if (n.owner != nullptr) continue;
+            n.owner = &v;
+            n.env.configure(v.params.attack, v.params.decay, v.params.sustain, v.params.release, sr);
+            if (!n.syn)
+                n.syn.emplace(sr, POOL_SEED + n.index, CONTROL_BLOCK, v.params.synth);
+            else if (n.lastOwner != &v)
+                n.syn->reclaim();
+            n.lastOwner = &v;
+            n.syn->resync(v.params, freqPitch(v.freq), false, false);
+            return n;
+        }
+    }
+    NoteState* best = &v;
+    bool bestReleased = !v.held();
+    for (PolyNote& n : notePool) {
+        if (n.owner != &v) continue;
+        const bool released = !n.held();
+        if (released && (!bestReleased || n.env.value < best->env.value)) {
+            best = &n;
+            bestReleased = true;
+        } else if (!released && !bestReleased && n.age < best->age)
+            best = &n;
+    }
+    return *best;
+}
+
+void SynthEngine::startNote(VoiceRuntime& v, NoteState& n, double freq, double vel, double vel01, int key, bool legato) {
+    const VoiceParams& p = v.params;
+    const SynthParams& s = p.synth;
+    SynthVoice& syn = *n.syn;
+    const double pitch = freqPitch(freq);
+    n.freq = freq;
+    n.vel = vel;
+    n.key = key;
+    n.age = ++noteAge;
+    const bool glide = s.glide > 0 && v.hasLastPitch && (!s.glideLegato || legato);
+    if (glide) {
+        syn.pitch = v.lastPitch;
+        syn.noteOn(p, pitch, vel01, true, true, true);
+    } else
+        syn.noteOn(p, pitch, vel01, legato, true, n.env.stage != Adsr::Idle);
+    v.lastPitch = pitch;
+    v.hasLastPitch = true;
+    n.env.gateOn();
+    if (&n == static_cast<NoteState*>(&v)) resolvePitch(v);
 }
 
 void SynthEngine::removeVoice(int32_t id) {
@@ -173,7 +269,12 @@ void SynthEngine::removeVoice(int32_t id) {
     v->gateRemaining = 0;
     const VoiceParams& p = v->params;
     v->env.configure(p.attack, p.decay, p.sustain, REMOVE_RELEASE_SEC, sr);
-    gateOff(*v);
+    for (PolyNote& n : notePool) {
+        if (n.owner != v) continue;
+        n.gateRemaining = 0;
+        n.env.configure(p.attack, p.decay, p.sustain, REMOVE_RELEASE_SEC, sr);
+    }
+    releaseAll(*v);
 }
 
 void SynthEngine::gateOff(VoiceRuntime& v) {
@@ -213,15 +314,22 @@ void SynthEngine::setTransport(bool play, double newBpm) {
     }
     if (!play && playing)
         for (int i = 0; i < nVoices; ++i)
-            if (!voices[(size_t) i]->notes.size) gateOff(*voices[(size_t) i]);
+            if (!voices[(size_t) i]->notes.size) releaseAll(*voices[(size_t) i]);
     playing = play;
 }
 
 void SynthEngine::noteOn(int32_t voiceId, double freq, double gateSamples) {
     VoiceRuntime* v = findVoice(voiceId);
     if (!v || v->notes.size) return;
+    if (isPoly(*v)) {
+        NoteState& n = allocate(*v, -1);
+        n.gateRemaining = std::max<int64_t>(1, (int64_t) std::floor(gateSamples + 0.5));
+        startNote(*v, n, freq, 1, 1, -1, false);
+        return;
+    }
     v->freq = freq;
     v->vel = 1;
+    v->key = -1;
     v->gateRemaining = std::max<int64_t>(1, (int64_t) std::floor(gateSamples + 0.5));
     synthNote(*v, 1, false, true);
     v->env.gateOn();
@@ -235,7 +343,15 @@ void SynthEngine::midiNoteOn(int32_t voiceId, int note, int velocity) {
     VoiceRuntime* v = findVoice(voiceId);
     if (!v) return;
     const bool legato = v->notes.size > 0;
+    if (isPoly(*v)) {
+        v->notes.push(note, velocity);
+        NoteState& n = allocate(*v, note);
+        n.gateRemaining = 0;
+        startNote(*v, n, midiNoteFreq(note, v->params.octave), velocityGain(velocity), std::min(127, velocity) / 127.0, note, legato);
+        return;
+    }
     v->notes.push(note, velocity);
+    v->key = note;
     v->freq = midiNoteFreq(note, v->params.octave);
     v->vel = velocityGain(velocity);
     v->gateRemaining = 0;
@@ -249,9 +365,17 @@ void SynthEngine::midiNoteOff(int32_t voiceId, int note) {
     if (!v) return;
     const bool wasTop = v->notes.top() == note;
     if (!v->notes.remove(note)) return;
+    if (isPoly(*v)) {
+        const bool all = v->notes.size == 0;
+        if ((v->key == note || (all && v->key >= 0)) && v->held()) releaseNote(*v, *v);
+        for (PolyNote& n : notePool)
+            if (n.owner == v && (n.key == note || (all && n.key >= 0)) && n.held()) releaseNote(*v, n);
+        return;
+    }
     if (!v->notes.size) {
         gateOff(*v);
     } else if (wasTop) {
+        v->key = v->notes.top();
         v->freq = midiNoteFreq(v->notes.top(), v->params.octave);
         v->vel = velocityGain(v->notes.topVelocity());
         synthNote(*v, v->notes.topVelocity() / 127.0, true, false);
@@ -264,7 +388,7 @@ void SynthEngine::midiAllNotesOff(int32_t voiceId) {
         VoiceRuntime& v = *voices[(size_t) i];
         if (v.removing || (voiceId >= 0 && v.params.id != voiceId) || !v.notes.size) continue;
         v.notes.clear();
-        gateOff(v);
+        releaseAll(v);
     }
 }
 
@@ -323,6 +447,8 @@ void SynthEngine::status(EngineStatus& out) const {
             o.y = o.yB = v.osc.indexY;
         }
         o.env = v.env.value;
+        for (const PolyNote& n : notePool)
+            if (n.owner == &v && n.env.value > o.env) o.env = n.env.value;
         o.note = v.notes.top();
     }
 }
@@ -368,6 +494,19 @@ void SynthEngine::process(float* out, int frames, float* outR) {
                 right += r;
             }
         }
+        // Pool notes (polyphonic Synth voices), after every voice's own path.
+        for (PolyNote& n : notePool) {
+            VoiceRuntime* v = n.owner;
+            if (!v) continue;
+            if (n.gateRemaining > 0 && --n.gateRemaining == 0) releaseNote(*v, n);
+            if (n.env.stage == Adsr::Idle) continue;
+            const double e = n.env.next();
+            SynthVoice& syn = *n.syn;
+            const double m = v->typeMix;
+            syn.render(v->params, e, blockT, tables);
+            left += syn.outL * m * (syn.panL0 + (syn.panL1 - syn.panL0) * blockT);
+            right += syn.outR * m * (syn.panR0 + (syn.panR1 - syn.panR0) * blockT);
+        }
         if (outR) {
             out[i] = (float) (left * MASTER_GAIN);
             outR[i] = (float) (right * MASTER_GAIN);
@@ -391,10 +530,21 @@ void SynthEngine::triggerTick() {
 }
 
 void SynthEngine::control(int blockLen) {
+    for (PolyNote& n : notePool) {
+        if (n.owner && (n.env.stage == Adsr::Idle || !n.owner->syn)) {
+            n.owner = nullptr;
+            n.key = -1;
+            n.gateRemaining = 0;
+        }
+    }
     int k = 0;
     for (int i = 0; i < nVoices; ++i) {
         VoiceRuntime* v = voices[(size_t) i];
-        if (v->removing && v->env.stage == Adsr::Idle) {
+        if (v->removing && v->env.stage == Adsr::Idle && !hasNotes(*v)) {
+            for (PolyNote& n : notePool) {
+                if (n.owner == v) n.owner = nullptr;
+                if (n.lastOwner == v) n.lastOwner = nullptr;
+            }
             v->used = false;
             v->osc.clear();
             v->syn.reset();
@@ -410,6 +560,13 @@ void SynthEngine::control(int blockLen) {
         if (!v.syn || v.params.type != VoiceType::synth || (!v.notes.size && v.gateRemaining <= 0)) continue;
         const SynthParams& s = v.params.synth;
         // A stereo phase / position reads every copy twice: those copies count double.
+        const int xa = s.aPhaseSpread > 0 || s.aPosSpread > 0 ? 2 : 1;
+        const int xb = s.bPhaseSpread > 0 || s.bPosSpread > 0 ? 2 : 1;
+        copies += s.aUnison * xa + (s.bLevel > 0 || s.ringLevel > 0 || s.fm > 0 || s.sync ? s.bUnison * xb : 0);
+    }
+    for (const PolyNote& n : notePool) {
+        if (!n.owner || !n.held()) continue;
+        const SynthParams& s = n.owner->params.synth;
         const int xa = s.aPhaseSpread > 0 || s.aPosSpread > 0 ? 2 : 1;
         const int xb = s.bPhaseSpread > 0 || s.bPosSpread > 0 ? 2 : 1;
         copies += s.aUnison * xa + (s.bLevel > 0 || s.ringLevel > 0 || s.fm > 0 || s.sync ? s.bUnison * xb : 0);
@@ -438,12 +595,14 @@ void SynthEngine::control(int blockLen) {
         }
         const bool synthOnly = v.params.type == VoiceType::synth && v.typeMix == 1;
         if (!synthOnly) resolve(v);
-        if (v.syn && (v.params.type == VoiceType::synth || v.typeMix > 0)) controlSynth(v, blockLen);
+        if (v.syn && (v.params.type == VoiceType::synth || v.typeMix > 0)) controlSynth(v, blockLen, v);
     }
+    for (PolyNote& n : notePool)
+        if (n.owner) controlSynth(*n.owner, blockLen, n);
     collectZombies();
 }
 
-void SynthEngine::controlSynth(VoiceRuntime& v, int blockLen) {
+void SynthEngine::controlSynth(VoiceRuntime& v, int blockLen, NoteState& n) {
     const VoiceParams& p = v.params;
     const SynthParams& s = p.synth;
     ctl.bend = v.bendSemis;
@@ -451,11 +610,11 @@ void SynthEngine::controlSynth(VoiceRuntime& v, int blockLen) {
     ctl.wtA = findWavetable(p.wavetableId);
     ctl.wtB = findWavetable(s.b.wavetableId);
     ctl.slew = slew;
-    ctl.gainTarget = p.mute ? 0 : p.level * (1 - s.velAmp + s.velAmp * v.vel);
+    ctl.gainTarget = p.mute ? 0 : p.level * (1 - s.velAmp + s.velAmp * n.vel);
     ctl.bpm = bpm;
     ctl.wheel = v.wheel;
     ctl.pressure = v.pressure;
-    v.syn->control(p, ctl);
+    n.syn->control(p, ctl);
 }
 
 void SynthEngine::resolvePitch(VoiceRuntime& v) {

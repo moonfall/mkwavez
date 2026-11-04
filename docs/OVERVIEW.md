@@ -56,7 +56,8 @@ as a native plugin (VST3 / AU / CLAP / LV2 / Standalone) whose editor is the sam
 
 ## Playing (Voices, Sequences, MIDI)
 
-Voices are monophonic (last-note priority, legato), one per tab.
+One voice per tab. Simple voices are monophonic (last-note priority, legato); Synth voices
+play up to 8 notes at once (or 1: monophonic, legato and glide between held notes).
 
 - **Simple voice** — window + position (1D) or rectangle + X/Y (2D and Rows) over a
   wavetable, position LFO, ADSR.

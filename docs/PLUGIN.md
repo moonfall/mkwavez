@@ -155,9 +155,9 @@ addressing table map) instead of Maps.
 - **Golden fixture** — `tests/golden.test.ts` runs the TS core on fixed inputs (PRNG,
   shape, basic waves, mip sets, mip levels, modulated position, velocity / note
   frequency, ADSR, 400 random `resolveMix` cases over 1D / 2D / Rows with empty slots,
-  the synth helpers (SVF in every mode, drive, limiter, LFO shapes), and eight engine
+  the synth helpers (SVF in every mode, drive, limiter, LFO shapes), and nine engine
   scenarios with timed commands, rendered in stereo: sequencer + Blend/Step switches, MIDI
-  on a sparse 2D wavetable, step lengths, Rows + late / removed tables, and four Synth
+  on a sparse 2D wavetable, step lengths, Rows + late / removed tables, and five Synth
   voice scenarios — most of the path at once (osc B on 2D, sub, pink noise, ring, FM,
   LP24 with drive / key tracking / envelopes, pitch envelope, glide, unison spread +
   width, saturation, three LFOs incl. tempo-synced S&H, a full mod matrix, bend / mod
@@ -165,7 +165,9 @@ addressing table map) instead of Maps.
   envelope, retriggered LFOs, legato glide, Simple ↔ Synth switches on a held note),
   the unison CPU guard, and the stereo path (oscillator pans, stereo phase, stereo position
   on Blend and Step wavetables, noise width, filter spread, stereo LFOs on per-channel
-  destinations, then back to mono)) and checks the committed
+  destinations, then back to mono), and polyphony (chord, stealing, same-key reuse, poly
+  glide, a polyphonic sequencer voice with overlapping tails, poly → 1, a Simple switch,
+  removal)) and checks the committed
   `core.golden.txt`; the C++ tests replay the same inputs and compare (PRNG bit-exact,
   tables ≤ 2e-6, engine samples — Synth voices included — ≤ 2e-6). Regenerate after an
   intended TS change:

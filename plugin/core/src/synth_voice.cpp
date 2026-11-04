@@ -175,6 +175,15 @@ void SynthVoice::resync(const VoiceParams& p, double notePitch, bool gated, bool
     retune(p);
 }
 
+void SynthVoice::reclaim() {
+    for (WtOsc* o : {&a, &b, &aR, &bR}) {
+        o->clear();
+        o->heldId = o->targetId = -1;
+    }
+    rA = rB = false;
+    cutSet = false;
+}
+
 void SynthVoice::pitches(const VoiceParams& p, double bendSemis) {
     const SynthParams& s = p.synth;
     const double sr = sampleRate;
