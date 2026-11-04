@@ -23,7 +23,11 @@ export interface SplineParams {
   batch: number;
 }
 
-export const DEFAULT_SPLINE: SplineParams = { points: 8, kind: 0, tension: 0, jitter: 0, jitterEnd: 0.6, batch: 0 };
+/**
+ * Default batch: add a point per waveform (8 → 15 points). Sweeping the jitter 0 → 0.6 barely
+ * moved a smooth 8-point spline (≈ 5 dB over the batch); adding points travels 40–50 dB.
+ */
+export const DEFAULT_SPLINE: SplineParams = { points: 8, kind: 0, tension: 0, jitter: 0, jitterEnd: 0.6, batch: 1 };
 
 const MAX_POINTS = 32;
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);

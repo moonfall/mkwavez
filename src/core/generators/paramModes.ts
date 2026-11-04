@@ -480,8 +480,8 @@ export const PARAM_MODES = [
     cat: 'Builders',
     name: 'Spline',
     about:
-      'Seeded control points evenly spaced around the cycle, joined by a smooth periodic spline. A batch sweeps ' +
-      'the jitter (each point moves along its own seeded direction) or adds a point per waveform.',
+      'Seeded control points evenly spaced around the cycle, joined by a smooth periodic spline. A batch adds a ' +
+      'point per waveform (the first points stay put) or sweeps the jitter (each point moves along its own seeded direction).',
     params: [
       { key: 'points', label: 'Points', min: 3, max: 32, step: 1, value: SP.points },
       { key: 'kind', label: 'Curve', min: 0, max: 1, step: 1, value: SP.kind, options: opts(['Catmull-Rom (cardinal)', 'B-spline']) },

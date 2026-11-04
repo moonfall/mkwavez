@@ -144,10 +144,37 @@ describe('mutations (core port)', () => {
     const mags = (x: Float32Array) => harmonicMagnitudes(x, 72);
     const sc = mags(mutate('selfConv', saw, 1, 0));
     expect(sc[3] / sc[1]).toBeCloseTo(1 / 9, 3);
-    // a = 0.5: cutoff 1.5·√500 ≈ 33.5; the band near it is boosted, far above cut.
+    // a = 0.5: cutoff 1.5·√96 ≈ 14.7; the band near it is boosted, far above cut.
     const lp = mags(mutate('reslp', saw, 0.5, 0));
-    expect((lp[33] * 33) / (lp[1] * 1)).toBeGreaterThan(2);
-    expect((lp[70] * 70) / lp[1]).toBeLessThan(0.5);
+    expect((lp[15] * 15) / (lp[1] * 1)).toBeGreaterThan(2);
+    expect((lp[50] * 50) / lp[1]).toBeLessThan(0.5);
+    // Revision 1 (stored recipes): cutoff 1.5·√500 ≈ 33.5 at a = 0.5.
+    const lp1 = mags(mutate('reslp', saw, 0.5, 0, {}, 1));
+    expect((lp1[33] * 33) / (lp1[1] * 1)).toBeGreaterThan(2);
+    expect((lp1[70] * 70) / lp1[1]).toBeLessThan(0.5);
+  });
+
+  it('Decimate and Resonant low-pass act at the default amount (0.25), with the same ends as revision 1', () => {
+    const saw = generateBasic('saw', 0).data;
+    const formant = generateBasic('square', 0).data;
+    const dB = (x: Float32Array, y: Float32Array) => {
+      // RMS dB difference over harmonics 1–72, floored at −40 dB re each one's strongest.
+      const rel = (v: Float32Array) => {
+        const m = harmonicMagnitudes(v, 72);
+        const mx = Math.max(...m);
+        return Array.from(m.slice(1), (q) => Math.max(-40, 20 * Math.log10(q / mx + 1e-12)));
+      };
+      const a = rel(x);
+      const b = rel(y);
+      return Math.sqrt(a.reduce((s, v, k) => s + (v - b[k]) ** 2, 0) / a.length);
+    };
+    for (const id of ['decimate', 'reslp'] as const) {
+      for (const x of [saw, formant]) {
+        expect(dB(x, mutate(id, x, 0.25, 0)), `${id} @ 0.25`).toBeGreaterThan(dB(x, mutate(id, x, 0.25, 0, {}, 1)) + 0.5);
+        expect(maxDiff(mutate(id, x, 1, 0), mutate(id, x, 1, 0, {}, 1)), `${id} @ 1`).toBeLessThan(1e-6);
+      }
+      expect(dB(saw, mutate(id, saw, 0.25, 0)), `${id} on a saw @ 0.25`).toBeGreaterThan(1);
+    }
   });
 
   it('shapers keep the fundamental at full amount; slew acts early on a sine', () => {

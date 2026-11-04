@@ -7,7 +7,8 @@
  * revision, so stored recipes re-render as they were made. Recipes and Shape steps record
  * the revision they were made at (`rev`); those without one are revision 1.
  *  - 2: Reverse morphs the harmonic phases (never silent); Hard sync caps its read ratio
- *       on high-only sources (chains stay audible).
+ *       on high-only sources (chains stay audible); Decimate and Resonant low-pass act from
+ *       small amounts (their old curves spent the first third of the range above the band).
  */
 import { KMAX, TABLE_SIZE } from './constants';
 import { fft, harmonicMagnitudes } from './fft';
@@ -53,7 +54,7 @@ export const MUTATIONS = [
   { group: 'Time', id: 'halfSwap', label: 'Half-cycle swap', hint: 'Blend toward −x(t+½): halves swapped and inverted (even harmonics flip)' },
   { group: 'Time', id: 'repeat', label: 'Window & repeat', hint: 'First 1/n repeated n times, n = 1 + 7a (blended between whole n)' },
   { group: 'Time', id: 'slew', label: 'Slew limit', hint: 'Step per sample limited to 0.03^a × the source’s steepest step' },
-  { group: 'Time', id: 'decimate', label: 'Decimate', hint: 'Sample-and-hold to 2048 / 2^(7a) steps, then band-limited' },
+  { group: 'Time', id: 'decimate', label: 'Decimate', hint: 'Sample-and-hold to 2048 / 2^(7·a^0.35) steps (≈ 100 at a = 0.25, 16 at 1), then band-limited' },
   { group: 'Time', id: 'window', label: 'Window impose', hint: 'Cycle squeezed into W = 1 − 0.9a (silence after), Hann-shaped by a' },
   { group: 'Time', id: 'grains', label: 'Granular shuffle', hint: 'Each of 16 segments swapped with a seeded one with probability a', seeded: true },
   { group: 'Time', id: 'stutter', label: 'Stutter', hint: 'A seeded 1/16 segment repeated over the next a·½ cycle', seeded: true },
@@ -69,7 +70,7 @@ export const MUTATIONS = [
   { group: 'Spectral', id: 'blur', label: 'Blur', hint: 'Magnitudes mixed by a toward their neighbours' },
   { group: 'Spectral', id: 'odd', label: 'Odd only', hint: 'Even harmonics scaled by (1−a)²' },
   { group: 'Spectral', id: 'selfConv', label: 'Self-convolution', hint: 'Toward the squared spectrum: |X|²/max, phases doubled, by a' },
-  { group: 'Spectral', id: 'reslp', label: 'Resonant low-pass', hint: '2-pole low-pass, Q 4, cutoff 1.5·500^(1−a) harmonics' },
+  { group: 'Spectral', id: 'reslp', label: 'Resonant low-pass', hint: '2-pole low-pass, Q 4, cutoff 1.5·96^(1−a) harmonics (h144 → h1.5; h48 at a = 0.25)' },
   { group: 'Spectral', id: 'hshift', label: 'Harmonic shift', hint: 'Harmonics ≥ 2 move up by 16·a^1.5 (fundamental kept)' },
   { group: 'Spectral', id: 'mirror', label: 'Spectrum mirror', hint: 'Magnitudes of h2…top reversed, blended by a' },
   { group: 'Spectral', id: 'contrast', label: 'Spectral contrast', hint: 'Magnitudes |X|^γ, γ = 1 + 2a (peaks stand out)' },
@@ -397,7 +398,9 @@ export function mutate(
       return slewLimit(x, steep * Math.pow(0.03, a));
     }
     case 'decimate': {
-      const hold = Math.pow(2, 7 * a);
+      // Rev 1: hold 2^(7a) samples — under 0.5 dB on a saw up to a = 0.4 (the steps stay
+      // above twice the band). Rev 2: 2^(7·a^0.35), the same ends, audible from the start.
+      const hold = Math.pow(2, 7 * (rev < 2 ? a : Math.pow(a, 0.35)));
       return shapeFrom((i) => x[Math.min(N - 1, Math.floor(Math.floor(i / hold) * hold))]);
     }
     case 'window': {
@@ -463,7 +466,9 @@ export function mutate(
       });
     case 'reslp': {
       if (a <= 0) return shape(x);
-      const kc = 1.5 * Math.pow(500, 1 - a);
+      // Rev 1: cutoff 1.5·500^(1−a) — above harmonic 72 until a ≈ 0.38. Rev 2: from twice the
+      // band (h144) down to the same end, log-linear.
+      const kc = 1.5 * Math.pow(rev < 2 ? 500 : 96, 1 - a);
       const Q = 4;
       return viaSpec(x, (re, im) => {
         for (let k = 1; k < N / 2; k++) {

@@ -294,7 +294,7 @@ describe('parameter modes as functions (Part 2)', () => {
     expect(f('number-sequences')).toBe('seq(p, 0, 16, 0, n)');
     expect(f('reaction-diffusion')).toBe('rd(p, 0, 200+400*n, 128, 3)');
     expect(f('life-like-ca')).toBe('life(p, 0, 0, 32, 0.35, 8+n)');
-    expect(f('spline')).toBe('spline(p, 8, 0, 0, 0.6*u)');
+    expect(f('spline')).toBe('spline(p, 8+n, 0, 0, 0)');
     expect(f('glyph-contour')).toBe('glyph(p, "", 0)');
   });
 
