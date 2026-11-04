@@ -8,6 +8,9 @@
 import { KMAX } from '../core/constants';
 import {
   caRows,
+  FM_ROUTINGS,
+  fmIndex,
+  fmModulator,
   contourPoints,
   DYN_MAP_LABELS,
   dynControl,
@@ -32,6 +35,7 @@ import {
   supersawLevel,
   supersawPhases,
   type Board,
+  type FmParams,
   type LifeParams,
   type PolygonParams,
   type ShaperParams,
@@ -421,19 +425,18 @@ const modulator = (g: CanvasRenderingContext2D, w: number, h: number, c: VizColo
   rules(g, s, w, h, [], [0], c.axis);
   plot(g, s, f, 0, TAU, c.accent, 1.8, 400);
 };
-viz('nested-fm', {
-  axis: (i) => ['0', `φ = ${f2(0.5 + 2 * i.u)}·sin(2p + 2 sin 3p)`, '2π'],
-  draw: (g, w, h, i, c) => modulator(g, w, h, c, (p) => (0.5 + 2 * i.u) * Math.sin(2 * p + 2 * Math.sin(3 * p)), 2.6),
-});
-
-viz('cross-pm', {
-  axis: (i) => ['0', `φ = ${f2(2 * i.u)}·sin p·sin 3p`, '2π'],
-  draw: (g, w, h, i, c) => modulator(g, w, h, c, (p) => 2 * i.u * Math.sin(p) * Math.sin(3 * p), 2.1),
-});
-
-viz('fm-sweep', {
-  axis: (i) => ['0', `φ = ${f2(4 * i.u)}·sin 2p`, '2π'],
-  draw: (g, w, h, i, c) => modulator(g, w, h, c, (p) => 4 * i.u * Math.sin(2 * p), 4.2),
+// FM / PM (FM sweep, Nested FM, Cross PM, …): the modulator index·M(p) at the shown index, on the
+// batch's largest scale (so the sweep is visible).
+viz('mode:fm', {
+  axis: (i) => ['0', `index ${f2(fmIndex(i.params as unknown as FmParams, i.index, i.count))} · ${FM_ROUTINGS[Math.round(i.params.routing)]?.split(' (')[0] ?? ''}`, '2π'],
+  draw: (g, w, h, i, c) => {
+    const p = i.params;
+    const m = fmModulator(p.ratio, p.ratio2, p.amount2, p.routing);
+    const I = fmIndex(p as unknown as FmParams, i.index, i.count);
+    const peak = Math.max(1e-6, ...Array.from({ length: 256 }, (_, k) => Math.abs(m((2 * Math.PI * k) / 256))));
+    const max = Math.max(Math.abs(p.index), Math.abs(p.indexEnd), 0.1) * peak * 1.05;
+    modulator(g, w, h, c, (x) => I * m(x), max);
+  },
 });
 
 // Hard sync: a slave at ratio r = 1 + 3u restarted every master cycle (two cycles shown).

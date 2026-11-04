@@ -258,7 +258,7 @@ describe('parameter modes as functions (Part 2)', () => {
 
   it('every variant at its defaults renders like the formula preset it replaced (N = 8, within 1e-6)', () => {
     const variants = SEED_LIBRARY.filter((e) => e.formula);
-    expect(variants.map((e) => e.id)).toEqual(expect.arrayContaining(['soft-clip', 'chebyshev', 'superellipse', 'shaped-pwm']));
+    expect(variants.map((e) => e.id)).toEqual(expect.arrayContaining(['soft-clip', 'chebyshev', 'superellipse', 'shaped-pwm', 'fm-sweep', 'nested-fm', 'cross-pm']));
     for (const e of variants)
       for (const seed of [1, 0xdeadbeef]) {
         const gen = seedBatch(req(e, { seed, count: 8 }));
@@ -277,6 +277,7 @@ describe('parameter modes as functions (Part 2)', () => {
     expect(f('pulse')).toBe('pulse(p, 0.25+(0.05-0.25)*u)');
     expect(f('supersaw')).toBe('supersaw(p, 7, 2*u, 0.6, 0, 0)');
     expect(f('polygon')).toBe('polygon(p, 3+n, 1, 0, 0, 0)');
+    expect(f('fm-sweep')).toBe('fm(p, 1, 2, 4*u, 3, 0, 0)');
     expect(f('perlin-noise')).toBe('perlin(p, 2, 1.5*u, 4, 0.5)');
     expect(f('cellular-automaton')).toBe('ca(p, 30, 32, n)');
     expect(f('dynamical-systems')).toBe('dyn(p, 0, 0.6+(1-0.6)*u, 12, 0.8, 0)');
@@ -440,7 +441,7 @@ describe('formula recipes', () => {
   });
 
   it('documents every function', () => {
-    expect(WAVE_FUNCTION_NAMES.length).toBe(18);
+    expect(WAVE_FUNCTION_NAMES.length).toBe(19);
     for (const d of WAVE_FUNCTION_DOCS) expect(d.sig.startsWith(`${d.name}(x`)).toBe(true);
     const fx = waveFunctions(1) as unknown as Record<string, unknown>;
     for (const n of WAVE_FUNCTION_NAMES) expect(typeof fx[n]).toBe('function');

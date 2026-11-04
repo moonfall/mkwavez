@@ -1,6 +1,6 @@
 /**
  * Waveform functions for formulas: the basic waves (sine, tri, saw, square, pulse) and one
- * function per parameter mode (supersaw, polygon, shaper, perlin, ca, dyn, ks, additive, seq, rd, life, spline, glyph).
+ * function per parameter mode (WAVE_FUNCTION_DOCS lists them).
  * Each takes a phase x in radians first (`saw(2*p)`, `ca(p + u, 30, 32, n)`), then the
  * mode's arguments; seeded ones take the render's seed unless given an explicit last one.
  *
@@ -43,6 +43,7 @@ import { SPLINE_MAX_POINTS, splinePointsAt, splineRaw } from './spline';
 import { SUPERSAW_MAX_VOICES, supersawRaw } from './supersaw';
 import { POLYGON_MAX_SIDES, polygonRaw } from './polygon';
 import { SHAPERS, SHAPER_INPUTS, shaperRaw } from './shaper';
+import { fmRaw, FM_ROUTINGS } from './fm';
 
 type Arg = number | string;
 
@@ -55,6 +56,7 @@ export interface WaveFunctions {
   supersaw(x: number, voices?: number, drift?: number, outer?: number, wave?: number, phases?: number, seed?: number): number;
   polygon(x: number, sides?: number, star?: number, roundness?: number, rotation?: number, read?: number): number;
   shaper(x: number, curve?: number, amount?: number, bias?: number, level?: number, input?: number): number;
+  fm(x: number, carrier?: number, ratio?: number, index?: number, ratio2?: number, amount2?: number, routing?: number): number;
   perlin(x: number, freq?: number, z?: number, oct?: number, pers?: number, seed?: number): number;
   ca(x: number, rule?: number, cells?: number, gen?: number, seed?: number): number;
   dyn(x: number, map?: number, control?: number, iters?: number, spread?: number, output?: number): number;
@@ -97,6 +99,11 @@ export const WAVE_FUNCTION_DOCS: readonly WaveFunctionDoc[] = [
     name: 'shaper',
     sig: 'shaper(x, curve, amount, bias, level, input)',
     about: 'waveshaper: curve 0 tanh · 1 Chebyshev · 2 power · 3 hard clip · 4 fold of level·input + bias (Waveshaper)',
+  },
+  {
+    name: 'fm',
+    sig: 'fm(x, carrier, ratio, index, ratio2, amount2, routing)',
+    about: 'FM / PM: sin(carrier·x + index·M); a second modulator 0 nested · 1 ring · 2 parallel (FM / PM)',
   },
   { name: 'perlin', sig: 'perlin(x, freq, z, oct, pers, seed?)', about: 'loop-seamless Perlin noise (Perlin noise)' },
   { name: 'ca', sig: 'ca(x, rule, cells, gen, seed?)', about: 'generation `gen` (0–1000) of an elementary cellular automaton (Cellular automaton)' },
@@ -359,6 +366,7 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
   const supersawC = cycleFn('supersaw', ([voices, drift, outer, wave, phases, s]) => supersawRaw(n(voices), n(drift), n(outer), n(wave), n(phases), n(s)));
   const polygonC = cycleFn('polygon', ([sides, star, roundness, rotation, read]) => polygonRaw(n(sides), n(star), n(roundness), n(rotation), n(read)));
   const shaperC = cycleFn('shaper', ([curve, amount, bias, level, input]) => shaperRaw(n(curve), n(input), n(level), n(amount), n(bias)));
+  const fmC = cycleFn('fm', ([carrier, ratio, index, ratio2, amount2, routing]) => fmRaw(n(carrier), n(ratio), n(index), n(ratio2), n(amount2), n(routing)));
   const glyphC = cycleFn('glyph', ([contour, skew]) => glyphRaw(contourPoints(String(contour)), n(skew)));
 
   return {
@@ -391,6 +399,15 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
         num('shaper', 'bias', bias, 0),
         num('shaper', 'level', level, 1),
         Math.round(num('shaper', 'input', input, 0, 0, SHAPER_INPUTS.length - 1)),
+      ]),
+    fm: (x, carrier, ratio, index, ratio2, amount2, routing) =>
+      fmC(phase('fm', x), [
+        num('fm', 'carrier', carrier, 1, -64, 64),
+        num('fm', 'ratio', ratio, 2, -64, 64),
+        num('fm', 'index', index, 1),
+        num('fm', 'ratio2', ratio2, 3, -64, 64),
+        num('fm', 'amount2', amount2, 0),
+        Math.round(num('fm', 'routing', routing, 0, 0, FM_ROUTINGS.length - 1)),
       ]),
     perlin: (x, freq, z, oct, pers, s) => {
       phase('perlin', x);

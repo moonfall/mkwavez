@@ -20,6 +20,7 @@ export * from './formulaPresets';
 export * from './glyph';
 export * from './life';
 export * from './perlin';
+export * from './fm';
 export * from './polygon';
 export * from './reactionDiffusion';
 export * from './resample';

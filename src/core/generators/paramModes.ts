@@ -15,6 +15,7 @@ import { DEFAULT_RD as RD, RD_CUSTOM, RD_PRESETS, rdTable, type RdParams } from 
 import { DEFAULT_SPLINE as SP, splineTable, type SplineParams } from './spline';
 import { DEFAULT_POLYGON as PG, POLYGON_BATCHES, POLYGON_READS, polygonTable, type PolygonParams } from './polygon';
 import { DEFAULT_SHAPER as SH, SHAPER_INPUTS, SHAPERS, shaperTable, type ShaperParams } from './shaper';
+import { DEFAULT_FM as FMD, FM_ROUTINGS, fmTable, type FmParams } from './fm';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
@@ -77,6 +78,31 @@ function nums<T extends object>(p: ModeParams, defaults: T): T {
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
 export const PARAM_MODES = [
+  {
+    mode: 'fm',
+    id: 'fm-pm',
+    cat: 'Phase',
+    name: 'FM / PM',
+    about:
+      'A sine carrier phase-modulated by a sine modulator (integer ratios keep the cycle periodic); a second modulator ' +
+      'goes into the modulator, multiplies it or goes into the carrier. The batch sweeps the index.',
+    params: [
+      { key: 'carrier', label: 'Carrier ratio', min: 1, max: 8, step: 1, value: FMD.carrier },
+      { key: 'ratio', label: 'Modulator ratio', min: 1, max: 8, step: 1, value: FMD.ratio },
+      { key: 'index', label: 'Index', min: 0, max: 12, step: 0.05, value: FMD.index },
+      { key: 'indexEnd', label: 'Batch → index', min: 0, max: 12, step: 0.05, value: FMD.indexEnd },
+      { key: 'ratio2', label: 'Second modulator ratio', min: 1, max: 8, step: 1, value: FMD.ratio2 },
+      { key: 'amount2', label: 'Second modulator amount', min: 0, max: 4, step: 0.05, value: FMD.amount2 },
+      { key: 'routing', label: 'Second modulator', min: 0, max: 2, step: 1, value: FMD.routing, options: opts(FM_ROUTINGS) },
+    ],
+    variants: [
+      { id: 'nested-fm', values: { index: 0.5, indexEnd: 2.5, amount2: 2 } },
+      { id: 'cross-pm', values: { ratio: 1, index: 0, indexEnd: 2, amount2: 1, routing: 1 } },
+      { id: 'fm-sweep', values: {} },
+    ],
+    seeded: () => false,
+    render: (p, _seed, index, count) => fmTable(nums<FmParams>(p, FMD), index, count),
+  },
   {
     mode: 'shaper',
     id: 'waveshaper',
