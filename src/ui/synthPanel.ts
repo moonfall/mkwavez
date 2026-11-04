@@ -20,6 +20,8 @@ import {
   MACRO_KEYS,
   MAX_POLY,
   MAX_UNISON,
+  NOTE_PRIORITIES,
+  NOTE_PRIORITY_LABELS,
   PHASE_MODE_LABELS,
   PHASE_MODES,
   WARP_LABELS,
@@ -27,6 +29,7 @@ import {
   type FilterMode,
   type OscSource,
   type SynthParams,
+  type NotePriority,
   type PhaseMode,
   type WarpMode,
 } from '../core/synth';
@@ -482,9 +485,20 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const legato = check('syn-legato', 'Legato only', (v) => v.synth.glideLegato, (x) => ({ synth: { glideLegato: x } }), 'Glide only between overlapping notes');
   const phaseMode = select<PhaseMode>('syn-phase-mode', 'Oscillator phase at a note', PHASE_MODES.map((m) => [m, PHASE_MODE_LABELS[m]] as const), (v) => v.synth.phaseMode, (x) => ({ synth: { phaseMode: x } }));
   phaseMode.el.title = 'Oscillator phase at each note: free-running, reset to the start, or random (legato notes keep it)';
+  const priority = select<NotePriority>('syn-priority', 'Note priority (monophonic)', NOTE_PRIORITIES.map((m) => [m, NOTE_PRIORITY_LABELS[m]] as const), (v) => v.synth.priority, (x) => ({ synth: { priority: x } }));
+  priority.el.title = 'Note priority when monophonic (Voices 1): the last key pressed, the lowest or the highest held';
   const polyRow = intRow('syn-poly', 'Voices', (v) => v.synth.poly, sw('poly'), () => [1, MAX_POLY], (x) => (x === 1 ? 'mono' : `${x}`));
   polyRow.el.title = 'Notes the voice plays at once (1 = monophonic: legato, glide between held notes)';
-  const bend = intRow('syn-bend', 'Bend', (v) => v.synth.bendRange, sw('bendRange'), () => [0, 24], (x) => `±${x} st`);
+  const bend = pair(
+    'syn-bend',
+    'Bend',
+    (v) => [v.synth.bendRange, v.synth.bendDown],
+    (x, y) => ({ synth: { bendRange: x, bendDown: y } }),
+    () => [24, 24],
+    1,
+    (x, y) => (x === y ? `±${x} st` : `+${x} −${y}`),
+    { ids: ['syn-bend', 'syn-bend-down'], labels: ['Pitch-bend range up (semitones)', 'Pitch-bend range down (semitones)'] },
+  );
   const pan = row('syn-pan', 'Pan', (v) => v.synth.pan, sw('pan'), linear(-1, 1), panText);
   const outLevel = row('syn-out', 'Output', (v) => v.level, (x) => ({ level: x }), linear(0, 1), pct);
   const oct = intRow('syn-voice-oct', 'Octave', (v) => v.octave, (x) => ({ octave: x }), () => [-2, 2], (x) => signed(x));
@@ -495,7 +509,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     'div',
     { class: 'syn-page syn-page-2col', id: 'syn-page-mix', role: 'tabpanel' },
     h('div', { class: 'crows' }, mixA.el, mixB.el, mixSub.el, lineRow('', subWave.el, subOct.el), mixNoise.el, lineRow('', noiseType.el, syncChk.el), mixRing.el, fmRow.el),
-    h('div', { class: 'crows' }, outLevel.el, pan.el, width.el, polyRow.el, oct.el, glide.el, lineRow('', legato.el), lineRow('Phase', phaseMode.el), bend.el),
+    h('div', { class: 'crows' }, outLevel.el, pan.el, width.el, polyRow.el, oct.el, glide.el, lineRow('', legato.el), lineRow('Note', priority.el, phaseMode.el), bend.el),
   );
 
   // ---- Filter page ----
@@ -719,6 +733,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     bend,
     polyRow,
     phaseMode,
+    priority,
     pan,
     outLevel,
     oct,

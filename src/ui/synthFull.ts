@@ -10,7 +10,7 @@
 import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
 import { TABLE_SIZE } from '../core/constants';
-import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MACRO_KEYS, MAX_POLY, MAX_UNISON, PHASE_MODE_LABELS, PHASE_MODES, WARP_LABELS, WARP_MODES, type FilterMode, type OscSource, type PhaseMode, type SynthParams } from '../core/synth';
+import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MACRO_KEYS, MAX_POLY, MAX_UNISON, NOTE_PRIORITIES, NOTE_PRIORITY_LABELS, PHASE_MODE_LABELS, PHASE_MODES, WARP_LABELS, WARP_MODES, type FilterMode, type NotePriority, type OscSource, type PhaseMode, type SynthParams } from '../core/synth';
 import { isOneShot, isPeriodicShape, LFO_DIVS, LFO_RATE_MAX_HZ, LFO_RATE_MIN_HZ, LFO_SHAPE_LABELS, LFO_SHAPES, type LfoDiv, type LfoParams, type LfoShape } from '../core/modulation';
 import type { VoicePatch, VoiceParams } from '../core/voice';
 import { shapeLabel } from '../core/wavetable';
@@ -427,7 +427,9 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
     K('synf-oct', 'Octave', (v) => v.octave, (x) => ({ octave: x }), linear(-2, 2), (x) => signed(x), { int: true, name: 'Voice octave', reset: 0 }).el,
     K('synf-glide', 'Glide', (v) => v.synth.glide, sw('glide'), timeTaper(2), (x) => (x < 0.002 ? 'off' : kSecs(x)), { name: 'Glide' }).el,
     C('synf-legato', 'Legato', OFF_ON, (v) => v.synth.glideLegato, (x) => ({ synth: { glideLegato: x } }), { name: 'Glide only between overlapping notes', pressed: (x) => x }).el,
-    K('synf-bend', 'Bend', (v) => v.synth.bendRange, sw('bendRange'), linear(0, 24), (x) => `±${x}`, { int: true, name: 'Pitch-bend range (semitones)' }).el,
+    K('synf-bend', 'Bend', (v) => v.synth.bendRange, sw('bendRange'), linear(0, 24), (x) => `+${x}`, { int: true, name: 'Pitch-bend range up (semitones)' }).el,
+    K('synf-bend-down', 'Bend ↓', (v) => v.synth.bendDown, sw('bendDown'), linear(0, 24), (x) => `−${x}`, { int: true, name: 'Pitch-bend range down (semitones)' }).el,
+    selCell<NotePriority>('synf-priority', 'Priority', 'Note priority when monophonic (Voices 1)', NOTE_PRIORITIES.map((m) => [m, NOTE_PRIORITY_LABELS[m]] as const), (v) => v.synth.priority, (x) => ({ synth: { priority: x } })),
     K('synf-pan', 'Pan', (v) => v.synth.pan, sw('pan'), linear(-1, 1), kPan, { bipolar: true, name: 'Pan', reset: 0 }).el,
     K('synf-width', 'Width', (v) => v.synth.width, sw('width'), linear(0, 2), pct, { name: 'Stereo width (0 = mono)' }).el,
     ...oscStereo('a'),

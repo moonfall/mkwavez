@@ -1056,6 +1056,8 @@ async function synthVoiceChecks(page) {
   await page.fill('#syn-noise-width', '0.6');
   await page.fill('#syn-poly', '3');
   await page.selectOption('#syn-phase-mode', 'reset');
+  await page.selectOption('#syn-priority', 'low');
+  await page.fill('#syn-bend-down', '12');
   await page.click('#syn-tab-filter');
   await page.fill('#syn-filter-spread', '0.75'); // slider position: −1..1 → +0.5
   await page.click('#syn-tab-mod');
@@ -1065,10 +1067,10 @@ async function synthVoiceChecks(page) {
   await page.click('#syn-mod-sel-0');
   {
     const s = (await v()).synth;
-    assert(s.bPan === -0.5 && s.bPhaseSpread === 0.25 && s.noiseWidth === 0.6 && s.filterSpread === 0.5 && s.lfos[0].stereo === 0.25 && s.aPan === 0 && s.poly === 3 && s.bWarp === 'fold' && s.bWarpAmt === 0.5 && s.macro2 === 0.5 && s.phaseMode === 'reset', `stereo controls + voices + warp + macro + phase: osc B pan / stereo phase, noise width, filter spread, LFO 1 stereo phase (${JSON.stringify([s.bPan, s.bPhaseSpread, s.noiseWidth, s.filterSpread, s.lfos[0].stereo])})`);
-    for (let i = 0; i < 10; i++) await M(() => window.mkwavez.model.undo());
+    assert(s.bPan === -0.5 && s.bPhaseSpread === 0.25 && s.noiseWidth === 0.6 && s.filterSpread === 0.5 && s.lfos[0].stereo === 0.25 && s.aPan === 0 && s.poly === 3 && s.bWarp === 'fold' && s.bWarpAmt === 0.5 && s.macro2 === 0.5 && s.phaseMode === 'reset' && s.priority === 'low' && s.bendDown === 12, `stereo controls + voices + warp + macro + phase: osc B pan / stereo phase, noise width, filter spread, LFO 1 stereo phase (${JSON.stringify([s.bPan, s.bPhaseSpread, s.noiseWidth, s.filterSpread, s.lfos[0].stereo])})`);
+    for (let i = 0; i < 12; i++) await M(() => window.mkwavez.model.undo());
     const u = (await v()).synth;
-    assert(u.bPan === 0 && u.bPhaseSpread === 0 && u.noiseWidth === 0 && u.filterSpread === 0 && u.lfos[0].stereo === 0 && u.poly === 8 && u.bWarp === 'none' && u.bWarpAmt === 0 && u.macro2 === 0 && u.phaseMode === 'free', 'stereo / voices / warp / macro / phase edits undo');
+    assert(u.bPan === 0 && u.bPhaseSpread === 0 && u.noiseWidth === 0 && u.filterSpread === 0 && u.lfos[0].stereo === 0 && u.poly === 8 && u.bWarp === 'none' && u.bWarpAmt === 0 && u.macro2 === 0 && u.phaseMode === 'free' && u.priority === 'last' && u.bendDown === 2, 'stereo / voices / warp / macro / phase edits undo');
   }
   await page.click('#syn-tab-osc');
   // Fit: every page at both laptop sizes.

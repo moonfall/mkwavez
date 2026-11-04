@@ -104,3 +104,64 @@ describe('oscillator phase at a note', () => {
     expect(normalizeSynth({ aUnison: 12 }).aUnison).toBe(8);
   });
 });
+
+describe('note priority (monophonic voices)', () => {
+  const sounding = (e: SynthEngine) => syn(e).target;
+  const on = (e: SynthEngine, note: number) => e.applyMidi({ type: 'noteOn', voiceId: 1, note, velocity: 100 });
+  const off = (e: SynthEngine, note: number) => e.applyMidi({ type: 'noteOff', voiceId: 1, note });
+
+  it('last: the newest key; releasing it returns to the previous one', () => {
+    const e = engine({ priority: 'last' });
+    on(e, 55);
+    on(e, 60);
+    on(e, 50);
+    expect(sounding(e)).toBe(50);
+    off(e, 50);
+    expect(sounding(e)).toBe(60);
+  });
+
+  it('low: the lowest held key; a higher key only joins; release falls back to the lowest', () => {
+    const e = engine({ priority: 'low' });
+    on(e, 55);
+    on(e, 60);
+    expect(sounding(e)).toBe(55);
+    on(e, 50);
+    expect(sounding(e)).toBe(50);
+    off(e, 50);
+    expect(sounding(e)).toBe(55);
+    off(e, 60); // not sounding
+    expect(sounding(e)).toBe(55);
+  });
+
+  it('high: the highest held key', () => {
+    const e = engine({ priority: 'high' });
+    on(e, 60);
+    on(e, 55);
+    expect(sounding(e)).toBe(60);
+    on(e, 67);
+    expect(sounding(e)).toBe(67);
+    off(e, 67);
+    expect(sounding(e)).toBe(60);
+  });
+
+  it('is validated from saved data (missing → last)', () => {
+    expect(normalizeSynth({}).priority).toBe('last');
+    expect(normalizeSynth({ priority: 'high' }).priority).toBe('high');
+  });
+});
+
+describe('bend down range', () => {
+  it('bends down by its own range; saved data without it bends down as far as up', () => {
+    const e = engine({ bendRange: 2, bendDown: 12 });
+    e.applyMidi({ type: 'noteOn', voiceId: 1, note: 69, velocity: 100 });
+    render(e, 256);
+    const inc0 = syn(e).incA1;
+    e.applyMidi({ type: 'bend', voiceId: 1, semitones: -2 }); // full wheel down
+    render(e, SR / 10);
+    expect(syn(e).incA1 / inc0).toBeCloseTo(0.5, 3);
+    e.applyMidi({ type: 'bend', voiceId: 1, semitones: 2 }); // full wheel up
+    render(e, SR / 10);
+    expect(syn(e).incA1 / inc0).toBeCloseTo(Math.pow(2, 2 / 12), 3);
+    expect(normalizeSynth({ bendRange: 7 }).bendDown).toBe(7);
+  });
+});

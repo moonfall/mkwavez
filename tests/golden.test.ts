@@ -27,7 +27,7 @@ import { deriveSeed, Prng } from '../src/core/prng';
 import { emptySteps, STEP_LENGTHS, type StepLength } from '../src/core/sequence';
 import { shape } from '../src/core/shape';
 import { DEFAULT_VOICE, modulatedPosition, type VoiceParams } from '../src/core/voice';
-import { DEFAULT_SYNTH, FILTER_MODES, NOISE_TYPES, PITCH_TARGETS, PHASE_MODES, SUB_WAVES, WARP_MODES, type SynthParams } from '../src/core/synth';
+import { DEFAULT_SYNTH, FILTER_MODES, NOISE_TYPES, PITCH_TARGETS, NOTE_PRIORITIES, PHASE_MODES, SUB_WAVES, WARP_MODES, type SynthParams } from '../src/core/synth';
 import { LFO_DIVS, LFO_SHAPES, MOD_DESTS, MOD_SOURCES, type LfoParams, type ModSlot } from '../src/core/modulation';
 import { PREVIEW_ID_BASE, type WavetableShape } from '../src/core/wavetable';
 import { TIMELINE_CAP } from '../src/core/constants';
@@ -220,7 +220,7 @@ const SYNTH_SCALARS = [
   'glide', 'glideLegato', 'bendRange', 'pan', 'mAttack', 'mDecay', 'mSustain', 'mRelease', 'mMode', 'sync', 'fm',
   'aUnison', 'aDetune', 'aSpread', 'bUnison', 'bDetune', 'bSpread', 'sat', 'width',
   'aPan', 'bPan', 'aPhaseSpread', 'bPhaseSpread', 'aPosSpread', 'bPosSpread', 'noiseWidth', 'filterSpread',
-  'poly', 'aWarp', 'aWarpAmt', 'bWarp', 'bWarpAmt', 'macro1', 'macro2', 'macro3', 'macro4', 'phaseMode',
+  'poly', 'aWarp', 'aWarpAmt', 'bWarp', 'bWarpAmt', 'macro1', 'macro2', 'macro3', 'macro4', 'phaseMode', 'priority', 'bendDown',
 ] as const;
 const SYNTH_ENUMS: Partial<Record<(typeof SYNTH_SCALARS)[number], readonly string[]>> = {
   subWave: SUB_WAVES,
@@ -231,6 +231,7 @@ const SYNTH_ENUMS: Partial<Record<(typeof SYNTH_SCALARS)[number], readonly strin
   aWarp: WARP_MODES,
   bWarp: WARP_MODES,
   phaseMode: PHASE_MODES,
+  priority: NOTE_PRIORITIES,
 };
 const SOURCE_FIELDS = ['wavetableId', 'windowStart', 'windowEnd', 'windowStartY', 'windowEndY', 'position', 'positionY'] as const;
 
@@ -286,7 +287,7 @@ type SynthOverrides = Partial<Omit<SynthParams, 'b' | 'lfos' | 'mods'>> & {
 function synth(o: SynthOverrides = {}): SynthParams {
   const lfos = DEFAULT_SYNTH.lfos.map((l, i) => ({ ...l, ...(o.lfos?.[i] ?? {}) }));
   const mods = DEFAULT_SYNTH.mods.map((m, i) => o.mods?.[i] ?? (o.mods ? { src: 'none', dst: 'none', amt: 0 } as ModSlot : m));
-  return { ...DEFAULT_SYNTH, poly: 1, ...o, b: { ...DEFAULT_SYNTH.b, ...(o.b ?? {}) }, lfos, mods } as SynthParams;
+  return { ...DEFAULT_SYNTH, poly: 1, bendDown: o.bendRange ?? DEFAULT_SYNTH.bendDown, ...o, b: { ...DEFAULT_SYNTH.b, ...(o.b ?? {}) }, lfos, mods } as SynthParams;
 }
 
 type Op = [frame: number, code: number, ...args: number[]];
@@ -929,6 +930,32 @@ const SCENARIOS: Scenario[] = [
       [7000, OP.noteOn, 2, 60, 90],
       voiceOp(9000, { id: 1, type: 'synth', windowEnd: 3, position: 0.4, release: 0.05, synth: synth({ poly: 1, phaseMode: 'free', aUnison: 5, aDetune: 25, aSpread: 0.8, bLevel: 0.3, bUnison: 7, fm: 0.1, subLevel: 0.3, subWave: 'square' }) }),
       [12000, OP.allNotesOff, -1],
+    ],
+  },
+  {
+    // Monophonic note priority (low on V1, high on V2) with overlapping keys and releases,
+    // and an asymmetric bend range (up 2, down 12) bent both ways.
+    name: 'mono',
+    sampleRate: 48000,
+    frames: 14000,
+    ops: [
+      ...WAVES.slice(0, 4).map((_, i): Op => [0, OP.table, i + 1, i]),
+      wavetableOp(0, 0, '1d', 'blend', [[1, 2, 3, 4]]),
+      voiceOp(0, { id: 1, type: 'synth', windowEnd: 3, position: 0.3, synth: synth({ poly: 1, priority: 'low', glide: 0.02, glideLegato: true, bendRange: 2, bendDown: 12 }) }),
+      voiceOp(0, { id: 2, type: 'synth', windowEnd: 3, position: 0.7, level: 0.5, synth: synth({ poly: 1, priority: 'high' }) }),
+      [20, OP.noteOn, 1, 55, 100],
+      [1000, OP.noteOn, 1, 60, 90], // higher: V1 stays on 55
+      [2000, OP.noteOn, 1, 50, 80], // lower: V1 moves to 50
+      [3000, OP.noteOff, 1, 50], // back to the lowest held (55)
+      [4000, OP.noteOff, 1, 60], // not sounding: nothing
+      [5000, OP.bend, 1, -2],
+      [6500, OP.bend, 1, 2],
+      [8000, OP.noteOff, 1, 55],
+      [20, OP.noteOn, 2, 60, 100],
+      [1500, OP.noteOn, 2, 55, 100], // lower: V2 stays on 60
+      [2500, OP.noteOn, 2, 67, 100], // higher: V2 moves to 67
+      [3500, OP.noteOff, 2, 67], // back to 60
+      [9000, OP.allNotesOff, -1],
     ],
   },
   {

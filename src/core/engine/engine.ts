@@ -24,6 +24,7 @@ import type { WavetableId } from '../wavetable';
 import type { PackedWavetable } from '../wavetablePlayback';
 import { Adsr, AdsrStage } from './adsr';
 import { NoteStack } from './noteStack';
+import type { NotePriority } from '../synth';
 import { freqPitch, SynthVoice, type SynthControl } from './synthVoice';
 import { WtOsc } from './wtOsc';
 
@@ -299,6 +300,16 @@ export class SynthEngine {
     }
   }
 
+  /** Note priority of a monophonic voice (Synth voices' setting; Simple voices: last). */
+  private priority(v: VoiceRuntime): NotePriority {
+    return v.params.type === 'synth' ? v.params.synth.priority : 'last';
+  }
+
+  /** The held key a priority picks. */
+  private priorityNote(v: VoiceRuntime, prio: NotePriority): number {
+    return prio === 'low' ? v.notes.lowest : prio === 'high' ? v.notes.highest : v.notes.top;
+  }
+
   /** A Synth voice playing more than one note at once. */
   private isPoly(v: VoiceRuntime): boolean {
     return v.params.type === 'synth' && v.params.synth.poly > 1 && v.syn !== null;
@@ -482,6 +493,9 @@ export class SynthEngine {
       return;
     }
     v.notes.push(note, velocity);
+    // Low / high note priority: a key that isn't the lowest / highest held only joins the stack.
+    const prio = this.priority(v);
+    if (prio !== 'last' && legato && note !== this.priorityNote(v, prio)) return;
     v.key = note;
     v.notePressure = v.slide = v.noteBend = 0;
     v.freq = midiNoteFreq(note, v.params.octave);
@@ -500,7 +514,8 @@ export class SynthEngine {
   midiNoteOff(voiceId: number, note: number): void {
     const v = this.findVoice(voiceId);
     if (!v) return;
-    const wasTop = v.notes.top === note;
+    const prio = this.priority(v);
+    const wasTop = prio === 'last' ? v.notes.top === note : v.key === note;
     // Still held by another channel / input (Omni): nothing changes.
     if (!v.notes.remove(note)) return;
     if (this.isPoly(v)) {
@@ -514,11 +529,14 @@ export class SynthEngine {
     if (!v.notes.size) {
       this.gateOff(v);
     } else if (wasTop) {
-      v.key = v.notes.top;
+      // Back to the key the priority picks among those still held (legato, no retrigger).
+      const next = this.priorityNote(v, prio);
+      const nv = prio === 'last' ? v.notes.topVelocity : v.notes.velocityOf(next);
+      v.key = next;
       v.notePressure = v.slide = v.noteBend = 0;
-      v.freq = midiNoteFreq(v.notes.top, v.params.octave);
-      v.vel = velocityGain(v.notes.topVelocity);
-      this.synthNote(v, v.notes.topVelocity / 127, true, false);
+      v.freq = midiNoteFreq(next, v.params.octave);
+      v.vel = velocityGain(nv);
+      this.synthNote(v, nv / 127, true, false);
       this.resolvePitch(v);
     }
   }

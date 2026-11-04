@@ -789,6 +789,11 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   ramped across the block (the knob value exactly when unmodulated), A / B detune add up to
   ±`MOD_DETUNE_CENTS` (50) cents per block, LFO 1–3 depth use the previous block's matrix
   (like LFO rate). Ring joins the level smoothing.
+- Note priority (`priority`, monophonic Synth voices; Simple voices stay last-note): a
+  key that isn't the lowest (low) / highest (high) held only joins the note stack; releasing
+  the sounding key returns, legato, to the key the priority picks among those still held
+  (`NoteStack.lowest` / `highest` / `velocityOf`). Bend: the wheel's upward half scales by
+  `bendRange`, the downward half by `bendDown` (saved data without it: the same as up).
 - Oscillator phase at a note (`phaseMode`, both oscillators and the sub): free-running
   (default), reset (centres and the sub at 0, copies at their fixed golden-ratio offsets) or
   random (every copy, centre and the sub drawn from a per-voice PRNG, `PHASE_SEED`), on a

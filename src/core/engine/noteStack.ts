@@ -23,6 +23,22 @@ export class NoteStack {
   has(note: number): boolean {
     return this.indexOf(note) >= 0;
   }
+  /** Lowest / highest held note (note priority), or -1. */
+  get lowest(): number {
+    let n = -1;
+    for (let i = 0; i < this.size; i++) if (n < 0 || this.notes[i] < n) n = this.notes[i];
+    return n;
+  }
+  get highest(): number {
+    let n = -1;
+    for (let i = 0; i < this.size; i++) if (this.notes[i] > n) n = this.notes[i];
+    return n;
+  }
+  /** Velocity a held note was pressed with (0 if not held). */
+  velocityOf(note: number): number {
+    const i = this.indexOf(note);
+    return i < 0 ? 0 : this.vels[i];
+  }
 
   /** Press: the note becomes the top (moved there, one more holder, if it was already held). */
   push(note: number, velocity: number): void {

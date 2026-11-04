@@ -79,6 +79,24 @@ public:
     int top() const { return size ? notes[size - 1] : -1; }
     int topVelocity() const { return size ? vels[size - 1] : 0; }
     bool has(int note) const { return indexOf(note) >= 0; }
+    /** Lowest / highest held note (note priority), or -1. */
+    int lowest() const {
+        int n = -1;
+        for (int i = 0; i < size; ++i)
+            if (n < 0 || notes[i] < n) n = notes[i];
+        return n;
+    }
+    int highest() const {
+        int n = -1;
+        for (int i = 0; i < size; ++i)
+            if (notes[i] > n) n = notes[i];
+        return n;
+    }
+    /** Velocity a held note was pressed with (0 if not held). */
+    int velocityOf(int note) const {
+        const int i = indexOf(note);
+        return i < 0 ? 0 : vels[i];
+    }
 
     void push(int note, int velocity) {
         const int i = indexOf(note);

@@ -376,7 +376,7 @@ void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
         applyMatrix(s.mods, srcR, dstR);
         dR = dstR;
     }
-    const double bend = (c.bend * s.bendRange) / BEND_RANGE_SEMITONES;
+    const double bend = (c.bend * (c.bend < 0 ? s.bendDown : s.bendRange)) / BEND_RANGE_SEMITONES;
     lastBend = bend;
     if (nbSnap) {
         nbS = c.noteBend;

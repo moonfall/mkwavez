@@ -742,7 +742,7 @@ export class SynthVoice {
       applyMatrix(s.mods, sr, this.dstR);
       dR = this.dstR;
     }
-    const bend = (bendSemis * s.bendRange) / BEND_RANGE_SEMITONES;
+    const bend = (bendSemis * (bendSemis < 0 ? s.bendDown : s.bendRange)) / BEND_RANGE_SEMITONES;
     this.lastBend = bend;
     // Per-note bend (MPE): snapped at a note's first block, then smoothed.
     if (this.nbSnap) {

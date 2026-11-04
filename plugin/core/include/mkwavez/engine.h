@@ -203,6 +203,8 @@ private:
     NoteState& allocate(VoiceRuntime& v, int key);
     void startNote(VoiceRuntime& v, NoteState& n, double freq, double vel, double vel01, int key, bool legato);
     bool hasNotes(const VoiceRuntime& v) const;
+    NotePriority priority(const VoiceRuntime& v) const;
+    static int priorityNote(const VoiceRuntime& v, NotePriority prio);
     void noteExpr(int32_t voiceId, int note, int field, double value);
     double simpleSample(VoiceRuntime& v, double e, double blockT);
     void renderMixed(VoiceRuntime& v, double blockT, double& l, double& r);

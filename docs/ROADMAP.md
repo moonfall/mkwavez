@@ -327,6 +327,10 @@ Open:
   configuration, a per-voice MPE bend-range setting.
 - Stage 10 (oscillator gaps, part 1): unison up to 8 copies per oscillator; oscillator
   phase per note — free / reset / random (Mix page "Phase", full view Mix "Phase").
+- Stage 11 (oscillator gaps, part 2): note priority for monophonic voices (last / low /
+  high) and a separate bend-down range (Mix page "Note" row and Bend pair; full view Output
+  "Priority", "Bend ↓"). Deferred (no room without moving controls): fixed pitch per
+  oscillator, unison blend / detune curve / stacks, glide by rate.
 
 Decisions / deviations:
 - New voices from "+" are offered as Synth (first in the menu) or Simple; both start on

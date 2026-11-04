@@ -198,6 +198,10 @@ export interface SynthParams {
   readonly macro4: number;
   /** Oscillator phase at each note (PhaseMode). */
   readonly phaseMode: PhaseMode;
+  /** Note priority of a monophonic voice (poly 1). */
+  readonly priority: NotePriority;
+  /** Pitch-bend range downwards (semitones); saved data without it bends down as far as up. */
+  readonly bendDown: number;
 }
 
 export const MACRO_KEYS = ['macro1', 'macro2', 'macro3', 'macro4'] as const;
@@ -209,6 +213,10 @@ export const MAX_UNISON = 8;
  * Legato notes keep the phase.
  */
 export type PhaseMode = 'free' | 'reset' | 'random';
+/** Which held key a monophonic voice plays: the last pressed, the lowest or the highest. */
+export type NotePriority = 'last' | 'low' | 'high';
+export const NOTE_PRIORITIES: readonly NotePriority[] = ['last', 'low', 'high'];
+export const NOTE_PRIORITY_LABELS: Readonly<Record<NotePriority, string>> = { last: 'Last', low: 'Low', high: 'High' };
 export const PHASE_MODES: readonly PhaseMode[] = ['free', 'reset', 'random'];
 export const PHASE_MODE_LABELS: Readonly<Record<PhaseMode, string>> = { free: 'Free', reset: 'Reset', random: 'Random' };
 /** Most notes one Synth voice plays at once. */
@@ -312,6 +320,8 @@ export const DEFAULT_SYNTH: SynthParams = {
   macro3: 0,
   macro4: 0,
   phaseMode: 'free',
+  priority: 'last',
+  bendDown: 2,
 };
 
 /** Amp ADSR of a new Synth voice (Simple voices keep their own defaults). */
@@ -376,6 +386,7 @@ export const SYNTH_RANGES: Readonly<Partial<Record<keyof SynthParams, readonly [
   macro2: [0, 1],
   macro3: [0, 1],
   macro4: [0, 1],
+  bendDown: [0, 24, true],
 };
 
 
@@ -396,6 +407,7 @@ const ENUMS: Readonly<Partial<Record<keyof SynthParams, readonly string[]>>> = {
   aWarp: WARP_MODES,
   bWarp: WARP_MODES,
   phaseMode: PHASE_MODES,
+  priority: NOTE_PRIORITIES,
 };
 
 /** One LFO from untrusted data. */
@@ -467,6 +479,8 @@ export function normalizeSynth(raw: unknown, fallbackSource: OscSource = DEFAULT
     else if (k === 'mods') out.mods = Array.isArray(v) ? Array.from({ length: MOD_SLOTS }, (_, i) => normalizeSlot(v[i])) : EMPTY_MODS;
     // Saved before polyphony: monophonic, as it was (new voices get the Init patch's).
     else if (k === 'poly') out.poly = v === undefined ? 1 : clampNum(v, 1, SYNTH_RANGES.poly);
+    // Saved before the separate down range: as far down as up.
+    else if (k === 'bendDown') out.bendDown = clampNum(v, out.bendRange as number, SYNTH_RANGES.bendDown);
 
     else if (typeof def === 'number') out[k] = clampNum(v, def, SYNTH_RANGES[k]);
     else if (typeof def === 'boolean') out[k] = typeof v === 'boolean' ? v : def;

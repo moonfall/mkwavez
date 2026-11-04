@@ -14,6 +14,7 @@ const char* const NOISE_TYPES[] = {"white", "pink"};
 const char* const PITCH_TARGETS[] = {"a", "b", "ab"};
 const char* const MOD_MODES[] = {"ad", "adsr"};
 const char* const PHASE_MODES[] = {"free", "reset", "random"};
+const char* const NOTE_PRIORITIES[] = {"last", "low", "high"};
 const char* const WARP_MODES[] = {"none", "sync", "formant", "bend", "squeeze", "quantize", "fold"};
 const char* const LFO_SHAPES[] = {"sine", "tri", "saw", "square", "sh", "smooth", "rise", "fall"};
 const char* const LFO_DIVS[] = {"8/1", "4/1", "2/1", "1/1", "1/2", "1/2D", "1/2T", "1/4", "1/4D", "1/4T", "1/8", "1/8D", "1/8T", "1/16", "1/16T", "1/32"};
@@ -154,6 +155,8 @@ juce::var encode(const SynthParams& s) {
     set(o, "macro3", s.macro3);
     set(o, "macro4", s.macro4);
     set(o, "phaseMode", PHASE_MODES[(int) s.phaseMode]);
+    set(o, "priority", NOTE_PRIORITIES[(int) s.priority]);
+    set(o, "bendDown", s.bendDown);
     return o;
 }
 
@@ -263,6 +266,9 @@ SynthParams decode(const juce::var& o) {
     s.macro3 = num(o, "macro3", d.macro3, 0, 1);
     s.macro4 = num(o, "macro4", d.macro4, 0, 1);
     s.phaseMode = (PhaseMode) indexOf(PHASE_MODES, o.getProperty("phaseMode", {}), (int) d.phaseMode);
+    s.priority = (NotePriority) indexOf(NOTE_PRIORITIES, o.getProperty("priority", {}), (int) d.priority);
+    // Saved before the separate down range: as far down as up.
+    s.bendDown = num(o, "bendDown", s.bendRange, 0, 24, true);
     return s;
 }
 

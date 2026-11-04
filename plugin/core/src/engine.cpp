@@ -353,6 +353,8 @@ void SynthEngine::midiNoteOn(int32_t voiceId, int note, int velocity) {
         return;
     }
     v->notes.push(note, velocity);
+    const NotePriority prio = priority(*v);
+    if (prio != NotePriority::last && legato && note != priorityNote(*v, prio)) return;
     v->key = note;
     v->notePressure = v->slide = v->noteBend = 0;
     v->freq = midiNoteFreq(note, v->params.octave);
@@ -366,7 +368,8 @@ void SynthEngine::midiNoteOn(int32_t voiceId, int note, int velocity) {
 void SynthEngine::midiNoteOff(int32_t voiceId, int note) {
     VoiceRuntime* v = findVoice(voiceId);
     if (!v) return;
-    const bool wasTop = v->notes.top() == note;
+    const NotePriority prio = priority(*v);
+    const bool wasTop = prio == NotePriority::last ? v->notes.top() == note : v->key == note;
     if (!v->notes.remove(note)) return;
     if (isPoly(*v)) {
         const bool all = v->notes.size == 0;
@@ -378,13 +381,23 @@ void SynthEngine::midiNoteOff(int32_t voiceId, int note) {
     if (!v->notes.size) {
         gateOff(*v);
     } else if (wasTop) {
-        v->key = v->notes.top();
+        const int next = priorityNote(*v, prio);
+        const int nv = prio == NotePriority::last ? v->notes.topVelocity() : v->notes.velocityOf(next);
+        v->key = next;
         v->notePressure = v->slide = v->noteBend = 0;
-        v->freq = midiNoteFreq(v->notes.top(), v->params.octave);
-        v->vel = velocityGain(v->notes.topVelocity());
-        synthNote(*v, v->notes.topVelocity() / 127.0, true, false);
+        v->freq = midiNoteFreq(next, v->params.octave);
+        v->vel = velocityGain(nv);
+        synthNote(*v, nv / 127.0, true, false);
         resolvePitch(*v);
     }
+}
+
+NotePriority SynthEngine::priority(const VoiceRuntime& v) const {
+    return v.params.type == VoiceType::synth ? v.params.synth.priority : NotePriority::last;
+}
+
+int SynthEngine::priorityNote(const VoiceRuntime& v, NotePriority prio) {
+    return prio == NotePriority::low ? v.notes.lowest() : prio == NotePriority::high ? v.notes.highest() : v.notes.top();
 }
 
 void SynthEngine::midiAllNotesOff(int32_t voiceId) {
