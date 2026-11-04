@@ -424,3 +424,13 @@ viz('pluck-position', {
     dot(g, s.x(x), s.y(0.8), 3.5, c.line);
   },
 });
+
+// Weierstrass: terms a^k·cos(2^k·p), k = 0…6, a = 0.4 + 0.4u, one row each.
+viz('weierstrass', {
+  axis: (i) => ['0', `a^k·cos(2^k·p) · a = ${f2(0.4 + 0.4 * i.u)}`, '2π'],
+  draw: (g, w, h, i, c) => {
+    const a = 0.4 + 0.4 * i.u;
+    const n = 7;
+    layers(g, w, h, c, n, (k, x) => Math.cos(Math.pow(2, k) * TAU * x), Array.from({ length: n }, (_, k) => Math.pow(a, k)));
+  },
+});
