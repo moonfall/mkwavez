@@ -45,8 +45,10 @@ Editor screenshot: `cmake --build build --target mkwavez_snapshot` then run
 `mkwavez_snapshot out.png` (under `xvfb-run` on a headless Linux box).
 
 CI (`.github/workflows/plugin.yml`) builds and tests on Linux, macOS (universal) and
-Windows on every push touching `plugin/`, `src/core/` or the golden test, and uploads
-the plugins as workflow artefacts. Builds are unsigned (macOS: notarisation is a later step).
+Windows on demand (Actions → Plugin → Run workflow, on any branch) and uploads the
+plugins as workflow artefacts. Pushes don't start it; the golden test still runs on every
+push to `main` as part of `npm test` in the Pages workflow. Builds are unsigned (macOS:
+notarisation is a later step).
 
 **Licensing:** JUCE 9 is AGPLv3 or commercial. Distributing binaries means either
 releasing mkwavez under the AGPL or holding a JUCE licence. The core (`plugin/core`)

@@ -4,11 +4,9 @@
 # WebKitGTK on Linux, WKWebView on macOS, WebView2 on Windows (SDK fetched by CMake).
 name: Plugin
 
+# On demand only: Actions → Plugin → Run workflow (pick the branch). Pushes don't start
+# it; the web app's tests (golden test included) run on every push to main in pages.yml.
 on:
-  push:
-    paths: ['plugin/**', 'src/**', 'index.html', 'package*.json', 'vite.config.ts', 'tests/golden.test.ts', '.github/workflows/plugin.yml']
-  pull_request:
-    paths: ['plugin/**', 'src/**', 'index.html', 'package*.json', 'vite.config.ts', 'tests/golden.test.ts', '.github/workflows/plugin.yml']
   workflow_dispatch:
 
 concurrency:
