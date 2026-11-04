@@ -1385,6 +1385,14 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const p = fromPx(px, py, r.width, hh);
     const pts = ptsOf(d);
     strokeNo++;
+    if (d.tool === 'free' && e.shiftKey) {
+      // Shift with the Free tool: add to the drawing (the stroke overwrites only where it goes).
+      const sb = new StrokeBuffer();
+      sb.seed(d);
+      sb.add(p);
+      drawing = { pt: null, raw: sb, stepId: s.id, stroke: strokeNo, draw: d };
+      return;
+    }
     const hit = hitPoint(d, px, py, r.width, hh);
     if (hit >= 0) {
       drawing = { pt: pts[hit], raw: null, drag: { q0: [pts[hit][0], pts[hit][1]], p0: p, newLine: false }, stepId: s.id, stroke: strokeNo, draw: { tool: d.tool, pts } };

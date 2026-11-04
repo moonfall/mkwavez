@@ -2331,6 +2331,19 @@ async function shapeChecks(page, tlCount) {
   const right = fr.pts.filter((q) => q[0] > 0.6 && q[0] < 0.88).map((q) => q[1]);
   const spread = (v) => Math.max(...v) - Math.min(...v);
   assert(fr.tool === 'free' && left.length > 3 && right.length > 3 && spread(left) < 0.01 && Math.min(...right) > Math.max(...left), `retraced freehand: flat where untouched, replaced where retraced (${spread(left).toFixed(4)}; ${JSON.stringify(fr.pts.filter((q, i) => i % 6 === 0))})`);
+  // Shift with Free: the stroke adds to the drawing (extends it here) instead of replacing it.
+  await page.keyboard.down('Shift');
+  await page.mouse.move(box.x + box.width * 0.93, box.y + box.height * 0.3);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.98, box.y + box.height * 0.3, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  const ext = (await chain()).steps[1].draw;
+  const extLeft = ext.pts.filter((q) => q[0] < 0.4).map((q) => q[1]);
+  assert(
+    ext.pts[0][0] < 0.12 && ext.pts.at(-1)[0] > 0.95 && Math.abs(Math.max(...extLeft) - Math.max(...left)) < 0.01 && ext.pts.at(-1)[1] > Math.max(...right),
+    `Shift extends the freehand drawing, keeping what was there (${JSON.stringify([ext.pts[0], ext.pts.at(-1)])})`,
+  );
 
   // Sweep: N cards, Add +N adds N shape waveforms; the source stays selected.
   await page.click('#shape-sweep');
