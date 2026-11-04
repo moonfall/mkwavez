@@ -7,7 +7,7 @@
  * revision, so stored recipes re-render as they were made. Recipes and Shape steps record
  * the revision they were made at (`rev`); those without one are revision 1.
  *  - 2: Reverse morphs the harmonic phases (never silent); Hard sync falls back to a lower
- *       ratio only where revision 1 is silent (chains stay audible); Decimate and Resonant low-pass act from
+ *       ratio only where the read keeps (almost) nothing in the band (chains stay audible); Decimate and Resonant low-pass act from
  *       small amounts (their old curves spent the first third of the range above the band).
  */
 import { KMAX, TABLE_SIZE } from './constants';
@@ -37,7 +37,7 @@ export const MUTATIONS = [
     group: 'Waveshape',
     id: 'sync',
     label: 'Hard sync',
-    hint: 'Read x at i·r mod N, r = 1 + 3a (where that would be silent, e.g. chained at 1, r drops so it stays audible)',
+    hint: 'Read x at i·r mod N, r = 1 + 3a (where that leaves nothing in the band, e.g. chained at 1, r drops so it stays audible)',
   },
   { group: 'Waveshape', id: 'ring', label: 'Ring mod', hint: '× (1−a) + a·sin(m·p), m = 2–7 seeded', seeded: true },
   { group: 'Waveshape', id: 'rect', label: 'Rectify', hint: 'Blend toward 2·|x| − 1' },
@@ -333,22 +333,26 @@ export function mutate(
     case 'sync': {
       const r = 1 + a * 3;
       const read = (q: number) => Float64Array.from({ length: N }, (_, i) => lerpAt(x, (i * q) % N));
-      const y = shape(read(r));
-      if (rev >= 2 && r > 1 && y.every((v) => v === 0)) {
-        // Only where revision 1 is silent: a source whose lowest harmonic is L read at an
-        // integer-like ratio r puts everything at L·r > KMAX — e.g. a chain at a = 1 (r = 4
-        // per step) from its 4th step. Fall back to the largest ratio that keeps L in the
-        // band, minus half a harmonic: not an integer, so the restart leaves a sync edge,
-        // which brings the low harmonics back for the next chain step. Everywhere else the
-        // result is revision 1's, exactly.
+      const raw = read(r);
+      if (rev >= 2 && r > 1) {
+        // Where the read keeps (almost) nothing in the band — below SILENT of the source's
+        // strongest harmonic, the spectral mutations' silence gate — revision 1 was silent
+        // or shape() scaled float residue up to full-scale noise. That happens when a source
+        // whose lowest harmonic is L is read at a ratio r that puts everything at L·r > KMAX,
+        // e.g. a chain at a = 1 (r = 4 per step) from its 4th step, or sin(40p) at r ≈ 2.5.
+        // Fall back to the largest ratio that keeps L in the band, minus half a harmonic: not
+        // an integer, so the restart leaves a sync edge, which brings the low harmonics back
+        // for the next chain step. Everywhere else the result is revision 1's, exactly.
         const m = harmonicMagnitudes(x, KMAX);
-        const floor = Math.max(...m) * SYNC_FLOOR;
-        let L = 1;
-        while (L < KMAX && !(m[L] >= floor)) L++;
-        const q = Math.max(1, SYNC_FALLBACK / L);
-        if (q < r) return shape(read(q));
+        const inMax = Math.max(...m);
+        if (Math.max(...harmonicMagnitudes(raw, KMAX)) < inMax * SILENT) {
+          let L = 1;
+          while (L < KMAX && !(m[L] >= inMax * SYNC_FLOOR)) L++;
+          const q = Math.max(1, SYNC_FALLBACK / L);
+          return q < r ? shape(read(q)) : new Float32Array(N);
+        }
       }
-      return y;
+      return shape(raw);
     }
     case 'ring': {
       const m = 2 + rand.int(6);

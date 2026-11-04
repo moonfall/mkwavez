@@ -154,20 +154,41 @@ describe('mutations (core port)', () => {
     expect((lp1[70] * 70) / lp1[1]).toBeLessThan(0.5);
   });
 
-  it('Hard sync: a single application is revision 1 wherever that is audible, on any source', () => {
+  it('Hard sync: revision 1 wherever the read keeps real content in the band; never silence or scaled-up residue', () => {
     const N = 2048;
     const sineAt = (k: number) => Float32Array.from({ length: N }, (_, i) => Math.sin((2 * Math.PI * k * i) / N));
     const saw = generateBasic('saw', 0).data;
     const peakOf = (x: Float32Array) => x.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    // The read's strongest harmonic ≤ 72, relative to the source's (what the gate looks at).
+    const bandRel = (x: Float32Array, a: number) => {
+      const r = 1 + 3 * a;
+      const y = Float32Array.from({ length: N }, (_, i) => {
+        const f = (i * r) % N;
+        const j = Math.floor(f);
+        return x[j] + (x[(j + 1) % N] - x[j]) * (f - j);
+      });
+      return Math.max(...harmonicMagnitudes(y, 72)) / Math.max(...harmonicMagnitudes(x, 72));
+    };
+    let gated = 0;
     for (const x of [saw, src, sineAt(10), sineAt(20), sineAt(40), sineAt(64)])
       for (let a = 0; a <= 1.0001; a += 0.05) {
         const v1 = mutate('sync', x, a, 0, {}, 1);
         const v2 = mutate('sync', x, a, 0);
-        if (peakOf(v1) > 0) expect(maxDiff(v1, v2), `a ${a.toFixed(2)}`).toBe(0);
-        else expect(peakOf(v2), `a ${a.toFixed(2)}: revision 1 silent, revision 2 audible`).toBeGreaterThan(0.5);
+        if (bandRel(x, a) >= 2e-3) expect(maxDiff(v1, v2), `a ${a.toFixed(2)}`).toBe(0);
+        else if (bandRel(x, a) < 5e-4) {
+          gated++;
+          // Not revision 1's (silence or residue at full scale): the fallback, which has real content.
+          expect(peakOf(v2), `a ${a.toFixed(2)}`).toBeGreaterThan(0.5);
+          const lead = harmonicMagnitudes(v2, 72);
+          expect(Math.max(...lead), `a ${a.toFixed(2)}: real harmonics, not residue`).toBeGreaterThan(0.05);
+        }
       }
-    // sin(40p): the knob acts until the read leaves the band (revision 1 then went silent).
+    expect(gated).toBeGreaterThan(5);
+    // sin(40p): the knob acts while the read stays in the band; beyond, it holds the fallback (h71.5).
     expect(maxDiff(mutate('sync', sineAt(40), 0.25, 0), sineAt(40))).toBeGreaterThan(0.1);
+    expect(maxDiff(mutate('sync', sineAt(40), 0.5, 0), mutate('sync', sineAt(40), 1, 0))).toBe(0);
+    // Ordinary sources: revision 1 over the whole range.
+    for (let a = 0; a <= 1.0001; a += 0.05) expect(maxDiff(mutate('sync', saw, a, 0), mutate('sync', saw, a, 0, {}, 1))).toBe(0);
   });
 
   it('Decimate and Resonant low-pass act at the default amount (0.25), with the same ends as revision 1', () => {
