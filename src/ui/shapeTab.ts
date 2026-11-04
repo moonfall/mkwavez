@@ -1176,7 +1176,22 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     py0: number;
     dragged: boolean;
   }
-  let drawing: { pt: [number, number] | null; raw: Pt[] | null; move?: Move; stepId: string; stroke: number; draw: Drawing } | null = null;
+  /**
+   * A point being dragged: where it was and where the pointer pressed (data coordinates), and
+   * whether it is the far end of a new line (Shift then keeps the line level).
+   */
+  interface PointDrag {
+    q0: Pt;
+    p0: Pt;
+    newLine: boolean;
+  }
+  let drawing: { pt: [number, number] | null; raw: Pt[] | null; move?: Move; drag?: PointDrag; stepId: string; stroke: number; draw: Drawing } | null = null;
+  /** Shift: a drag from (x0, y0) to (x, y) keeps only its larger component (in screen terms). */
+  const axisLock = (x0: number, y0: number, x: number, y: number, w: number, hh: number): [number, number] => {
+    const [ax, ay] = toPx([x0, y0], w, hh);
+    const [bx, by] = toPx([x, y], w, hh);
+    return Math.abs(bx - ax) >= Math.abs(by - ay) ? [x, y0] : [x0, y];
+  };
   /** Whether the selected step's drawing shows mirrored (± about 0). */
   const mirrored = () => {
     const s = sel();
@@ -1260,7 +1275,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     strokeNo++;
     const hit = hitPoint(d, px, py, r.width, hh);
     if (hit >= 0) {
-      drawing = { pt: pts[hit], raw: null, stepId: s.id, stroke: strokeNo, draw: { tool: d.tool, pts } };
+      drawing = { pt: pts[hit], raw: null, drag: { q0: [pts[hit][0], pts[hit][1]], p0: p, newLine: false }, stepId: s.id, stroke: strokeNo, draw: { tool: d.tool, pts } };
       return;
     }
     // On the line itself: drag the whole drawing.
@@ -1271,12 +1286,12 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     }
     if (d.tool === 'line') {
       const np: [number, number][] = [[p[0], p[1]], [p[0], p[1]]];
-      drawing = { pt: np[1], raw: null, stepId: s.id, stroke: strokeNo, draw: { tool: 'line', pts: np } };
+      drawing = { pt: np[1], raw: null, drag: { q0: p, p0: p, newLine: true }, stepId: s.id, stroke: strokeNo, draw: { tool: 'line', pts: np } };
     } else if (d.tool === 'curve') {
       const q: [number, number] = [p[0], p[1]];
       pts.push(q);
       pts.sort((a, b) => a[0] - b[0]);
-      drawing = { pt: q, raw: null, stepId: s.id, stroke: strokeNo, draw: { tool: 'curve', pts } };
+      drawing = { pt: q, raw: null, drag: { q0: [q[0], q[1]], p0: p, newLine: false }, stepId: s.id, stroke: strokeNo, draw: { tool: 'curve', pts } };
       commitDraw(drawing.draw);
     } else {
       // Committed once the stroke has length (a tap changes nothing).
@@ -1300,13 +1315,22 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       if (!m.dragged && Math.hypot(e.clientX - r.left - m.px0, e.clientY - r.top - m.py0) < 3) return;
       m.dragged = true;
       const xs = m.pts0.map((q) => q[0]);
-      const dx = clamp(p[0] - m.x0, -Math.min(...xs), 1 - Math.max(...xs));
-      const dy = (p[1] - m.y0) * m.sgn;
+      // Shift: move only horizontally or only vertically.
+      const [lx, ly] = e.shiftKey ? axisLock(m.x0, m.y0, p[0], p[1], r.width, r.height) : [p[0], p[1]];
+      const dx = clamp(lx - m.x0, -Math.min(...xs), 1 - Math.max(...xs));
+      const dy = (ly - m.y0) * m.sgn;
       const [lo, hi] = view === 'wave' ? WAVE_Y : HARM_DB;
       drawing.draw = { tool: drawing.draw.tool, pts: m.pts0.map(([x, y]) => [x + dx, clamp(y + dy, lo, hi)] as Pt) };
     } else if (drawing.pt) {
-      drawing.pt[0] = p[0];
-      drawing.pt[1] = p[1];
+      let [x, y] = p;
+      const g = drawing.drag;
+      if (g && e.shiftKey) {
+        // Shift: a new line stays level; a dragged point moves only horizontally or vertically.
+        if (g.newLine) y = g.q0[1];
+        else [x, y] = axisLock(g.q0[0], g.q0[1], g.q0[0] + (p[0] - g.p0[0]), g.q0[1] + (p[1] - g.p0[1]), r.width, r.height);
+      }
+      drawing.pt[0] = clamp(x, 0, 1);
+      drawing.pt[1] = y;
       const pts = (drawing.draw.pts as [number, number][]).slice().sort((a, b) => a[0] - b[0]);
       drawing.draw = { tool: drawing.draw.tool, pts };
     } else if (drawing.raw) {

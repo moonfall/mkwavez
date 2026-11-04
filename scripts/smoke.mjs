@@ -2211,6 +2211,9 @@ const waitInk = (page, sel) =>
  * 'shape' waveforms of the selection (which stays selected), deterministic re-adds, loading
  * a factory chain, and the tab fits the Generate panel at 1440×900 and 1180×820.
  */
+/** Screen y of level `v` on the Shape plot (range ±1.25: a normalised source, drawWave's padding). */
+const toLevelPx = (v, box) => box.y + box.height / 2 - (v / 1.25) * (box.height / 2 - Math.min(4, box.height * 0.08));
+
 async function shapeChecks(page, tlCount) {
   const M = (fn, arg) => page.evaluate(fn, arg);
   const chain = () => M(() => window.mkwavez.model.shapeChain);
@@ -2275,6 +2278,22 @@ async function shapeChecks(page, tlCount) {
   const d0 = drawn.pts[0][1] - moved.pts[0][1];
   const d1 = drawn.pts[1][1] - moved.pts[1][1];
   assert(moved.pts.length === 2 && d0 > 0.05 && Math.abs(d0 - d1) < 1e-3 && (await undoDepth()) === u + 1, `dragging the line moves the whole drawing (${JSON.stringify(moved.pts)})`);
+  // Shift: a new line stays level; dragging the line moves it only vertically (mostly vertical drag).
+  await page.keyboard.down('Shift');
+  await page.mouse.move(box.x + 40, box.y + box.height * 0.85);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 40, box.y + box.height * 0.7, { steps: 8 });
+  await page.mouse.up();
+  const level = (await chain()).steps[1].draw;
+  assert(level.pts.length === 2 && level.pts[0][1] === level.pts[1][1] && level.pts[1][0] - level.pts[0][0] > 0.5, `Shift draws a level line (${JSON.stringify(level.pts)})`);
+  const ly = toLevelPx(level.pts[0][1], box);
+  await page.mouse.move(box.x + box.width / 2, ly);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 12, ly - 30, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  const vert = (await chain()).steps[1].draw;
+  assert(vert.pts[0][0] === level.pts[0][0] && vert.pts[1][0] === level.pts[1][0] && vert.pts[0][1] > level.pts[0][1], `Shift-dragging the line moves it only vertically (${JSON.stringify(vert.pts)})`);
 
   // Sweep: N cards, Add +N adds N shape waveforms; the source stays selected.
   await page.click('#shape-sweep');
