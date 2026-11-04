@@ -16,6 +16,8 @@ import { SEQ_SOURCES, sequenceValues } from '../core/generators';
 import type { SequenceParams } from '../core/generators';
 import { rdState, StepCache, type RdParams, type RdState } from '../core/generators';
 import { LIFE_RULES, lifeBoard, StepCache as LifeCache, type Board, type LifeParams } from '../core/generators';
+import { splinePoints, splineRaw } from '../core/generators';
+import type { SplineParams } from '../core/generators';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -845,5 +847,19 @@ viz('life-like-ca', {
     g.fillStyle = c.grid;
     g.fillRect(x0, y0, side, side);
     cells(g, x0, y0, side, side, rows, (v, r, k) => (onLine(r, k) ? (v ? c.accent : c.muted) : v ? c.line : null));
+  },
+});
+
+// Spline: the control points and the raw curve through them.
+viz('spline', {
+  axis: (i) => ['0', `${splinePoints(i.params as unknown as SplineParams, i.seed, i.index, i.count).length} control points`, '2π'],
+  draw: (g, w, h, i, c) => {
+    const P = splinePoints(i.params as unknown as SplineParams, i.seed, i.index, i.count);
+    const x = splineRaw(P, i.params.kind, i.params.tension);
+    const m = Math.max(1e-9, ...P.map(Math.abs), ...Array.from(x, Math.abs));
+    const s = scale(w, h, 0, 1, -m * 1.05, m * 1.05);
+    rules(g, s, w, h, P.map((_, j) => j / P.length), [0], c.grid);
+    plot(g, s, (t) => x[Math.min(x.length - 1, Math.floor(t * x.length))], 0, 1, c.line, 1.2, Math.ceil(w));
+    P.forEach((v, j) => dot(g, s.x(j / P.length), s.y(v), 3, c.accent));
   },
 });
