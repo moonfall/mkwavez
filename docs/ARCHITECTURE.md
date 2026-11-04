@@ -26,6 +26,15 @@ src/
                         walks → per-parent weights, breedBatch (single / sweep / gen) or
                         one child of it (breedBatchTable, for incremental previews),
                         renderBreedRecipe()
+    drawing.ts          Shape drawings: line / curve (Catmull-Rom) / freehand points, span
+                        and edge fade, stroke resampling, normalisation
+    shapeSteps.ts       Shape chain steps (draw: clip / soft / fold / replace / push /
+                        pull / add / multiply; harmonics: set / modify / limit to curve;
+                        whole wave: any mutation, gain, invert, reverse, rotate):
+                        defaults, normalizeStep, applyStep
+    shapeChain.ts       Shape chains: normalizeChain (canonical JSON), per-step seeds and
+                        amount sweeps, chainStages / applyChain, 'shape' recipes
+    shapeFactory.ts     factory chains, saved chains, the chains export file
     mipmap.ts           per-octave band-limited mip sets, packed in one Float32Array
     table.ts            WaveTable, Recipe, IdAllocator
     timeline.ts         appendWithEviction (oldest-first, pin-aware), index/window remap
@@ -75,7 +84,10 @@ src/
                         and sequences.ts); canvas.ts drawing + theme (setTheme,
                         stored in localStorage); transport.ts the top bar;
                         generate.ts hosts the tabs: seed.ts (Seed tab), mutate.ts
-                        (Mutate tab) and breed.ts (Breed tab); library.ts (the
+                        (Mutate tab), breed.ts (Breed tab) and shapeTab.ts (Shape
+                        tab: chain column, step settings, the drawable plot, Apply
+                        to, Write back); shapeOnAdd.ts (the Shape chip in Seed /
+                        Mutate / Breed batch rows); library.ts (the
                         shared library list) and batch.ts (N stepper, card strip)
                         are used by Seed, Mutate and Breed; timeline.ts (strip,
                         toggles Breed parents; drag source); wavetables.ts (compact
@@ -105,9 +117,11 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
 
 - **WaveTable** `{ id, data: Float32Array(2048), recipe }` — immutable, always shaped.
   `id` is a monotonic integer, never reused.
-- **Recipe** `{ op, params, seed, parents[], batch?{index,count} }` — plain data,
+- **Recipe** `{ op, params, seed, parents[], batch?{index,count}, shape? }` — plain data,
   enough to re-render deterministically (`renderRecipe`; tested for every generator
-  and every mutation × batch mode).
+  and every mutation × batch mode). `shape` (optional) is a Shape chain's canonical JSON
+  applied after the op at the recipe's batch position: set on tables added from Seed,
+  Mutate or Breed with their Shape chip on; `describeRecipe` appends "· shaped: name".
 - **Seed recipes** — `op` is the generator (`basic`, `pulse`, `formula`, `perlin`, `ca`),
   `params.preset` the library entry id, plus the generator's params: `wave`;
   `width, widthEnd` (duty sweeps linearly across the batch); `expr, name, edited`
@@ -142,6 +156,23 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   position (so it re-renders exactly); `single` (one child at B) is older recipes' mode
   and equals the last child of a sweep. Weights come from `breedWeights(P, bias, walk, weights)`; bias 0 is
   always `[1, 0, …]`, so every operator returns shape(A) there.
+- **Shape recipe** — `op: 'shape'`, `params { name, steps (enabled count), chain
+  (canonical JSON) }`, `seed` (the chain's), `parents [sourceId]`, `batch {index,
+  count}`. `renderShapeRecipe` = `applyChain(parent data, chain, batch)`.
+- **Shape chain** (core/shapeChain.ts) — `{ v: 1, name, seed, varySeed, realign, steps }`,
+  each step `{ id, op, on, amount, amountEnd?, …its settings }`. The engine: each enabled
+  step at its amount (`amountEnd` set = swept across a batch, u = index / (count − 1)) on
+  the working cycle, band-limited to KMAX after every step, levels carried (no normalising
+  between steps, so Gain drives a clip), then `shape()` (phase realign only if `realign`).
+  Amount 0 skips the step. A step's seed is `deriveSeed(chain seed, hash(step id))` (stable
+  when other steps change), per batch index too when `varySeed`. Mutation steps align the
+  cycle, mutate and rotate back, so the chain keeps its phase. `normalizeChain` clamps
+  untrusted data and writes fields in a fixed order (canonical JSON; idempotent). The Shape
+  tab's chain is `AppModel.shapeChain` (topic 'shape'; every edit an undo step, a slider
+  drag or drawn stroke one); saved chains are `AppModel.shapeChains` `{ id: 'chain-N',
+  chain }` (not undoable). Both are saved in the session meta (`shapeChain`,
+  `shapeChains`, optional: older sessions get the default chain and none saved); export
+  file `{ format: 'mkwavez-shapes', version: 1, chains }`.
 - **Copy recipe** — Timeline "Copy to end" (`AppModel.copyToEnd`, a single add) gives
   the copy a new id and the same (shared, immutable) data; its recipe is the source's
   recipe with `params.copyOf` = the source id (`copyRecipe`), so it re-renders exactly
@@ -250,7 +281,7 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   schema changes; decode validates known fields and keeps unknown ones), voices (all
   params; unknown keys kept, bad values → defaults), sequences, BPM, and UI prefs
   (`UiState.exportPrefs()`: the selected voice tab, the Generate tab, the shell layout —
-  `layoutWide` / `layoutNarrow`: `{ collapsed: PanelKey[], max, restore }` —, the Breed operator, bias, walk, mutation and batch mode; Breed parents are model state). Not saved: undo
+  `layoutWide` / `layoutNarrow`: `{ collapsed: PanelKey[], max, restore }` —, the Breed operator, bias, walk, mutation and batch mode, each tab's Shape chip choice `shapeOnAdd.<tab>`; Breed parents are model state). Not saved: undo
   history, transport play state. Theme, timeline view and MIDI settings stay per browser
   in localStorage.
   - Two parts: **meta** (`SessionMeta`, small, JSON-safe, `format` + `version`), rewritten
@@ -398,7 +429,12 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   with the operator / shown child / weights / legend in the row under the waveform;
   batch row + strip, cards without their spectrum below 860 px tall; it fits the panel at
   1440×900 and 1180×820 without scrolling, the chip row scrolls sideways when there are
-  more parents than fit). The shared Generate pieces use `gen-*`
+  more parents than fit). Shape: chain column (steps, + Add step) | head (source, step,
+  amount, ↦ Sweep), the step's settings (wrap), the plot of the selected step (input
+  dashed, output solid, drawing in `--v2`) beside the other view, the Apply to row and the
+  result cards; it fits at 1440×900 and 1180×820. Wide batch rows wrap rather than
+  overflow; the Shape chip shows only its label in narrow Mutate / Breed panels (Breed also
+  drops its "Batch" heading there) so Breed's row stays one line. The shared Generate pieces use `gen-*`
   classes (`.gen-tab`, `.gen-lib`, `.gen-strip`, …).
 - **Narrow shell (< 900 px)**: the same panels in the same order, one scrolling
   column, each collapsible (Wavetables starts collapsed); the transport bar is sticky.

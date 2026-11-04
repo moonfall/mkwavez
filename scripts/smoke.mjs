@@ -2272,6 +2272,9 @@ async function shapeChecks(page, tlCount) {
   await page.setViewportSize({ width: 1180, height: 820 });
   await page.waitForTimeout(150);
   assert((await genFits()) && (await fitsScreen(page)), '1180×820: Shape fits the Generate panel');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(150);
+  assert((await M(() => document.documentElement.scrollWidth - innerWidth)) <= 0 && (await page.isVisible('#shape-ed')), '390px: Shape stacks without sideways overflow');
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.click('#tab-seed');
 }

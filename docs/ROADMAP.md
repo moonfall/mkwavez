@@ -108,6 +108,33 @@ Deferred: no Edit layer yet (the `finalTable()` slot is there, as in Seed); the
 amount slider has no per-mutation curve (e.g. suggesting Log for small-amount
 mutations).
 
+## Shape tab (done)
+
+Generate → Shape edits waveforms with a chain of steps (design reviewed before building).
+
+- Steps: draw on the waveform (hard / soft clip, fold — above, below or both ± —,
+  replace, push, pull with a radius, add, multiply) with Line, Curve or Free drawings that
+  act over the span drawn; harmonics (set: keep / remove / add / replace multiples, a list,
+  odd, even, primes, Fibonacci or painted bars, with a 1/kᵖ law and a phase for new
+  harmonics; modify: shift, stretch, tilt, mirror, randomize over a harmonic range; limit
+  to a drawn curve: limit / floor / fit / scale); whole wave (any Mutate mutation, gain,
+  invert, reverse, rotate). Amount per step, ↦ Sweep across a batch, seed / Vary.
+- The tab: chain column (toggle, reorder by drag or Alt+↑/↓, + Add step, step menu), the
+  plot of the selected step in the Waveform or Harmonics view, Apply to the selection,
+  Last batch, a voice window or a wavetable (Write back into a Frozen wavetable of yours,
+  one undo step), result cards, Add / Add +N. Results are new waveforms ('shape' recipes);
+  the source stays selected.
+- Chains: in the model with undo; factory chains; save / rename / delete, New, Load the
+  selection's chain (from its recipe), export / import; realign phase option; saved with
+  the session.
+- Shape on add: a Shape chip in Seed, Mutate and Breed batch rows shapes previews and adds
+  (`Recipe.shape`). Seed's "Edit · planned" toggle is gone.
+
+Known gaps: draw steps (clip / fold) run at 2048 samples without oversampling, so very
+hard folding can alias below h72; sweeps only sweep the amount (not a drawing's level);
+no symmetry tool or grid snapping yet. On phones the chain list sits above the plot (it
+doesn't collapse like the libraries).
+
 ## M4 — Sample tab
 
 - Mic (getUserMedia) and file input; waveform view of the recording.
