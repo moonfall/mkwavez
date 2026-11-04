@@ -489,3 +489,14 @@ viz('gray-code', {
     cells(g, 0, 2, w, h - 4, rows, (v, r) => (v ? (((mask >> (5 - r)) & 1) ? c.accent : c.grid) : null));
   },
 });
+
+// Bytebeat: bit planes of (s·(s>>3 | s>>(5 + n%3))) & 255, s = 0…255.
+viz('bytebeat', {
+  axis: (i) => ['0', `bits of s·(s>>3 | s>>${5 + (i.index % 3)}) & 255`, '255'],
+  draw: (g, w, h, i, c) => {
+    const sh = 5 + (i.index % 3);
+    const v = Array.from({ length: 256 }, (_, s) => (s * ((s >> 3) | (s >> sh))) & 255);
+    const rows = Array.from({ length: 8 }, (_, r) => v.map((x) => (x >> (7 - r)) & 1));
+    cells(g, 0, 2, w, h - 4, rows, (b, r) => (b ? (r < 2 ? c.accent : c.line) : null));
+  },
+});
