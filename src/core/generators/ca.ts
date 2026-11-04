@@ -50,6 +50,25 @@ export function caGenerations(p: CaParams, seed: number, start: number, count: n
   return caRawGenerations(p, seed, start, count).map((x) => shape(x));
 }
 
+/**
+ * The cells (0 / 1) of generations [0, count): exactly the rows caRawGenerations() reads,
+ * reseeding included (for display: Seed's basis plot).
+ */
+export function caRows(p: CaParams, seed: number, count: number): Uint8Array[] {
+  const cells = Math.max(2, Math.round(p.cells));
+  const r = new Prng(seed);
+  const row = new Uint8Array(cells);
+  const scratch = new Uint8Array(cells);
+  randomRow(r, cells, row);
+  const out: Uint8Array[] = [];
+  for (let g = 0; g < count; g++) {
+    if (isUniform(row)) randomRow(r, cells, row);
+    out.push(row.slice());
+    caStep(p.rule, row, scratch);
+  }
+  return out;
+}
+
 /** The raw cycles (±1 steps, before shape()) of caGenerations(). */
 export function caRawGenerations(p: CaParams, seed: number, start: number, count: number): Float64Array[] {
   const cells = Math.max(2, Math.round(p.cells));

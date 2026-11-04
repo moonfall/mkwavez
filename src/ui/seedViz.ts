@@ -8,6 +8,7 @@
 import type { ParamValue } from '../core/table';
 import { parseColor } from './canvas';
 import { fbm, noiseField } from '../core/perlin';
+import { caRows } from '../core/generators';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -665,4 +666,22 @@ viz('add-octaves', {
 viz('roughen', {
   axis: (i) => ['', `circle r 3 · persistence ${f2(0.3 + 0.5 * i.u)}`, ''],
   draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, 3, i.u, 6, 0.3 + 0.5 * i.u),
+});
+
+// Cellular automaton: generations (time downward), the shown one outlined.
+viz('cellular-automaton', {
+  axis: (i) => ['', `rule ${i.params.rule} · generation ${i.params.start + i.index}`, ''],
+  draw: (g, w, h, i, c) => {
+    const p = { rule: i.params.rule, cells: i.params.cells };
+    const last = i.params.start + i.count - 1;
+    const cellPx = w / Math.max(2, Math.round(p.cells));
+    const fit = Math.max(4, Math.floor(h / Math.max(2, cellPx)));
+    const first = Math.max(0, last + 1 - fit);
+    const rows = caRows(p, i.seed, last + 1).slice(first);
+    const shown = i.params.start + i.index - first;
+    const rh = Math.min(h / rows.length, cellPx);
+    const top = (h - rh * rows.length) / 2;
+    cells(g, 0, top, w, rh * rows.length, rows, (v, r) => (v ? (r === shown ? c.accent : c.line) : null));
+    if (shown >= 0) rowMark(g, 0, top, w, rh * rows.length, rows.length, shown, c.accent);
+  },
 });
