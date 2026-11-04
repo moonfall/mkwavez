@@ -91,7 +91,14 @@ switches (the choice is remembered).
   category or formula text (Enter picks the first match, ↓ moves into the list, Esc
   clears); ▲/▼ or the arrow keys step through the (filtered) list. On a phone the library
   is one row (▲ · Category › Name · ▼); tap the name for the list. Edit the formula (JS in
-  `p`, `t`, `n`, `u`, `pnoise()`; "Revert to preset") or the mode's parameters. The
+  `p`, `t`, `n`, `u`, `pnoise()` and the basic waveform functions — see
+  [Formula reference](#formula-reference); "Revert to preset") or the mode's parameters.
+  The basic presets (Sine, Triangle, Saw, Square, Pulse) show their expression and
+  choose its source: **Built-in function** (default: `saw(p)`, `pulse(p, …)` — exactly the
+  band-limited preset) or **Formula** (the naive formula, e.g. the additive `reduce` series
+  or `t < … ? 1 : -1`); either can be edited like any formula (edited / Revert; Pulse's
+  sliders write its expression until it is edited). **Edit as formula** writes the shown
+  expression into Blank formula, where it renders the same waveforms. The
   large view shows one waveform of the batch with its spectrum; the strip below shows all N
   (click, or ←/→ when focused). The previews are exactly what gets added: "Add shown"
   adds that one waveform, "Add batch (+N)" all N (a voice on the built-in **Last batch**
@@ -284,6 +291,37 @@ switches (the choice is remembered).
   controller moves elsewhere stay. Wavetable settings (Live / Frozen, write head, interpolation)
   are kept across undo.
 
+
+## Formula reference
+
+A formula is a JavaScript expression evaluated for each of the 2048 samples of a waveform,
+then band-limited, DC-free, phase-aligned and normalised like every waveform.
+
+| Name | Meaning |
+| --- | --- |
+| `p` | phase, 0 … 2π across the waveform |
+| `t` | 0 … 1 across the waveform |
+| `n` | the waveform's index in the batch (0 … N−1) |
+| `u` | 0 … 1 across the batch (`n / (N−1)`; 0 for a single waveform) |
+| `sin`, `pow`, `PI`, … | every `Math` member |
+| `pnoise(freq, z, oct, pers)` | loop-seamless Perlin noise at the current phase (seeded) |
+
+**Waveform functions** take a phase `x` in radians (`saw(2*p)`, `square(p + u)`). Each
+returns the cycle its generator builds before the pipeline normalises it, so a lone call
+at `x = p` renders exactly (bit for bit) like the preset; levels are the generator's own
+(saw peaks ≈ 1.85, square ≈ 0.93, triangle ≈ 1.23).
+
+| Function | Waveform |
+| --- | --- |
+| `sine(x)` | sine (Sine) |
+| `tri(x)` | band-limited triangle: odd harmonics at 1/k², 72 harmonics (Triangle) |
+| `saw(x)` | band-limited saw: every harmonic at 1/k (Saw) |
+| `square(x)` | band-limited square: odd harmonics at 1/k (Square) |
+| `pulse(x, width)` | pulse, +1 for the first `width` (0 … 1) of the cycle, else −1; band-limited by the pipeline like the Pulse preset |
+
+Between the 2048 sample positions the basic waves evaluate their 72-harmonic Fourier sum
+exactly and `pulse` stays the naive pulse. Example: `saw(p) - saw(p + 2*PI*(0.1+0.4*u))`
+(a pulse-width sweep).
 
 ## Keyboard shortcuts
 

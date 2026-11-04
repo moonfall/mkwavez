@@ -3,12 +3,14 @@ import { noise3, noiseField, pnoiseAt } from '../perlin';
 import { shape } from '../shape';
 import type { GeneratedTable } from '../table';
 import { batchU } from './perlin';
+import { waveFunctions, type WaveFunctions } from './waveFunctions';
 
 /** Loop-seamless noise available to formulas: pnoise(freq, z, octaves, persistence). */
 export type PNoise = (freq?: number, z?: number, octaves?: number, persistence?: number) => number;
 
 /**
- * A compiled formula. p = phase 0..2pi, t = 0..1, n = batch index, u = 0..1 across the batch.
+ * A compiled formula. p = phase 0..2pi, t = 0..1, n = batch index, u = 0..1 across the batch;
+ * `fx` holds the waveform functions (sine(), saw(), ca(), …) bound to this table's seed.
  * The core never parses expressions itself: the browser build compiles JS
  * (src/browser/formulaEval.ts); a native port would plug in its own expression parser.
  */
@@ -19,6 +21,7 @@ export type FormulaFn = (
   u: number,
   pnoise: PNoise,
   noise: (x: number, y: number, z: number) => number,
+  fx: WaveFunctions,
 ) => number;
 
 export type FormulaCompiler = (expr: string) => FormulaFn;
@@ -47,11 +50,13 @@ export function formulaTable(
   const pnoise: PNoise = (freq = 2, z = 0, octaves = 4, persistence = 0.5) =>
     pnoiseAt(field, phase, freq, z || 0, octaves, persistence);
   const u = batchU(index, count);
+  // Fresh per table: generated cycles are memoised for this render only.
+  const fx = waveFunctions(seed);
   const x = new Float64Array(TABLE_SIZE);
   for (let i = 0; i < TABLE_SIZE; i++) {
     if (abort && i % ABORT_STRIDE === 0 && abort()) throw new FormulaAborted(`stopped at sample ${i}`);
     phase = (2 * Math.PI * i) / TABLE_SIZE;
-    const v = +fn(phase, i / TABLE_SIZE, index, u, pnoise, noise3);
+    const v = +fn(phase, i / TABLE_SIZE, index, u, pnoise, noise3, fx);
     if (!Number.isFinite(v)) throw new FormulaError(`non-finite value at sample ${i}`);
     x[i] = v;
   }

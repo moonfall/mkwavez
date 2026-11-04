@@ -545,20 +545,75 @@ async function seedChecks(page, tlCount) {
   await page.click('#seed-revert');
   assert((await page.inputValue('#seed-glyph-text')) === 'mkwavez' && !(await page.isVisible('#seed-edited')), 'Revert restores the text');
 
-  // Basic wave (additive), selected for later adds.
-  await page.click('#seed-current');
-  await page.fill('#seed-search', 'saw');
-  await page.press('#seed-search', 'Enter');
+  // Basic wave: the expression source (Built-in function | Formula); Saw stays selected for later adds.
+  const pick = async (q) => {
+    await page.click('#seed-current');
+    await page.fill('#seed-search', q);
+    await page.press('#seed-search', 'Enter');
+  };
+  const lastRecipe = () => M(() => window.mkwavez.model.timeline.at(-1).recipe);
+  /** The last two Timeline waveforms are bit-identical. */
+  const lastTwoSame = () =>
+    M(() => {
+      const t = window.mkwavez.model.timeline;
+      const a = t.at(-2).data;
+      const b = t.at(-1).data;
+      return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+    });
+  const undoTo = async (n) => {
+    while ((await tlCount()) > n) await page.click('#undo');
+  };
+  const n0 = await tlCount();
+  await pick('saw');
   assert((await title()) === 'Basic › Saw' && (await page.textContent('#seed-kind')) === 'Basic wave', 'Saw is a basic (additive) wave');
+  assert(
+    (await page.inputValue('#seed-expr')) === 'saw(p)' &&
+      (await page.getAttribute('#seed-source-builtin', 'aria-pressed')) === 'true' &&
+      !(await page.isVisible('#seed-edited')),
+    'Saw shows its built-in function saw(p) (default source)',
+  );
+  await page.click('#seed-add-shown');
+  assert((await lastRecipe()).op === 'basic', 'built-in source adds the band-limited generator (recipe op basic)');
+  await page.click('#seed-source-formula');
+  assert(
+    (await page.inputValue('#seed-expr')).includes('reduce') &&
+      (await page.getAttribute('#seed-source-formula', 'aria-pressed')) === 'true' &&
+      !(await page.isVisible('#seed-edited')),
+    'Formula source shows the naive formula (not an edit)',
+  );
+  await page.click('#seed-add-shown');
+  r = await lastRecipe();
+  assert(r.op === 'formula' && r.params.expr.includes('reduce') && r.params.name === 'Saw' && r.params.edited === false, 'Formula source adds a formula waveform');
+  await page.click('#seed-source-builtin');
+  assert((await page.inputValue('#seed-expr')) === 'saw(p)', 'back to the built-in function');
+  await page.fill('#seed-expr', 'saw(2*p)');
+  assert(await page.isVisible('#seed-edited'), 'editing the expression marks it edited');
+  await page.click('#seed-add-shown');
+  r = await lastRecipe();
+  assert(r.op === 'formula' && r.params.expr === 'saw(2*p)' && r.params.edited === true, 'an edited built-in expression adds a formula');
+  await page.click('#seed-revert');
+  assert((await page.inputValue('#seed-expr')) === 'saw(p)' && !(await page.isVisible('#seed-edited')), 'Revert to preset restores saw(p)');
+  await undoTo(n0);
+  // Edit as formula copies the shown expression: saw(p) renders exactly the preset.
+  await page.click('#seed-add-shown');
+  await page.click('#seed-as-formula');
+  assert(
+    (await title()) === 'Custom › Blank formula' && (await page.inputValue('#seed-expr')) === 'saw(p)' && (await page.isVisible('#seed-edited')),
+    'Edit as formula (built-in source) writes saw(p) into Blank formula',
+  );
+  await page.click('#seed-add-shown');
+  assert((await lastTwoSame()) && (await lastRecipe()).op === 'formula', 'the formula saw(p) renders exactly the Saw preset');
+  await undoTo(n0);
+  await pick('saw');
+  await page.click('#seed-source-formula');
+  page.once('dialog', (d) => d.accept());
   await page.click('#seed-as-formula');
   assert(
     (await title()) === 'Custom › Blank formula' && (await page.inputValue('#seed-expr')).includes('reduce') && (await page.isVisible('#seed-edited')),
-    'Edit as formula copies the additive series into Blank formula',
+    'Edit as formula (Formula source) copies the additive series into Blank formula',
   );
   await page.fill('#seed-expr', 'sin(p)*0.5');
-  await page.click('#seed-current');
-  await page.fill('#seed-search', 'saw');
-  await page.press('#seed-search', 'Enter');
+  await pick('saw');
   let dialog = '';
   page.once('dialog', async (d) => {
     dialog = d.message();
@@ -566,6 +621,23 @@ async function seedChecks(page, tlCount) {
   });
   await page.click('#seed-as-formula');
   assert(dialog.includes('Replace') && (await title()) === 'Basic › Saw', 'Edit as formula asks before replacing Blank formula edits (cancel keeps them)');
+
+  // Pulse: the shown expression follows the sliders; an edited expression locks them.
+  await pick('pulse');
+  assert((await page.inputValue('#seed-expr')) === 'pulse(p, 0.25+(0.05-0.25)*u)', 'Pulse shows pulse(p, …) with the width sweep in u');
+  await page.fill('#seed-param-width', '0.4');
+  assert((await page.inputValue('#seed-expr')) === 'pulse(p, 0.4+(0.05-0.4)*u)' && (await page.isVisible('#seed-edited')), 'the expression follows the Width slider');
+  await page.fill('#seed-expr', 'pulse(p, 0.4)*saw(p)');
+  assert(await page.isDisabled('#seed-param-width'), 'an edited expression locks the sliders');
+  await page.click('#seed-revert');
+  assert(
+    (await page.inputValue('#seed-expr')) === 'pulse(p, 0.25+(0.05-0.25)*u)' && !(await page.isDisabled('#seed-param-width')),
+    'Revert to defaults restores the sliders and the expression',
+  );
+
+  await pick('saw');
+  await page.click('#seed-source-builtin');
+  assert((await page.inputValue('#seed-expr')) === 'saw(p)' && (await tlCount()) === n0, 'Saw back on its built-in function; adds undone');
   const ov = await M(() => document.documentElement.scrollWidth > window.innerWidth);
   assert(!ov, 'Seed: no horizontal overflow at 390px');
 

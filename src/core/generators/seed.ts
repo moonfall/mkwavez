@@ -6,6 +6,7 @@
  * renderRecipe() reproduces them exactly.
  */
 import type { GeneratedTable, ParamValue } from '../table';
+import { sourceExpr, type ExprSource } from './asFormula';
 import { basicWave, pulse, type BasicWave } from './basic';
 import { CA_RULES, caGenerations } from './ca';
 import { formulaTable, type FormulaFn } from './formula';
@@ -32,8 +33,10 @@ export interface SeedEntry {
   readonly params?: readonly SeedParam[];
   /** One-line description (basic waves, PARAM_MODES). */
   readonly about?: string;
-  /** An equivalent formula (basic waves), for "Edit as formula". */
+  /** The naive formula of a basic wave (its "Formula" source; "Edit as formula" before the waveform functions). */
   readonly asFormula?: string;
+  /** The basic wave's waveform function call (its "Built-in function" source), e.g. `saw(p)`. */
+  readonly fn?: string;
 }
 
 const slug = (s: string) =>
@@ -42,7 +45,7 @@ const slug = (s: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
-const basic = (name: string, wave: BasicWave, about: string, asFormula: string): SeedEntry => ({
+const basic = (name: string, wave: BasicWave, fn: string, about: string, asFormula: string): SeedEntry => ({
   id: slug(name),
   cat: 'Basic',
   name,
@@ -50,20 +53,23 @@ const basic = (name: string, wave: BasicWave, about: string, asFormula: string):
   wave,
   about,
   asFormula,
+  fn,
 });
 
 export const SEED_LIBRARY: readonly SeedEntry[] = [
-  basic('Sine', 'sine', 'The fundamental alone.', 'sin(p)'),
+  basic('Sine', 'sine', 'sine(p)', 'The fundamental alone.', 'sin(p)'),
   basic(
     'Triangle',
     'tri',
+    'tri(p)',
     'Additive: odd harmonics at 1/k², alternating sign (k ≤ 72).',
     '[...Array(36)].reduce((s,_,k)=>s+(k%2?-1:1)*sin((2*k+1)*p)/pow(2*k+1,2),0)',
   ),
-  basic('Saw', 'saw', 'Additive: every harmonic at 1/k (k ≤ 72).', '[...Array(72)].reduce((s,_,k)=>s+sin((k+1)*p)/(k+1),0)'),
+  basic('Saw', 'saw', 'saw(p)', 'Additive: every harmonic at 1/k (k ≤ 72).', '[...Array(72)].reduce((s,_,k)=>s+sin((k+1)*p)/(k+1),0)'),
   basic(
     'Square',
     'square',
+    'square(p)',
     'Additive: odd harmonics at 1/k (k ≤ 72).',
     '[...Array(36)].reduce((s,_,k)=>s+sin((2*k+1)*p)/(2*k+1),0)',
   ),
@@ -127,9 +133,13 @@ export function seedParams(entry: SeedEntry, over: Readonly<Record<string, numbe
   return out;
 }
 
+/** Formula calls that use the seed. */
+const SEEDED_CALL = /\bpnoise\s*\(/;
+
 /**
- * True when the seed changes the result: Perlin, CA, a formula that calls pnoise(), or a
- * parameter mode that is seeded for these params (defaults when omitted).
+ * True when the seed changes the result: Perlin, CA, a formula (or a basic preset's
+ * expression) that calls pnoise(), or a parameter mode that is
+ * seeded for these params (defaults when omitted).
  */
 export function seedUsesRandomness(
   entry: SeedEntry,
@@ -139,14 +149,24 @@ export function seedUsesRandomness(
   if (entry.mode === 'perlin' || entry.mode === 'ca') return true;
   const pm = paramMode(entry.mode);
   if (pm) return pm.seeded(seedParams(entry, params));
-  return entry.mode === 'formula' && /\bpnoise\s*\(/.test(expr);
+  return (entry.mode === 'formula' || entry.mode === 'basic' || entry.mode === 'pulse') && SEEDED_CALL.test(expr);
 }
 
 /** One Seed batch: what the preview shows and what Add / Add batch append. */
 export interface SeedRequest {
   readonly entry: SeedEntry;
-  /** The expression for 'formula' entries (may differ from the preset: edited). */
+  /**
+   * The expression for 'formula' entries (may differ from the preset: edited). Basic
+   * presets (Sine … Square, Pulse): the shown expression of `source`; '' or the source's
+   * own expression = unedited.
+   */
   readonly expr: string;
+  /**
+   * Basic presets: 'builtin' (default: the band-limited generator, i.e. its waveform
+   * function, e.g. `saw(p)`) or 'formula' (the naive formula). An unedited built-in
+   * renders through the generator (recipe op 'basic' / 'pulse'); anything else is a formula.
+   */
+  readonly source?: ExprSource;
   /** Param values for parameter-mode entries (missing keys use defaults). */
   readonly params: Readonly<Record<string, number>>;
   readonly seed: number;
@@ -158,6 +178,20 @@ export interface SeedRequest {
    * over the params and recorded in its recipe, so it re-renders without the host.
    */
   readonly inputs?: readonly Readonly<Record<string, ParamValue>>[];
+}
+
+/**
+ * The expression a request renders as a formula — formula entries, and basic presets with
+ * the Formula source or an edited expression — or null when it renders through a generator.
+ */
+export function seedFormulaExpr(req: SeedRequest): string | null {
+  const { entry } = req;
+  if (entry.mode === 'formula') return req.expr;
+  if (entry.mode !== 'basic' && entry.mode !== 'pulse') return null;
+  const source = req.source ?? 'builtin';
+  const def = sourceExpr(entry, source, seedParams(entry, req.params));
+  const expr = req.expr || def;
+  return source === 'builtin' && expr === def ? null : expr;
 }
 
 /**
@@ -178,6 +212,16 @@ export function seedTable(req: SeedRequest, index: number, fn?: FormulaFn, abort
     parents: [],
     batch,
   });
+  const fexpr = entry.mode === 'basic' || entry.mode === 'pulse' ? seedFormulaExpr(req) : null;
+  if (fexpr !== null) {
+    // A basic preset as a formula (Formula source, or an edited expression).
+    if (!fn) throw new Error('seedTable: formula sources need a compiled expression');
+    const def = sourceExpr(entry, req.source ?? 'builtin', p);
+    return {
+      data: formulaTable(fn, seed, index, count, abort),
+      recipe: recipe('formula', { expr: fexpr, name: entry.name, edited: fexpr !== def }),
+    };
+  }
   switch (entry.mode) {
     case 'basic':
       return { data: basicWave(entry.wave!, seed), recipe: recipe('basic', { wave: entry.wave! }) };

@@ -6,8 +6,8 @@ import type { GeneratedTable } from '../table';
 export const BASIC_WAVES = ['sine', 'tri', 'saw', 'square', 'p25', 'p10', 'noise'] as const;
 export type BasicWave = (typeof BASIC_WAVES)[number];
 
-/** Additive cycle from per-harmonic sine amplitudes amp(k), k = 1..KMAX. */
-export function additive(amp: (k: number) => number): Float32Array {
+/** The raw additive cycle (before shape()) from per-harmonic sine amplitudes amp(k), k = 1..KMAX. */
+export function additiveRaw(amp: (k: number) => number): Float64Array {
   const x = new Float64Array(TABLE_SIZE);
   for (let k = 1; k <= KMAX; k++) {
     const a = amp(k);
@@ -15,18 +15,28 @@ export function additive(amp: (k: number) => number): Float32Array {
     const w = (2 * Math.PI * k) / TABLE_SIZE;
     for (let i = 0; i < TABLE_SIZE; i++) x[i] += a * Math.sin(w * i);
   }
-  return shape(x);
+  return x;
+}
+
+/** Additive cycle from per-harmonic sine amplitudes amp(k), k = 1..KMAX. */
+export function additive(amp: (k: number) => number): Float32Array {
+  return shape(additiveRaw(amp));
 }
 
 export const sawAmp = (k: number): number => 1 / k;
 export const squareAmp = (k: number): number => (k % 2 ? 1 / k : 0);
 export const triAmp = (k: number): number => (k % 2 ? (((k - 1) / 2) % 2 ? -1 : 1) / (k * k) : 0);
 
-/** Naive pulse of the given duty, then band-limited by shape(). */
-export function pulse(duty: number): Float32Array {
+/** The naive pulse of the given duty (before shape()): +1 for i < duty·N, else −1. */
+export function pulseRaw(duty: number): Float64Array {
   const x = new Float64Array(TABLE_SIZE);
   for (let i = 0; i < TABLE_SIZE; i++) x[i] = i < duty * TABLE_SIZE ? 1 : -1;
-  return shape(x);
+  return x;
+}
+
+/** Naive pulse of the given duty, then band-limited by shape(). */
+export function pulse(duty: number): Float32Array {
+  return shape(pulseRaw(duty));
 }
 
 /** Basic waveform; `seed` only matters for 'noise'. */

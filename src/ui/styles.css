@@ -2388,6 +2388,41 @@ input.seed-expr:focus-visible {
 .seed-legend b {
   color: var(--text);
 }
+/* the waveform functions: full list in the tooltip */
+.seed-fns {
+  cursor: help;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.seed-legend > span:not(.seed-fns) {
+  flex: none;
+}
+.seed-legend > .seed-fns:first-child {
+  flex: none;
+  max-width: 60%;
+}
+.seed-fns:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* basic presets: Built-in function | Formula, then the expression */
+.seed-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.seed-source-row .seed-formula {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.seed-source .seg-on {
+  cursor: default;
+}
 #seed-error:empty {
   display: none;
 }

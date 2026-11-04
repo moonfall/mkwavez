@@ -14,6 +14,9 @@ src/
     generators/         basic, formula (FormulaFn interface only), Perlin, CA, presets,
                         paramModes.ts (further parameter modes: library entry + pure
                         render(params, seed, index, count); dynamical.ts, …),
+                        waveFunctions.ts (the formulas' waveform functions sine(),
+                        tri(), saw(), square(), pulse(): raw cycles at a phase),
+                        asFormula.ts (basic presets' source expressions),
                         seed.ts (Seed library entries + seedTable/seedBatch),
                         renderRecipe() to re-render a table from its recipe
                         (mutations need env.resolveTable for parent data)
@@ -62,7 +65,8 @@ src/
                         WtOsc (one oscillator's table mix: Simple voice and Synth osc A / B),
                         synthVoice.ts (the Synth voice path), svf.ts (ZDF multimode filter,
                         drive, limiter, response curve)
-  browser/formulaEval.ts  JS expression → FormulaFn (browser-only convenience)
+  browser/formulaEval.ts  JS expression → FormulaFn (browser-only convenience; binds the
+                        waveform functions the expression names)
   browser/glyphTrace.ts character → canvas → outer contour polyline (Glyph contour mode)
   browser/webMidi.ts    Web MIDI access: permission, inputs + hot-plug, chosen input(s),
                         unsupported / insecure / denied states
@@ -133,7 +137,12 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   Data only the host can make arrives as per-table `SeedRequest.inputs` merged into the
   params and recorded: Glyph contour's `contour` (the outer contour polyline traced by
   `browser/glyphTrace.ts` from an offscreen canvas, "x,y x,y …") and `glyph` (the
-  character) — the recipe carries the polyline, never the font. `seed` and `batch {index, count}`
+  character) — the recipe carries the polyline, never the font. Basic presets (Sine …
+  Square, Pulse) have an expression source (`SeedRequest.source`): an unedited **Built-in
+  function** renders through the generator (`basic` / `pulse` recipes, as before); the
+  **Formula** source or an edited expression renders as a formula (`op: 'formula'`, `expr`,
+  `name` = the preset's, `edited` vs that source's expression, `preset` = its id;
+  `seedFormulaExpr()` says which). `seed` and `batch {index, count}`
   are always set (also for single "Add shown" tables, which keep their batch position),
   so every Seed table re-renders exactly (tested for every library entry).
 - **Mutation recipe** — `op: 'mutate'`, `params { mutation, amount (this table's),
@@ -702,8 +711,17 @@ the C++ tests compare against, so a change here that alters those numbers fails
 - Formulas are JS expressions compiled by `browser/formulaEval.ts`. A native build
   needs an expression parser for the same small language (Math functions, `pnoise`,
   ternaries; some presets use JS array idioms like `[...Array(n)].reduce`, which would
-  need a `sum(k, n, expr)` builtin or similar). Formula recipes store the expression
-  text, so tables still carry provenance.
+  need a `sum(k, n, expr)` builtin or similar) plus the waveform functions of
+  `core/generators/waveFunctions.ts` (pure core code over the basic generators' raw
+  cycles). Formula recipes store the expression text, so tables still carry provenance.
+- **Formula waveform functions** (`waveFunctions(seed)`, passed to every FormulaFn as its
+  7th argument, built per table by `formulaTable`): each returns its generator's cycle
+  *before* shape() at phase x — on the 2048-sample grid (x·2048/2π within 1e-9 of an
+  integer) the generator's own sample, so `saw(p)` renders bit-identically to the Saw
+  preset; between grid points the basic waves sum their 72 harmonics in closed form and
+  pulse is the naive pulse. Raw rather than normalised values because shape() of an
+  already-shaped float64 cycle differs from the original in a few near-zero samples
+  (≈1e-15), which would break the bit-identity.
 - Cross-version determinism of re-rendering is not guaranteed (no recipe/version tag), so
   sessions store samples except for `basic` / `pulse` waveforms verified bit-exact at save
   time (with a hash checked at load); exported files always carry samples.

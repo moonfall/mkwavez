@@ -4,9 +4,13 @@ import {
   batchU,
   FormulaAborted,
   SEED_LIBRARY,
+  seedFormulaExpr,
   seedParams,
   seedTable,
   seedUsesRandomness,
+  sourceExpr,
+  WAVE_FUNCTION_DOCS,
+  type ExprSource,
   type FormulaFn,
   type SeedEntry,
   type SeedRequest,
@@ -49,6 +53,16 @@ export interface SeedPanelOpts {
 const hex = (s: number) => (s >>> 0).toString(16).padStart(8, '0');
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const tagOf = (e: SeedEntry) => (e.mode === 'formula' ? 'f(x)' : e.mode === 'basic' ? 'basic' : 'params');
+/** Basic presets (Sine … Square, Pulse): the expression comes from a source (built-in function / formula). */
+const hasSource = (e: SeedEntry) => e.mode === 'basic' || e.mode === 'pulse';
+const SOURCES: readonly (readonly [ExprSource, string, string])[] = [
+  ['builtin', 'Built-in function', 'The band-limited waveform function, e.g. saw(p): exactly the preset'],
+  ['formula', 'Formula', 'The naive formula (Math functions only)'],
+];
+/** The waveform functions, one per line (the legend's tooltip). */
+const FUNCTIONS_TIP =
+  'Waveform functions (x = phase in radians, e.g. p, 2*p, p+u):\n' +
+  WAVE_FUNCTION_DOCS.map((d) => `${d.sig} — ${d.about}`).join('\n');
 
 /** A preview batch being computed incrementally in the frame loop. */
 interface Job {
@@ -76,13 +90,20 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     0,
     SEED_LIBRARY.findIndex((e) => e.id === DEFAULT_ENTRY),
   );
+  /** Formula edits: by entry id, or `${id}#${source}` for basic presets (each source keeps its own). */
   const edits = new Map<string, string>();
   const paramEdits = new Map<string, Record<string, number>>();
+  /** Basic presets' expression source (default: the built-in function). */
+  const sources = new Map<string, ExprSource>();
   let seed = randomSeed();
 
   const entry = () => SEED_LIBRARY[sel];
-  const exprOf = (e: SeedEntry) => edits.get(e.id) ?? e.expr ?? '';
+  const sourceOf = (e: SeedEntry): ExprSource => sources.get(e.id) ?? 'builtin';
+  const editKey = (e: SeedEntry) => (hasSource(e) ? `${e.id}#${sourceOf(e)}` : e.id);
   const paramsOf = (e: SeedEntry) => seedParams(e, paramEdits.get(e.id));
+  /** The unedited expression: the preset's, or a basic preset's source expression (Pulse: from its params). */
+  const defaultExpr = (e: SeedEntry) => (hasSource(e) ? sourceExpr(e, sourceOf(e), paramsOf(e)) : (e.expr ?? ''));
+  const exprOf = (e: SeedEntry) => edits.get(editKey(e)) ?? defaultExpr(e);
 
   // Glyph contour: the text and the traced contours (browser layer; recipes store the contour).
   const glyphTexts = new Map<string, string>();
@@ -95,7 +116,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     return c;
   };
   /** Per-table inputs: Next characters (char i of the text), or the first character at a swept weight. */
-  const glyphInputs = (e: SeedEntry, p: Record<string, number>, count: number) => {
+  const glyphInputsOf = (e: SeedEntry, p: Record<string, number>, count: number) => {
     const chars = [...glyphTextOf(e)].filter((c) => c.trim());
     if (!chars.length) return [];
     return Array.from({ length: count }, (_, i) => {
@@ -108,11 +129,13 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const request = (): SeedRequest => {
     const e = entry();
     const params = paramsOf(e);
-    const inputs = e.mode === 'glyph' ? glyphInputs(e, params, opts.count()) : undefined;
-    return { entry: e, expr: exprOf(e), params, seed, count: opts.count(), inputs };
+    const inputs = e.mode === 'glyph' ? glyphInputsOf(e, params, opts.count()) : undefined;
+    return { entry: e, expr: exprOf(e), params, seed, count: opts.count(), inputs, source: hasSource(e) ? sourceOf(e) : undefined };
   };
   const keyOf = (r: SeedRequest) =>
-    `${r.entry.id}|${r.entry.mode === 'formula' ? r.expr : JSON.stringify(r.params)}|${r.entry.mode === 'glyph' ? glyphTextOf(r.entry) : ''}|${r.seed}|${r.count}`;
+    `${r.entry.id}|${r.source ?? ''}|${r.entry.mode === 'formula' || hasSource(r.entry) ? r.expr : ''}|${JSON.stringify(r.params)}|${r.entry.mode === 'glyph' ? glyphTextOf(r.entry) : ''}|${r.seed}|${r.count}`;
+  /** The formula a request renders (formula entries, basic presets as formulas), or null. */
+  const formulaOf = (r: SeedRequest) => seedFormulaExpr(r);
 
   let compiledExpr: string | null = null;
   let compiled: { fn?: FormulaFn; err?: string } = {};
@@ -183,19 +206,31 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     errEl,
   );
 
-  const isEdited = (e: SeedEntry) => (e.mode === 'formula' ? edits.has(e.id) : paramEdits.has(e.id) || glyphTexts.has(e.id));
+  const isEdited = (e: SeedEntry) =>
+    e.mode === 'formula' ? edits.has(e.id) : edits.has(editKey(e)) || paramEdits.has(e.id) || glyphTexts.has(e.id);
+  /** Pulse: its sliders apply only while the expression is unedited. */
+  let paramInputs: (HTMLInputElement | HTMLSelectElement)[] = [];
+  const syncParamLock = () => {
+    const e = entry();
+    const locked = hasSource(e) && edits.has(editKey(e));
+    for (const i of paramInputs) {
+      i.disabled = locked;
+      i.title = locked ? 'The edited expression sets the waveform: Revert to use the sliders' : '';
+    }
+  };
 
   const onEdit = () => {
     const e = entry();
     const ed = isEdited(e);
     showEdited(ed);
+    syncParamLock();
     flash('');
     updateStatus();
   };
 
   const revert = () => {
     const e = entry();
-    edits.delete(e.id);
+    edits.delete(editKey(e));
     paramEdits.delete(e.id);
     glyphTexts.delete(e.id);
     renderEditor();
@@ -207,106 +242,169 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const def = seedParams(e);
     if (Object.keys(cur).every((k) => cur[k] === def[k])) paramEdits.delete(e.id);
     else paramEdits.set(e.id, cur);
+    // Pulse: the shown (unedited) expression follows the sliders.
+    if (exprInput && hasSource(e) && !edits.has(editKey(e))) exprInput.value = exprOf(e);
     onEdit();
   };
 
   const legendItem = (name: string, text: string) => h('span', {}, h('b', {}, name), ` ${text}`);
+  /** The formula legend; `fnsFirst` (basic presets, a narrower row) leads with the waveform functions. */
+  const legend = (fnsFirst = false) => {
+    const fns = h(
+      'span',
+      { id: 'seed-functions', class: 'seed-fns', tabindex: 0, title: FUNCTIONS_TIP, 'aria-label': FUNCTIONS_TIP },
+      h('b', {}, 'saw(x)'),
+      ' sine tri square pulse',
+    );
+    const vars = [
+      legendItem('p', 'phase 0–2π'),
+      legendItem('t', '0–1'),
+      legendItem('n', 'batch index'),
+      legendItem('u', '0–1 across batch'),
+      legendItem('pnoise', '(freq, z, oct, pers)'),
+    ];
+    return h('div', { class: 'seed-legend' }, ...(fnsFirst ? [fns, ...vars] : [...vars, fns]));
+  };
+
+  /** The formula input (formula entries and basic presets). */
+  const formulaInput = (e: SeedEntry) => {
+    const input = h('input', {
+      type: 'text',
+      id: 'seed-expr',
+      class: 'seed-expr',
+      value: exprOf(e),
+      'aria-label': 'Formula in p, t, n, u, pnoise() and the waveform functions',
+      'aria-describedby': 'seed-error',
+      spellcheck: false,
+      autocapitalize: 'off',
+      autocomplete: 'off',
+    });
+    input.addEventListener('input', () => {
+      lastTypedAt = performance.now();
+      if (input.value === defaultExpr(e)) edits.delete(editKey(e));
+      else edits.set(editKey(e), input.value);
+      onEdit();
+    });
+    exprInput = input;
+    return h('label', { class: 'seed-formula' }, h('span', { class: 'seed-f' }, 'f ='), input);
+  };
+
+  /** "Edit as formula": write `expr` into the Blank formula entry (asking before replacing its edits). */
+  const editAsFormula = (e: SeedEntry, expr: string) => {
+    const ci = SEED_LIBRARY.findIndex((x) => x.id === CUSTOM_ENTRY);
+    const prev = edits.get(CUSTOM_ENTRY);
+    if (prev !== undefined && prev !== expr && !confirm(`Replace your Blank formula edits with the ${e.name} formula?`)) return;
+    edits.set(CUSTOM_ENTRY, expr);
+    lib.select(ci);
+    onEdit();
+  };
+  const asFormulaButton = (e: SeedEntry, expr: () => string | null) =>
+    h(
+      'button',
+      {
+        id: 'seed-as-formula',
+        class: 'small',
+        title: 'Write the equivalent formula (waveform functions, n / u for the batch) into Blank formula',
+        onclick: () => {
+          const x = expr();
+          if (x) editAsFormula(e, x);
+        },
+      },
+      'Edit as formula',
+    );
+
+  /** Basic presets: Built-in function | Formula. */
+  const sourceSeg = (e: SeedEntry) =>
+    h(
+      'div',
+      { class: 'seg seed-source', role: 'group', 'aria-label': 'Expression source' },
+      ...SOURCES.map(([s, label, tip]) =>
+        h(
+          'button',
+          {
+            id: `seed-source-${s}`,
+            class: sourceOf(e) === s ? 'seg-on' : '',
+            'aria-pressed': String(sourceOf(e) === s),
+            title: tip,
+            onclick: () => {
+              if (sourceOf(e) === s) return;
+              if (s === 'builtin') sources.delete(e.id);
+              else sources.set(e.id, s);
+              renderEditor();
+              onEdit();
+            },
+          },
+          label,
+        ),
+      ),
+    );
+
+  /** Slider / dropdown controls of an entry's params. */
+  const paramControls = (e: SeedEntry): HTMLElement[] => {
+    const vals = paramsOf(e);
+    return (e.params ?? []).map((p) => {
+      if (p.options) {
+        const f = selectField(
+          p.label,
+          p.options.map(([v, l]) => [String(v), l]),
+          String(vals[p.key]),
+          (v) => setParam(e, p.key, Number(v)),
+        );
+        f.select.id = `seed-param-${p.key}`;
+        paramInputs.push(f.select);
+        return f.el;
+      }
+      const s = slider({
+        label: p.label,
+        min: p.min,
+        max: p.max,
+        step: p.step,
+        value: vals[p.key],
+        format: (v) => (p.step >= 1 ? String(Math.round(v)) : v.toFixed(2)),
+        onInput: (v) => setParam(e, p.key, v),
+      });
+      s.input.id = `seed-param-${p.key}`;
+      paramInputs.push(s.input);
+      return s.el;
+    });
+  };
 
   const renderEditor = () => {
     const e = entry();
     edKind.textContent = e.mode === 'formula' ? 'Formula' : e.mode === 'basic' ? 'Basic wave' : 'Parameters';
     edPath.textContent = `${e.cat} › ${e.name}`;
-    revertBtn.textContent = e.mode === 'formula' ? 'Revert to preset' : 'Revert to defaults';
+    revertBtn.textContent = e.mode === 'formula' || e.mode === 'basic' ? 'Revert to preset' : 'Revert to defaults';
     showEdited(isEdited(e));
     exprInput = null;
+    paramInputs = [];
+    const hints: Record<string, string> = {
+      pulse: 'Band-limited pulse; the width sweeps from Width to “Batch → width” across the batch.',
+      perlin: 'Loop-seamless noise. A batch shares one noise region (the seed) and drifts through z.',
+      ca: 'Each generation’s cells become ±1 steps of one waveform; a batch is N consecutive generations from the start.',
+    };
     if (e.mode === 'formula') {
-      const input = h('input', {
-        type: 'text',
-        id: 'seed-expr',
-        class: 'seed-expr',
-        value: exprOf(e),
-        'aria-label': 'Formula in p, t, n, u and pnoise()',
-        'aria-describedby': 'seed-error',
-        spellcheck: false,
-        autocapitalize: 'off',
-        autocomplete: 'off',
-      });
-      input.addEventListener('input', () => {
-        lastTypedAt = performance.now();
-        if (input.value === e.expr) edits.delete(e.id);
-        else edits.set(e.id, input.value);
-        onEdit();
-      });
-      exprInput = input;
+      edBody.replaceChildren(formulaInput(e), legend());
+    } else if (hasSource(e)) {
+      // Basic presets: the expression (built-in function or naive formula), Pulse's sliders below it.
+      const builtin = sourceOf(e) === 'builtin';
+      const about =
+        e.mode === 'basic'
+          ? builtin
+            ? `${e.about ?? ''} Band-limited additive generator (harmonics ≤ 72); every waveform of a batch is the same.`
+            : 'The naive formula: Math functions only, band-limited by the waveform pipeline (float rounding differs slightly from the built-in function).'
+          : builtin
+            ? hints.pulse
+            : 'The naive formula: ±1 by comparing t with the width (identical to the band-limited pulse once shaped).';
+      const controls = e.mode === 'pulse' ? [h('div', { class: 'seed-params' }, ...paramControls(e))] : [];
       edBody.replaceChildren(
-        h('label', { class: 'seed-formula' }, h('span', { class: 'seed-f' }, 'f ='), input),
-        h(
-          'div',
-          { class: 'seed-legend' },
-          legendItem('p', 'phase 0–2π'),
-          legendItem('t', '0–1'),
-          legendItem('n', 'batch index'),
-          legendItem('u', '0–1 across batch'),
-          legendItem('pnoise', '(freq, z, oct, pers)'),
-        ),
+        h('div', { class: 'seed-source-row' }, sourceSeg(e), formulaInput(e)),
+        legend(true),
+        ...controls,
+        h('p', { class: 'hint' }, `${about} `, asFormulaButton(e, () => exprOf(e))),
       );
-    } else if (e.mode === 'basic') {
-      const asF = h(
-        'button',
-        {
-          id: 'seed-as-formula',
-          class: 'small',
-          onclick: () => {
-            const ci = SEED_LIBRARY.findIndex((x) => x.id === CUSTOM_ENTRY);
-            const prev = edits.get(CUSTOM_ENTRY);
-            if (prev !== undefined && prev !== e.asFormula && !confirm(`Replace your Blank formula edits with the ${e.name} formula?`))
-              return;
-            edits.set(CUSTOM_ENTRY, e.asFormula!);
-            lib.select(ci);
-            onEdit();
-          },
-        },
-        'Edit as formula',
-      );
-      edBody.replaceChildren(
-        h('p', { class: 'seed-about' }, e.about ?? ''),
-        h(
-          'p',
-          { class: 'hint' },
-          'Band-limited additive generator (harmonics ≤ 72); every waveform of a batch is the same. ',
-          asF,
-        ),
-      );
+      syncParamLock();
     } else {
-      const vals = paramsOf(e);
-      const controls: HTMLElement[] = (e.params ?? []).map((p) => {
-        if (p.options) {
-          const f = selectField(
-            p.label,
-            p.options.map(([v, l]) => [String(v), l]),
-            String(vals[p.key]),
-            (v) => setParam(e, p.key, Number(v)),
-          );
-          f.select.id = `seed-param-${p.key}`;
-          return f.el;
-        }
-        const s = slider({
-          label: p.label,
-          min: p.min,
-          max: p.max,
-          step: p.step,
-          value: vals[p.key],
-          format: (v) => (p.step >= 1 ? String(Math.round(v)) : v.toFixed(2)),
-          onInput: (v) => setParam(e, p.key, v),
-        });
-        s.input.id = `seed-param-${p.key}`;
-        return s.el;
-      });
-      const hints: Record<string, string> = {
-        pulse: 'Band-limited pulse; the width sweeps from Width to “Batch → width” across the batch.',
-        perlin: 'Loop-seamless noise. A batch shares one noise region (the seed) and drifts through z.',
-        ca: 'Each generation’s cells become ±1 steps of one waveform; a batch is N consecutive generations from the start.',
-      };
+      const controls = paramControls(e);
       if (e.mode === 'glyph') {
         const text = h('input', {
           type: 'text',
@@ -424,8 +522,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const startJob = (): Job | null => {
     const req = request();
     let fn: FormulaFn | undefined;
-    if (req.entry.mode === 'formula') {
-      fn = compile(req.expr).fn;
+    const fexpr = formulaOf(req);
+    if (fexpr !== null) {
+      fn = compile(fexpr).fn;
       if (!fn) return null;
     }
     job = { key: keyOf(req), req, fn, tables: new Array(req.count), errors: new Array(req.count), next: 0, fatal: '' };
@@ -483,7 +582,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const updateStatus = () => {
     statusDirty = false;
     const e = entry();
-    const syntax = e.mode === 'formula' ? compile(exprOf(e)).err : undefined;
+    const fexpr = formulaOf(request());
+    const syntax = fexpr !== null ? compile(fexpr).err : undefined;
     const j = job && job.key === keyOf(request()) ? job : null;
     const failed = j ? failedOf(j) : [];
     const shown = strip.shown();
@@ -506,7 +606,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     el.classList.toggle('seed-stale', !!blocking);
     // Parameter entries keep the seed box's space when a param turns the seed off (e.g.
     // Karplus excitation), so changing it doesn't shift the batch row.
-    const seeded = seedUsesRandomness(e, exprOf(e), paramsOf(e));
+    const seeded = seedUsesRandomness(e, fexpr ?? exprOf(e), paramsOf(e));
     seedBox.hidden = !seeded && !e.params?.length;
     seedBox.classList.toggle('seed-off', !seeded);
   };
@@ -533,7 +633,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     }
     if (!model.addTables(j.tables.map((_, i) => finalTable(j, i)!), true).length) return; // refused: keep the seed
     const n = j.req.count;
-    if (seedUsesRandomness(j.req.entry, j.req.expr, j.req.params)) {
+    if (seedUsesRandomness(j.req.entry, formulaOf(j.req) ?? j.req.expr, j.req.params)) {
       newSeed();
       flash(`Added ${n} waveform${n > 1 ? 's' : ''} to the Timeline · new seed`);
     } else flash(`Added ${n} waveform${n > 1 ? 's' : ''} to the Timeline`);
@@ -662,7 +762,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;
         const key = keyOf(request());
-        const typing = entry().mode === 'formula' && performance.now() - lastTypedAt < TYPING_MS;
+        const typing = (entry().mode === 'formula' || hasSource(entry())) && performance.now() - lastTypedAt < TYPING_MS;
         if (job?.key !== key && !typing && now - lastStart >= PREVIEW_MS) {
           lastStart = now;
           startJob();
