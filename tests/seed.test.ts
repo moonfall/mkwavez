@@ -12,6 +12,8 @@ import {
   seedEntry,
   seedParams,
   seedTable,
+  DEFAULT_PERLIN,
+  perlinAt,
   seedUsesRandomness,
   type SeedEntry,
   type SeedRequest,
@@ -81,6 +83,20 @@ describe('Seed library', () => {
     }
     const ca = seedBatch(req(seedEntry('cellular-automaton')!, { params: { start: 7 }, count: 3 }));
     expect(ca.map((x) => x.recipe.params.generation)).toEqual([7, 8, 9]);
+  });
+
+  it('Perlin noise sweeps frequency / octaves / persistence; recipes from before the batch ends don’t sweep', () => {
+    const e = seedEntry('perlin-noise')!;
+    const b = seedBatch(req(e, { params: { zDrift: 0, freq: 1, freqEnd: 6 }, count: 3 }));
+    expect(same(b[0].data, b[2].data)).toBe(false);
+    expect(b[2].recipe.params).toMatchObject({ freq: 1, freqEnd: 6, octavesEnd: 4 });
+    // Octaves sweep in whole octaves.
+    expect([0, 1, 2, 3].map((i) => perlinAt({ ...DEFAULT_PERLIN, octaves: 1, octavesEnd: 4 }, i, 4).octaves)).toEqual([1, 2, 3, 4]);
+    // An old recipe (no ends) renders with its start values for every table.
+    const old = { op: 'perlin', params: { freq: 3, z: 0, zDrift: 0, octaves: 5, persistence: 0.6, preset: 'perlin-noise' }, seed: 9, parents: [], batch: { index: 2, count: 3 } };
+    expect(same(renderRecipe(old), seedTable(req(e, { params: { freq: 3, freqEnd: 3, zDrift: 0, octaves: 5, octavesEnd: 5, persistence: 0.6, persistenceEnd: 0.6 }, seed: 9, count: 3 }), 2).data)).toBe(true);
+    // The Perlin presets are its starting points.
+    for (const id of ['drift', 'zoom', 'add-octaves', 'roughen']) expect(seedEntry(id)).toMatchObject({ mode: 'perlin', family: 'Perlin noise', cat: 'Perlin' });
   });
 
   it('pulse widths sweep across the batch; basic waves match the additive generators', () => {

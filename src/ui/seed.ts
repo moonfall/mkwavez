@@ -410,7 +410,6 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     paramInputs = [];
     const hints: Record<string, string> = {
       pulse: 'Band-limited pulse; the width sweeps from Width to “Batch → width” across the batch.',
-      perlin: 'Loop-seamless noise. A batch shares one noise region (the seed) and drifts through z.',
       ca: 'Each generation’s cells become ±1 steps of one waveform; a batch is N consecutive generations from the start.',
     };
     if (e.mode === 'formula') {

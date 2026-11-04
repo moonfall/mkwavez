@@ -11,7 +11,7 @@ import { basicWave, pulse, type BasicWave } from './basic';
 import { CA_RULES, caGenerations } from './ca';
 import { formulaTable, type FormulaFn } from './formula';
 import { FORMULA_PRESETS } from './formulaPresets';
-import { PARAM_MODES, paramMode, type ParamModeDef, type ParamModeId, type SeedParam } from './paramModes';
+import { PARAM_MODES, paramMode, type ModeVariant, type ParamModeDef, type ParamModeId, type SeedParam } from './paramModes';
 import { batchU, DEFAULT_PERLIN, perlinTable, type PerlinParams } from './perlin';
 
 export type { SeedParam } from './paramModes';
@@ -65,25 +65,58 @@ function modeEntry(m: ParamModeDef): SeedEntry {
   return { id: m.id, cat: m.cat, name: m.name, mode: m.mode as ParamModeId, params: m.params, about: m.about };
 }
 
-/** Formula presets re-made as parameter-mode variants, by preset id. */
+const PERLIN_ABOUT =
+  'Loop-seamless noise, read around a circle (radius = frequency) in the noise field. A batch shares one noise region ' +
+  '(the seed), drifts through z and can sweep the frequency, octaves and persistence.';
+
+const PERLIN_ENTRY: SeedEntry = {
+    id: 'perlin-noise',
+    cat: 'Noise & automata',
+    name: 'Perlin noise',
+    mode: 'perlin',
+    about: PERLIN_ABOUT,
+    params: [
+      { key: 'freq', label: 'Frequency', min: 0.5, max: 8, step: 0.05, value: DEFAULT_PERLIN.freq },
+      { key: 'freqEnd', label: 'Batch → frequency', min: 0.5, max: 8, step: 0.05, value: DEFAULT_PERLIN.freq },
+      { key: 'z', label: 'Z start', min: 0, max: 10, step: 0.05, value: DEFAULT_PERLIN.z },
+      { key: 'zDrift', label: 'Z drift (batch)', min: 0, max: 4, step: 0.05, value: DEFAULT_PERLIN.zDrift },
+      { key: 'octaves', label: 'Octaves', min: 1, max: 8, step: 1, value: DEFAULT_PERLIN.octaves },
+      { key: 'octavesEnd', label: 'Batch → octaves', min: 1, max: 8, step: 1, value: DEFAULT_PERLIN.octaves },
+      { key: 'persistence', label: 'Persistence', min: 0.1, max: 0.9, step: 0.01, value: DEFAULT_PERLIN.persistence },
+      { key: 'persistenceEnd', label: 'Batch → persistence', min: 0.1, max: 0.9, step: 0.01, value: DEFAULT_PERLIN.persistence },
+    ],
+  };
+
+/** Formula presets re-made as Perlin noise variants (the Perlin group). */
+const PERLIN_VARIANTS: readonly ModeVariant[] = [
+  { id: 'drift', values: {} },
+  { id: 'zoom', values: { freq: 1, freqEnd: 6, zDrift: 0 } },
+  { id: 'add-octaves', values: { octaves: 1, octavesEnd: 8, persistence: 0.6, persistenceEnd: 0.6, zDrift: 0 } },
+  { id: 'roughen', values: { freq: 3, freqEnd: 3, zDrift: 1, octaves: 6, octavesEnd: 6, persistence: 0.3, persistenceEnd: 0.8 } },
+];
+
+/** Formula presets re-made as variants of a parameter mode (or Perlin noise), by preset id. */
 const VARIANTS = new Map<string, SeedEntry>();
-for (const m of MODES)
-  for (const v of m.variants ?? []) {
+function addVariants(base: { mode: SeedMode; name: string; about?: string; params: readonly SeedParam[] }, variants: readonly ModeVariant[]): void {
+  for (const v of variants) {
     const preset = FORMULA_PRESETS.find((p) => slug(p.name) === v.id);
-    if (!preset) throw new Error(`PARAM_MODES: ${m.mode} variant '${v.id}' names no formula preset`);
+    if (!preset) throw new Error(`Seed: ${base.name} variant '${v.id}' names no formula preset`);
     for (const k of Object.keys(v.values))
-      if (!m.params.some((q) => q.key === k)) throw new Error(`PARAM_MODES: ${m.mode} variant '${v.id}' sets unknown param '${k}'`);
+      if (!base.params.some((q) => q.key === k)) throw new Error(`Seed: ${base.name} variant '${v.id}' sets unknown param '${k}'`);
     VARIANTS.set(v.id, {
       id: v.id,
       cat: preset.group,
       name: preset.name,
-      mode: m.mode as ParamModeId,
-      params: m.params.map((q) => (v.values[q.key] === undefined ? q : { ...q, value: v.values[q.key] })),
-      about: m.about,
-      family: m.name,
+      mode: base.mode,
+      params: base.params.map((q) => (v.values[q.key] === undefined ? q : { ...q, value: v.values[q.key] })),
+      about: base.about,
+      family: base.name,
       formula: preset.expr,
     });
   }
+}
+for (const m of MODES) addVariants({ ...m, mode: m.mode as ParamModeId }, m.variants ?? []);
+addVariants({ ...PERLIN_ENTRY, params: PERLIN_ENTRY.params!, about: PERLIN_ABOUT }, PERLIN_VARIANTS);
 
 const BASE_LIBRARY: readonly SeedEntry[] = [
   basic('Sine', 'sine', 'sine(p)', 'The fundamental alone.', 'sin(p)'),
@@ -115,19 +148,7 @@ const BASE_LIBRARY: readonly SeedEntry[] = [
   ...FORMULA_PRESETS.map(
     (p): SeedEntry => VARIANTS.get(slug(p.name)) ?? { id: slug(p.name), cat: p.group, name: p.name, mode: 'formula', expr: p.expr },
   ),
-  {
-    id: 'perlin-noise',
-    cat: 'Noise & automata',
-    name: 'Perlin noise',
-    mode: 'perlin',
-    params: [
-      { key: 'freq', label: 'Frequency', min: 0.5, max: 8, step: 0.05, value: DEFAULT_PERLIN.freq },
-      { key: 'z', label: 'Z start', min: 0, max: 10, step: 0.05, value: DEFAULT_PERLIN.z },
-      { key: 'zDrift', label: 'Z drift (batch)', min: 0, max: 4, step: 0.05, value: DEFAULT_PERLIN.zDrift },
-      { key: 'octaves', label: 'Octaves', min: 1, max: 8, step: 1, value: DEFAULT_PERLIN.octaves },
-      { key: 'persistence', label: 'Persistence', min: 0.1, max: 0.9, step: 0.01, value: DEFAULT_PERLIN.persistence },
-    ],
-  },
+  PERLIN_ENTRY,
   {
     id: 'cellular-automaton',
     cat: 'Noise & automata',
@@ -276,8 +297,14 @@ export function seedTable(req: SeedRequest, index: number, fn?: FormulaFn, abort
         zDrift: p.zDrift,
         octaves: p.octaves,
         persistence: p.persistence,
+        freqEnd: p.freqEnd,
+        octavesEnd: p.octavesEnd,
+        persistenceEnd: p.persistenceEnd,
       };
-      return { data: perlinTable(pp, seed, index, count), recipe: recipe('perlin', { ...pp }) };
+      return {
+        data: perlinTable(pp, seed, index, count),
+        recipe: recipe('perlin', { freq: p.freq, z: p.z, zDrift: p.zDrift, octaves: p.octaves, persistence: p.persistence, freqEnd: p.freqEnd, octavesEnd: p.octavesEnd, persistenceEnd: p.persistenceEnd }),
+      };
     }
     case 'ca': {
       const generation = p.start + index;

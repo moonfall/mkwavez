@@ -73,6 +73,10 @@ function renderOp(r: Recipe, env: RenderEnv): Float32Array {
           zDrift: Number(p.zDrift ?? DEFAULT_PERLIN.zDrift),
           octaves: Number(p.octaves ?? DEFAULT_PERLIN.octaves),
           persistence: Number(p.persistence ?? DEFAULT_PERLIN.persistence),
+          // Batch ends arrived later: recipes without them don't sweep.
+          freqEnd: p.freqEnd === undefined ? undefined : Number(p.freqEnd),
+          octavesEnd: p.octavesEnd === undefined ? undefined : Number(p.octavesEnd),
+          persistenceEnd: p.persistenceEnd === undefined ? undefined : Number(p.persistenceEnd),
         },
         r.seed,
         index,

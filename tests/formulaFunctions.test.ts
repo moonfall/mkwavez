@@ -258,7 +258,7 @@ describe('parameter modes as functions (Part 2)', () => {
 
   it('every variant at its defaults renders like the formula preset it replaced (N = 8, within 1e-6)', () => {
     const variants = SEED_LIBRARY.filter((e) => e.formula);
-    expect(variants.map((e) => e.id)).toEqual(expect.arrayContaining(['soft-clip', 'chebyshev', 'superellipse', 'shaped-pwm', 'fm-sweep', 'nested-fm', 'cross-pm', 'cz-phase-dist', 'cz-resonance-sine-window', 'cz-resonance-saw-window', 'superformula', 'weierstrass', 'blancmange', 'sync-sweep']));
+    expect(variants.map((e) => e.id)).toEqual(expect.arrayContaining(['soft-clip', 'chebyshev', 'superellipse', 'shaped-pwm', 'fm-sweep', 'nested-fm', 'cross-pm', 'cz-phase-dist', 'cz-resonance-sine-window', 'cz-resonance-saw-window', 'superformula', 'weierstrass', 'blancmange', 'sync-sweep', 'drift', 'zoom', 'add-octaves', 'roughen']));
     for (const e of variants)
       for (const seed of [1, 0xdeadbeef]) {
         const gen = seedBatch(req(e, { seed, count: 8 }));
@@ -283,6 +283,8 @@ describe('parameter modes as functions (Part 2)', () => {
     expect(f('superformula')).toBe('superformula(p, 6, 2, 2+(8-2)*u, 2+(8-2)*u)');
     expect(f('blancmange')).toBe('fractal(p, 1, 2, 6, 0.4+(0.8-0.4)*u)');
     expect(f('sync-sweep')).toBe('sync(p, 0, 1+(4-1)*u)');
+    expect(f('zoom')).toBe('perlin(p, 1+(6-1)*u, 0, 4, 0.5)');
+    expect(f('add-octaves')).toBe('perlin(p, 2, 0, round(1+(8-1)*u), 0.6)');
     expect(f('perlin-noise')).toBe('perlin(p, 2, 1.5*u, 4, 0.5)');
     expect(f('cellular-automaton')).toBe('ca(p, 30, 32, n)');
     expect(f('dynamical-systems')).toBe('dyn(p, 0, 0.6+(1-0.6)*u, 12, 0.8, 0)');

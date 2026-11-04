@@ -102,7 +102,9 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
       return `sync(p, ${lit(p.wave)}, ${lerpExpr(p.ratio, p.ratioEnd)})`;
     case 'perlin': {
       const z = p.zDrift === 0 ? lit(p.z) : p.z === 0 ? `${lit(p.zDrift)}*u` : `${lit(p.z)}+${lit(p.zDrift)}*u`;
-      return `perlin(p, ${lit(p.freq)}, ${z}, ${lit(p.octaves)}, ${lit(p.persistence)})`;
+      const end = (k: string) => p[k] ?? p[k.replace('End', '')];
+      const oct = end('octavesEnd') === p.octaves ? lit(p.octaves) : `round(${lerpExpr(p.octaves, end('octavesEnd'))})`;
+      return `perlin(p, ${lerpExpr(p.freq, end('freqEnd'))}, ${z}, ${oct}, ${lerpExpr(p.persistence, end('persistenceEnd'))})`;
     }
     case 'ca':
       return `ca(p, ${lit(p.rule)}, ${lit(p.cells)}, ${p.start === 0 ? 'n' : `${lit(p.start)}+n`})`;

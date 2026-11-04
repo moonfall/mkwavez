@@ -11,6 +11,10 @@ export interface PerlinParams {
   zDrift: number;
   octaves: number;
   persistence: number;
+  /** Batch ends (frequency, octaves, persistence sweep start → end); missing = no sweep (old recipes). */
+  freqEnd?: number;
+  octavesEnd?: number;
+  persistenceEnd?: number;
 }
 
 export const DEFAULT_PERLIN: PerlinParams = { freq: 2, z: 0, zDrift: 1.5, octaves: 4, persistence: 0.5 };
@@ -20,9 +24,21 @@ export function batchU(index: number, count: number): number {
   return count > 1 ? index / (count - 1) : 0;
 }
 
+/** Frequency, z, octaves and persistence of table `index` (z drifts; the others sweep to their ends, octaves rounded). */
+export function perlinAt(p: PerlinParams, index: number, count: number): { freq: number; z: number; octaves: number; persistence: number } {
+  const u = batchU(index, count);
+  const lerp = (a: number, b: number | undefined) => (b === undefined || b === a ? a : a + (b - a) * u);
+  return {
+    freq: lerp(p.freq, p.freqEnd),
+    z: p.z + p.zDrift * u,
+    octaves: p.octavesEnd === undefined || p.octavesEnd === p.octaves ? p.octaves : Math.round(lerp(p.octaves, p.octavesEnd)),
+    persistence: lerp(p.persistence, p.persistenceEnd),
+  };
+}
+
 export function perlinTable(p: PerlinParams, seed: number, index: number, count: number): Float32Array {
-  const z = p.z + p.zDrift * batchU(index, count);
-  return shape(noiseCycle(noiseField(seed), p.freq, z, p.octaves, p.persistence));
+  const a = perlinAt(p, index, count);
+  return shape(noiseCycle(noiseField(seed), a.freq, a.z, a.octaves, a.persistence));
 }
 
 /** N tables from one noise region (same seed), drifting through z. */

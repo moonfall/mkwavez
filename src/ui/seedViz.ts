@@ -23,6 +23,7 @@ import {
   ksPasses,
   LIFE_RULES,
   PD_SHAPES,
+  perlinAt,
   pdAmount,
   pdMap,
   lifeBoard,
@@ -53,6 +54,7 @@ import {
   type FractalParams,
   type LifeParams,
   type PdParams,
+  type PerlinParams,
   type PolygonParams,
   type ShaperParams,
   type RdParams,
@@ -721,29 +723,17 @@ const noisePlane = (g: CanvasRenderingContext2D, w: number, h: number, c: VizCol
   g.stroke();
   dot(g, w / 2 + R, h / 2, 3, c.line);
 };
-viz('perlin-noise', {
-  axis: (i) => ['', `circle r ${f2(i.params.freq)} · z ${f2(i.params.z + i.params.zDrift * i.u)}`, ''],
-  draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, i.params.freq, i.params.z + i.params.zDrift * i.u, i.params.octaves, i.params.persistence),
-});
-
-viz('drift', {
-  axis: (i) => ['', `circle r 2 · z ${f2(1.5 * i.u)}`, ''],
-  draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, 2, 1.5 * i.u, 4, 0.5),
-});
-
-viz('zoom', {
-  axis: (i) => ['', `circle r ${f2(1 + 5 * i.u)} · z 0`, ''],
-  draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, 1 + 5 * i.u, 0, 4, 0.5),
-});
-
-viz('add-octaves', {
-  axis: (i) => ['', `circle r 2 · ${i.index + 1} octave${i.index ? 's' : ''}`, ''],
-  draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, 2, 0, 1 + i.index, 0.6),
-});
-
-viz('roughen', {
-  axis: (i) => ['', `circle r 3 · persistence ${f2(0.3 + 0.5 * i.u)}`, ''],
-  draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, 3, i.u, 6, 0.3 + 0.5 * i.u),
+// Perlin noise and its variants (Drift, Zoom, Add octaves, Roughen): the slice at the shown
+// waveform's z, frequency (circle radius), octaves and persistence.
+viz('mode:perlin', {
+  axis: (i) => {
+    const a = perlinAt(i.params as unknown as PerlinParams, i.index, i.count);
+    return ['', `r ${f2(a.freq)} · z ${f2(a.z)} · ${a.octaves} oct · pers ${f2(a.persistence)}`, ''];
+  },
+  draw: (g, w, h, i, c) => {
+    const a = perlinAt(i.params as unknown as PerlinParams, i.index, i.count);
+    noisePlane(g, w, h, c, i.seed, a.freq, a.z, a.octaves, a.persistence);
+  },
 });
 
 // Cellular automaton: generations (time downward), the shown one outlined.
