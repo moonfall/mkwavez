@@ -720,7 +720,8 @@ viz('digits-of', {
 // Perlin: loop-seamless noise is fBm read around a circle (radius = frequency) in a slice of the field.
 let planeCache: { key: string; rows: Float64Array[] } | null = null;
 const noisePlane = (g: CanvasRenderingContext2D, w: number, h: number, c: VizColors, seed: number, freq: number, z: number, octaves: number, persistence: number) => {
-  const ext = Math.max(2.5, freq * 1.3);
+  // Half-width of the slice in noise units: the circle (radius freq) fits the shorter side.
+  const ext = Math.max(2.5, freq * 1.3, (freq * w) / (0.85 * Math.max(1, h)));
   const nx = 56;
   const ny = Math.max(8, Math.round((nx * h) / w));
   const key = `${seed}|${freq}|${z}|${octaves}|${persistence}|${nx}|${ny}`;
