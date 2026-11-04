@@ -66,7 +66,6 @@ export const FORMULA_PRESETS: readonly FormulaPreset[] = [
     name: 'Blancmange',
     expr: '[...Array(6)].reduce((s,_,k)=>s+pow(0.4+0.4*u,k)*abs(((pow(2,k)*t+0.5)%1)-0.5),0)',
   },
-  { group: 'Geometry', name: 'Polygon', expr: 'cos(PI/(n+3))/cos((p%(2*PI/(n+3)))-PI/(n+3))' },
   {
     group: 'Geometry',
     name: 'Gauss bumps',

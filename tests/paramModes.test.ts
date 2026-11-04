@@ -38,6 +38,7 @@ import {
 } from '../src/core/generators';
 import { ksPasses, ksString } from '../src/core/generators/karplus';
 import { supersawPhases, supersawRaw } from '../src/core/generators/supersaw';
+import { polygonPoints, polygonShape } from '../src/core/generators/polygon';
 import { basicWave } from '../src/core/generators/basic';
 import { resamplePeriodic } from '../src/core/generators/resample';
 import { shape } from '../src/core/shape';
@@ -276,6 +277,48 @@ describe('parameter modes', () => {
     expect(supersawPhases(3, 0, 0, 9)).toEqual(supersawPhases(11, 0, 0, 9).slice(0, 3));
     // Exact cancellation (two evenly spread squares at equal level) falls back to one voice, not silence.
     expect(peak(shape(supersawRaw(2, 0, 1, 1, 1, 0)))).toBeGreaterThan(0.5);
+  });
+
+  it('polygon: radius of polygons, stars and compounds; traced x; roundness, rotation and the batch modes', () => {
+    const N = TABLE_SIZE;
+    const radius = (sides: number, star: number, round = 0) => polygonPoints(sides, star, round, 0, 0).map(([x, y]) => Math.hypot(x, y));
+    const at = (r: number[], deg: number) => r[Math.round((deg / 360) * N) % N];
+    // Square: vertices at radius 1, edge midpoints at cos(π/4).
+    const sq = radius(4, 1);
+    expect(at(sq, 0)).toBeCloseTo(1, 9);
+    expect(at(sq, 45)).toBeCloseTo(Math.SQRT1_2, 9);
+    // Pentagram {5/2}: points at 1, the inner corners at cos(2π/5) / cos(π/5).
+    // (36° and 30° fall between samples: compare the outline's extremes.)
+    const star = radius(5, 2);
+    expect(at(star, 0)).toBeCloseTo(1, 9);
+    expect(Math.min(...star)).toBeCloseTo(Math.cos((2 * Math.PI) / 5) / Math.cos(Math.PI / 5), 3);
+    // {6/2} is the compound of two triangles (a hexagram): inner corners at 1/√3.
+    const hex = radius(6, 2);
+    expect(Math.max(...hex)).toBeCloseTo(1, 9);
+    expect(Math.min(...hex)).toBeCloseTo(1 / Math.sqrt(3), 3);
+    // Star steps clamp below n/2 (a "star" of 4 sides is the square).
+    expect(polygonShape(4, 3)).toEqual({ n: 4, k: 1 });
+    // Trace: the pen goes vertex to vertex at constant speed.
+    const tri = polygonPoints(3, 1, 0, 0, 1);
+    expect(tri[0][0]).toBeCloseTo(1, 12);
+    expect(tri[N / 2][0]).toBeCloseTo(0.5 * (Math.cos((2 * Math.PI) / 3) + Math.cos((4 * Math.PI) / 3)), 9);
+    // Roundness 0.9 cuts each corner from 0.45 along its edges: the square's corner moves in to the
+    // Bézier's midpoint (1 − 0.45/2), the edge midpoints stay put.
+    const rr = radius(4, 1, 0.9);
+    expect(at(rr, 0)).toBeCloseTo(1 - 0.45 / 2, 9);
+    expect(at(rr, 45)).toBeCloseTo(Math.SQRT1_2, 9);
+    // Rotation changes a traced waveform (the projection), not just its phase.
+    const rot = (r: number) => seedTable(req('polygon', { read: 1, sides: 5, rotation: r }, 1), 0).data;
+    expect(maxDiff(rot(0), rot(0.05))).toBeGreaterThan(0.01);
+    // Batch: a side per waveform; roundness / rotation sweeps.
+    const sides = seedBatch(req('polygon', {}, 4));
+    expect(sides.map((t) => t.recipe.params.preset)).toEqual(['polygon', 'polygon', 'polygon', 'polygon']);
+    expect(maxDiff(sides[0].data, sides[1].data)).toBeGreaterThan(0.01);
+    const roundSweep = seedBatch(req('polygon', { batch: 1, roundness: 0, roundnessEnd: 0.9 }, 3));
+    expect(peak(roundSweep[2].data)).toBeGreaterThan(0.5); // normalised, still audible near the circle
+    expect(maxDiff(roundSweep[0].data, roundSweep[2].data)).toBeGreaterThan(0.01);
+    const rotSweep = seedBatch(req('polygon', { batch: 2, read: 1, sides: 5, rotation: 0, rotationEnd: 0.1 }, 3));
+    expect(maxDiff(rotSweep[0].data, rotSweep[2].data)).toBeGreaterThan(0.01);
   });
 
   it('spline: jitter sweep moves the points; adding points keeps the earlier ones', () => {

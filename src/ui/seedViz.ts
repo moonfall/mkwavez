@@ -22,11 +22,15 @@ import {
   sequenceValues,
   splinePoints,
   splineRaw,
+  polygonAt,
+  polygonOutline,
+  polygonShape,
   StepCache,
   supersawLevel,
   supersawPhases,
   type Board,
   type LifeParams,
+  type PolygonParams,
   type RdParams,
   type RdState,
   type SequenceParams,
@@ -507,34 +511,45 @@ viz('blancmange', {
   },
 });
 
-// Polygon: the regular (n+3)-gon whose radius vs angle is the waveform.
+// Polygon: the outline the waveform reads (sides, star, roundness, rotation of the shown waveform).
 viz('polygon', {
-  axis: (i) => ['', `${i.index + 3}-gon: radius vs angle`, ''],
+  axis: (i) => {
+    const a = polygonAt(i.params as unknown as PolygonParams, i.index, i.count);
+    const { n, k } = polygonShape(a.sides, i.params.star);
+    return ['', `${k === 1 ? `${n}-gon` : `{${n}/${k}} star`} · ${Math.round(i.params.read) === 1 ? 'traced x' : 'radius vs angle'}`, ''];
+  },
   draw: (g, w, h, i, c) => {
-    const N = i.index + 3;
+    const a = polygonAt(i.params as unknown as PolygonParams, i.index, i.count);
+    const trace = Math.round(i.params.read) === 1;
     const R = Math.min(w, h) / 2 - 6;
     const cx = w / 2;
     const cy = h / 2;
+    const X = (x: number) => cx + R * x;
+    const Y = (y: number) => cy - R * y;
     g.strokeStyle = c.grid;
     g.lineWidth = 1;
     g.beginPath();
     g.arc(cx, cy, R, 0, TAU);
-    for (let k = 0; k < N; k++) {
-      g.moveTo(cx, cy);
-      g.lineTo(cx + R * Math.cos((TAU * k) / N), cy - R * Math.sin((TAU * k) / N));
-    }
+    g.moveTo(cx - R, cy);
+    g.lineTo(cx + R, cy);
     g.stroke();
+    const outlines = polygonOutline(a.sides, i.params.star, a.roundness, a.rotation);
     g.strokeStyle = c.accent;
     g.lineWidth = 1.8;
+    g.lineJoin = 'round';
     g.beginPath();
-    for (let k = 0; k <= N; k++) {
-      const x = cx + R * Math.cos((TAU * k) / N);
-      const y = cy - R * Math.sin((TAU * k) / N);
-      if (k) g.lineTo(x, y);
-      else g.moveTo(x, y);
-    }
+    for (const L of outlines) L.forEach(([x, y], j) => (j ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y))));
     g.stroke();
-    dot(g, cx + R, cy, 3, c.line);
+    // Where the cycle starts: angle 0 (radius) or the pen's first point (trace).
+    const [sx, sy] = trace ? outlines[0][0] : [1, 0];
+    if (!trace) {
+      g.strokeStyle = c.line;
+      g.beginPath();
+      g.moveTo(cx, cy);
+      g.lineTo(X(sx), Y(sy));
+      g.stroke();
+    }
+    dot(g, X(sx), Y(sy), 3, c.line);
   },
 });
 

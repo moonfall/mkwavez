@@ -13,6 +13,7 @@ import { glyphTable } from './glyph';
 import { DEFAULT_LIFE as LF, LIFE_READS, LIFE_RULES, lifeTable, type LifeParams } from './life';
 import { DEFAULT_RD as RD, RD_CUSTOM, RD_PRESETS, rdTable, type RdParams } from './reactionDiffusion';
 import { DEFAULT_SPLINE as SP, splineTable, type SplineParams } from './spline';
+import { DEFAULT_POLYGON as PG, POLYGON_BATCHES, POLYGON_READS, polygonTable, type PolygonParams } from './polygon';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
@@ -78,6 +79,28 @@ export const PARAM_MODES = [
     ],
     seeded: (p) => Math.round(num(p, 'phases')) === 0,
     render: (p, seed, index, count) => supersawTable(nums<SupersawParams>(p, SS), seed, index, count),
+  },
+  {
+    mode: 'polygon',
+    id: 'polygon',
+    cat: 'Geometry',
+    name: 'Polygon',
+    after: 'blancmange',
+    about:
+      'A regular polygon or star {n/k} (a step sharing a factor with n draws a compound, e.g. {6/2}), read as its radius ' +
+      'around the centre or traced at constant speed (the pen’s x; rotation matters there). Roundness rounds the corners.',
+    params: [
+      { key: 'read', label: 'Read', min: 0, max: 1, step: 1, value: PG.read, options: opts(POLYGON_READS) },
+      { key: 'sides', label: 'Sides', min: 3, max: 16, step: 1, value: PG.sides },
+      { key: 'star', label: 'Star step (1 = convex)', min: 1, max: 7, step: 1, value: PG.star },
+      { key: 'roundness', label: 'Roundness', min: 0, max: 0.95, step: 0.01, value: PG.roundness },
+      { key: 'rotation', label: 'Rotation (turns)', min: 0, max: 1, step: 0.01, value: PG.rotation },
+      { key: 'batch', label: 'Batch', min: 0, max: 2, step: 1, value: PG.batch, options: opts(POLYGON_BATCHES) },
+      { key: 'roundnessEnd', label: 'Batch → roundness', min: 0, max: 0.95, step: 0.01, value: PG.roundnessEnd },
+      { key: 'rotationEnd', label: 'Batch → rotation', min: 0, max: 1, step: 0.01, value: PG.rotationEnd },
+    ],
+    seeded: () => false,
+    render: (p, _seed, index, count) => polygonTable(nums<PolygonParams>(p, PG), index, count),
   },
   {
     mode: 'dynamical',

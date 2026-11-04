@@ -79,6 +79,13 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
       return pulseExpr(p.width, p.widthEnd);
     case 'supersaw':
       return `supersaw(p, ${lit(p.voices)}, ${lerpExpr(0, p.detune)}, ${lit(p.outer)}, ${lit(p.wave)}, ${lit(p.phases)})`;
+    case 'polygon': {
+      const b = Math.round(p.batch);
+      const sides = b === 0 ? stepExpr(Math.round(p.sides), 1) : lit(Math.round(p.sides));
+      const round = b === 1 ? lerpExpr(p.roundness, p.roundnessEnd) : lit(p.roundness);
+      const rot = b === 2 ? lerpExpr(p.rotation, p.rotationEnd) : lit(p.rotation);
+      return `polygon(p, ${sides}, ${lit(p.star)}, ${round}, ${rot}, ${lit(p.read)})`;
+    }
     case 'perlin': {
       const z = p.zDrift === 0 ? lit(p.z) : p.z === 0 ? `${lit(p.zDrift)}*u` : `${lit(p.z)}+${lit(p.zDrift)}*u`;
       return `perlin(p, ${lit(p.freq)}, ${z}, ${lit(p.octaves)}, ${lit(p.persistence)})`;
