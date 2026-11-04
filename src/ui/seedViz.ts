@@ -341,3 +341,16 @@ viz('shaped-pwm', {
     dot(g, (w - side) / 2 + s.x(th), (h - side) / 2 + s.y(0), 3, c.line);
   },
 });
+
+// Superformula: r(φ) = (|cos 1.5φ|^m + |sin 1.5φ|^m)^(−1/2), m = 2 + 6u, drawn in polar form.
+viz('superformula', {
+  axis: (i) => ['', `polar r(φ) · m = ${f2(2 + 6 * i.u)}`, ''],
+  draw: (g, w, h, i, c) => {
+    const m = 2 + 6 * i.u;
+    g.strokeStyle = c.grid;
+    g.beginPath();
+    g.arc(w / 2, h / 2, Math.min(w, h) / 2 - 5, 0, TAU);
+    g.stroke();
+    polar(g, w, h, (p) => Math.pow(Math.pow(Math.abs(Math.cos(1.5 * p)), m) + Math.pow(Math.abs(Math.sin(1.5 * p)), m), -0.5), c.accent);
+  },
+});
