@@ -86,10 +86,14 @@ switches (the choice is remembered).
 
 - **Generate → Seed**: pick from the library (basic waves; Supersaw, a detuned stack of
   1–15 saws, squares or triangles whose voices drift apart across the batch so the
-  wavetable beats like the stack; formula presets by category — several are starting
-  points in a parameter space instead of fixed formulas (the Shapers are Waveshaper
-  variants: curve, input, level, amount and bias, with batch sweeps), each reproducing
-  its original preset at its defaults; Polygon, a regular or star
+  wavetable beats like the stack; formula presets by category — many are starting
+  points in a focused parameter space instead of fixed formulas, each reproducing its
+  original preset at its defaults (at N = 8 where the preset stepped by n): Waveshaper
+  (the Shapers), Superformula, FM / PM (FM sweep, Nested FM, Cross PM), Phase distortion,
+  Resonance (the CZ resonances), Fractal sum (Weierstrass, Blancmange), Hard sync,
+  Harmonic series (Primes, Fibonacci, Pluck position, Schroeder phases) and Perlin noise
+  (Drift, Zoom, Add octaves, Roughen); the editor names the space and the old formula
+  is still searchable; Polygon, a regular or star
   polygon read as its radius or traced at constant speed, with rounded corners; Perlin
   noise, cellular automaton, simulations — dynamical systems, Karplus-Strong,
   reaction-diffusion, Life-like automata — and builders — additive designer, number
@@ -349,6 +353,7 @@ Seed tab, **ƒ Functions** in the legend opens this list.
 | `superformula(x, m, n1, n2, n3)` | Gielis superformula radius vs angle, (\|cos(mx/4)\|^n2 + \|sin(mx/4)\|^n3)^(−1/n1) (Superformula) |
 | `fractal(x, base, ratio, terms, decay)` | Σ decay^k · f(ratio^k · x), k < terms: base 0 cosine (Weierstrass) · 1 triangle (Takagi / blancmange) · 2 sine · 3 square (Fractal sum: Weierstrass, Blancmange) |
 | `sync(x, wave, ratio)` | hard sync: a slave 0 sine · 1 triangle · 2 saw · 3 square at `ratio` × the cycle, restarted every cycle (Hard sync: Sync sweep) |
+| `series(x, set, highest, rolloff, phases, pluck)` | harmonics 0 all · 1 odd · 2 primes (+ fundamental) · 3 Fibonacci · 4 squares up to `highest`, at k^−rolloff, times sin(π·k·pluck) when `pluck` > 0; phases 0 sine · 1 Schroeder (Harmonic series: Primes, Fibonacci, Pluck position, Schroeder phases) |
 | `perlin(x, freq, z, oct, pers, seed?)` | loop-seamless Perlin noise (Perlin noise: z = start + drift·u, frequency / octaves / persistence from start to their batch ends; Drift, Zoom, Add octaves and Roughen are its starting points) |
 | `ca(x, rule, cells, gen, seed?)` | generation `gen` of an elementary cellular automaton as ±1 steps (Cellular automaton: gen = start + n) |
 | `dyn(x, map, control, iters, spread, output)` | chaotic map 0 logistic · 1 sine · 2 circle · 3 Hénon · 4 tent; control 0 … 1; output 0 linear / 1 soft clip (Dynamical systems) |

@@ -32,6 +32,9 @@ import {
   resonanceRatio,
   resonanceWindow,
   SEQ_SOURCES,
+  seriesAmp,
+  seriesAt,
+  seriesHarmonics,
   sequenceValues,
   splinePoints,
   splineRaw,
@@ -61,6 +64,7 @@ import {
   type RdState,
   type ResonanceParams,
   type SequenceParams,
+  type SeriesParams,
   type SplineParams,
   type SuperformulaParams,
   type SyncParams,
@@ -478,25 +482,46 @@ viz('mode:sync', {
   },
 });
 
-// Pluck position: a string pulled into a triangle at x = 0.05 + 0.45u of its length.
-viz('pluck-position', {
-  axis: (i) => ['nut', `plucked at ${f2(0.05 + 0.45 * i.u)}`, 'bridge'],
+// Harmonic series (Primes, Fibonacci, Pluck position, Schroeder phases, …): a stem per harmonic at
+// its amplitude (muted where the pluck weighting turns it negative), the plucked string above when
+// a pluck position is set.
+viz('mode:series', {
+  axis: (i) => {
+    const a = seriesAt(i.params as unknown as SeriesParams, i.index, i.count);
+    const pl = a.pluck > 0 ? ` · plucked at ${f2(a.pluck)}` : '';
+    return ['h1', `k^−${f2(a.rolloff)}${pl}`, `h${Math.round(i.params.highest)}`];
+  },
   draw: (g, w, h, i, c) => {
-    const x = 0.05 + 0.45 * i.u;
-    const s = scale(w, h, 0, 1, -0.4, 1.1, 10);
-    rules(g, s, w, h, [], [0], c.grid, [3, 3]);
-    g.strokeStyle = c.accent;
-    g.lineWidth = 1.8;
-    g.beginPath();
-    g.moveTo(s.x(0), s.y(0));
-    g.lineTo(s.x(x), s.y(0.8));
-    g.lineTo(s.x(1), s.y(0));
-    g.stroke();
-    for (const e of [0, 1]) {
-      g.fillStyle = c.line;
-      g.fillRect(s.x(e) - 1.5, s.y(0) - 7, 3, 14);
+    const p = i.params;
+    const a = seriesAt(p as unknown as SeriesParams, i.index, i.count);
+    const ks = seriesHarmonics(p.set, p.highest);
+    const H = Math.max(1, Math.round(p.highest));
+    const top = a.pluck > 0 ? Math.min(28, h * 0.3) : 0;
+    if (top) {
+      const sx = (x: number) => 6 + x * (w - 12);
+      g.strokeStyle = c.line;
+      g.lineWidth = 1.4;
+      g.beginPath();
+      g.moveTo(sx(0), top - 4);
+      g.lineTo(sx(a.pluck), 4);
+      g.lineTo(sx(1), top - 4);
+      g.stroke();
+      dot(g, sx(a.pluck), 4, 2.5, c.line);
     }
-    dot(g, s.x(x), s.y(0.8), 3.5, c.line);
+    const amps = ks.map((k) => seriesAmp(k, a.rolloff, a.pluck));
+    const m = Math.max(1e-9, ...amps.map(Math.abs));
+    const s = scale(w, h - top, 0.5, H + 0.5, 0, 1.05);
+    g.save();
+    g.translate(0, top);
+    g.lineWidth = Math.max(1, Math.min(3, (w / H) * 0.5));
+    ks.forEach((k, j) => {
+      g.strokeStyle = amps[j] < 0 ? c.muted : c.accent;
+      g.beginPath();
+      g.moveTo(s.x(k), s.y(0));
+      g.lineTo(s.x(k), s.y(Math.abs(amps[j]) / m));
+      g.stroke();
+    });
+    g.restore();
   },
 });
 

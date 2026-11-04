@@ -100,6 +100,8 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
       return `fractal(p, ${lit(p.base)}, ${lit(p.ratio)}, ${lit(p.terms)}, ${lerpExpr(p.decay, p.decayEnd)})`;
     case 'sync':
       return `sync(p, ${lit(p.wave)}, ${lerpExpr(p.ratio, p.ratioEnd)})`;
+    case 'series':
+      return `series(p, ${lit(p.set)}, ${lit(p.highest)}, ${lerpExpr(p.rolloff, p.rolloffEnd)}, ${lit(p.phases)}, ${lerpExpr(p.pluck, p.pluckEnd)})`;
     case 'perlin': {
       const z = p.zDrift === 0 ? lit(p.z) : p.z === 0 ? `${lit(p.zDrift)}*u` : `${lit(p.z)}+${lit(p.zDrift)}*u`;
       const end = (k: string) => p[k] ?? p[k.replace('End', '')];

@@ -21,6 +21,7 @@ import { DEFAULT_RESONANCE as RSD, RESONANCE_WINDOWS, resonanceTable, type Reson
 import { DEFAULT_SUPERFORMULA as SFD, superformulaTable, type SuperformulaParams } from './superformula';
 import { DEFAULT_FRACTAL as FRD, FRACTAL_BASES, fractalTable, type FractalParams } from './fractal';
 import { DEFAULT_SYNC as SYD, SYNC_WAVES, syncTable, type SyncParams } from './sync';
+import { DEFAULT_SERIES as SRD, SERIES_PHASES, SERIES_SETS, seriesTable, type SeriesParams } from './series';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
@@ -83,6 +84,32 @@ function nums<T extends object>(p: ModeParams, defaults: T): T {
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
 export const PARAM_MODES = [
+  {
+    mode: 'series',
+    id: 'harmonic-series',
+    cat: 'Spectral',
+    name: 'Harmonic series',
+    about:
+      'A set of harmonics up to the highest at amplitudes k^−rolloff, optionally weighted by a pluck position (a string ' +
+      'plucked there) and with Schroeder phases (low crest factor). The batch sweeps the rolloff and the pluck position.',
+    params: [
+      { key: 'set', label: 'Harmonics', min: 0, max: SERIES_SETS.length - 1, step: 1, value: SRD.set, options: opts(SERIES_SETS) },
+      { key: 'highest', label: 'Highest harmonic', min: 1, max: 72, step: 1, value: SRD.highest },
+      { key: 'rolloff', label: 'Rolloff k^−r', min: 0, max: 3, step: 0.05, value: SRD.rolloff },
+      { key: 'rolloffEnd', label: 'Batch → rolloff', min: 0, max: 3, step: 0.05, value: SRD.rolloffEnd },
+      { key: 'phases', label: 'Phases', min: 0, max: SERIES_PHASES.length - 1, step: 1, value: SRD.phases, options: opts(SERIES_PHASES) },
+      { key: 'pluck', label: 'Pluck position (0 = off)', min: 0, max: 0.5, step: 0.01, value: SRD.pluck },
+      { key: 'pluckEnd', label: 'Batch → pluck', min: 0, max: 0.5, step: 0.01, value: SRD.pluckEnd },
+    ],
+    variants: [
+      { id: 'primes', values: {} },
+      { id: 'fibonacci', values: { set: 3, highest: 55, rolloff: 1, rolloffEnd: 0.5 } },
+      { id: 'pluck-position', values: { set: 0, highest: 40, rolloff: 2, rolloffEnd: 2, pluck: 0.05, pluckEnd: 0.5 } },
+      { id: 'schroeder-phases', values: { set: 0, highest: 24, rolloff: 0.5, rolloffEnd: 1.5, phases: 1 } },
+    ],
+    seeded: () => false,
+    render: (p, _seed, index, count) => seriesTable(nums<SeriesParams>(p, SRD), index, count),
+  },
   {
     mode: 'sync',
     id: 'hard-sync',
