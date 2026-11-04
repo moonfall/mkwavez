@@ -574,3 +574,17 @@ viz('vowel-formants', {
     plot(g, s, env, 1, 40, c.accent, 1.6, 400);
   },
 });
+
+// CZ resonance: a resonant sine sin(r·p), r = 2 + 10u, under a window.
+const czResonance = (g: CanvasRenderingContext2D, w: number, h: number, i: VizInput, c: VizColors, win: (p: number) => number) => {
+  const r = 2 + 10 * i.u;
+  const s = scale(w, h, 0, TAU, -1.1, 1.1);
+  rules(g, s, w, h, [], [0], c.grid);
+  plot(g, s, (p) => Math.sin(r * p), 0, TAU, c.muted, 1, 600);
+  plot(g, s, win, 0, TAU, c.accent, 1.8, 300);
+  plot(g, s, (p) => -win(p), 0, TAU, c.accent, 1, 300, [3, 3]);
+};
+viz('cz-resonance-sine-window', {
+  axis: (i) => ['0', `0.5 − 0.5 cos p × sin(${(2 + 10 * i.u).toFixed(1)}·p)`, '2π'],
+  draw: (g, w, h, i, c) => czResonance(g, w, h, i, c, (p) => 0.5 - 0.5 * Math.cos(p)),
+});
