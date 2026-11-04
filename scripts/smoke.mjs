@@ -2257,6 +2257,12 @@ async function shapeChecks(page, tlCount) {
   assert(again.toFixed(9) === added[3].sum.toFixed(9), 'Add shown re-adds card 4 bit-for-bit');
   await page.click('#shape-sweep');
   assert(!(await page.isVisible('#shape-add-batch')) && (await page.textContent('#shape-add-shown')).trim() === 'Add', 'without a sweep: one result, Add');
+  // Shift-click: every step's sweep on, then off (one undo step each).
+  u = await undoDepth();
+  await page.click('#shape-sweep', { modifiers: ['Shift'] });
+  assert((await chain()).steps.every((s) => s.amountEnd !== undefined) && (await undoDepth()) === u + 1, 'Shift+Sweep turns sweep on for every step (one undo step)');
+  await page.click('#shape-sweep', { modifiers: ['Shift'] });
+  assert((await chain()).steps.every((s) => s.amountEnd === undefined), 'Shift+Sweep again turns it off everywhere');
 
   // Add, move, duplicate and delete steps.
   await page.click('#shape-add');

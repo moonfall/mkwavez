@@ -520,7 +520,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const endInput = h('input', { type: 'range', id: 'shape-amount-end', min: 0, max: 1, step: 0.01, 'aria-label': 'Amount at the end of the batch' });
   const endVal = h('span', { class: 'mut-amount-val', id: 'shape-amount-end-val' });
   const endBox = h('span', { class: 'shape-end', title: 'Amount at the last waveform of the batch' }, '→', endInput, endVal);
-  const sweepBtn = h('button', { id: 'shape-sweep', class: 'small shape-sweep', title: 'Sweep this step’s amount across the batch (N different results)' }, '↦ Sweep');
+  const sweepBtn = h('button', { id: 'shape-sweep', class: 'small shape-sweep', title: 'Sweep this step’s amount across the batch (N different results). Shift-click: every step.' }, '↦ Sweep');
   const stepMenuBtn = h('button', { id: 'shape-step-menu', class: 'small icon-btn', 'aria-label': 'Step actions', title: 'Move, duplicate or remove the step' }, '⋯');
   amountInput.addEventListener('input', () => {
     const s = sel();
@@ -531,14 +531,22 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     if (s) updateStep(s.id, (x) => ({ ...x, amountEnd: Number(endInput.value) }), `amountEnd:${s.id}`);
   });
   for (const i of [amountInput, endInput]) i.addEventListener('change', () => model.endGesture());
-  sweepBtn.addEventListener('click', () => {
+  /** A step with its sweep on (0 → its amount, or 1 if it was at 0) or off (at its end amount); unchanged if already so. */
+  const withSweep = (x: Step, on: boolean): Step => {
+    if (on === (x.amountEnd !== undefined)) return x;
+    if (on) return { ...x, amount: 0, amountEnd: x.amount || 1 };
+    const { amountEnd, ...rest } = x;
+    return { ...rest, amount: amountEnd } as Step;
+  };
+  // Shift-click: every step of the chain follows the selected step's new state (one undo step).
+  sweepBtn.addEventListener('click', (e) => {
     const s = sel();
     if (!s) return;
-    if (s.amountEnd === undefined) updateStep(s.id, (x) => ({ ...x, amount: 0, amountEnd: x.amount || 1 }));
-    else updateStep(s.id, (x) => {
-      const { amountEnd, ...rest } = x;
-      return { ...rest, amount: amountEnd } as Step;
-    });
+    const on = s.amountEnd === undefined;
+    if (e.shiftKey) {
+      setChain((c) => ({ ...c, steps: c.steps.map((x) => withSweep(x, on)) }));
+      flash(on ? 'Sweep on for every step' : 'Sweep off for every step');
+    } else updateStep(s.id, (x) => withSweep(x, on));
   });
   popupMenu('shape-step-actions', stepMenuBtn, () => {
     const s = sel();
