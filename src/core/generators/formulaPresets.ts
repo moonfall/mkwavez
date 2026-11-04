@@ -5,7 +5,8 @@
  * Retuned presets (stored recipes keep their own expression, so they re-render as made):
  * Chebyshev sweeps odd orders (even Tₖ of a sine has even harmonics only: an octave up),
  * Superformula reads the shape off-centre (its 6-fold symmetry otherwise sounds 31
- * semitones up), Logistic map starts asymmetrically (its symmetry about ½ otherwise
+ * semitones up) and sweeps n2 = n3 from 3 (at 2 the shape is a circle: silent from the
+ * centre), Logistic map starts asymmetrically (its symmetry about ½ otherwise
  * leaves even harmonics only).
  */
 export interface FormulaPreset {
@@ -26,7 +27,7 @@ export const FORMULA_PRESETS: readonly FormulaPreset[] = [
   {
     group: 'Shapers',
     name: 'Superformula',
-    expr: 'superformula(p, 6, 2, 2+(8-2)*u, 2+(8-2)*u, 0.25)',
+    expr: 'superformula(p, 6, 2, 3+(8-3)*u, 3+(8-3)*u, 0.25)',
   },
   { group: 'Shapers', name: 'Superellipse', expr: 'sign(sin(p))*pow(abs(sin(p)),0.05+0.95*u)' },
   { group: 'Shapers', name: 'Shaped PWM', expr: 'tanh((3+20*u)*(sin(p)-0.8+1.6*u))' },

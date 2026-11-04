@@ -60,6 +60,23 @@ describe('Seed library', () => {
     }
   });
 
+  it('no waveform of any default batch is silent (N = 8, a few seeds)', () => {
+    for (const entry of SEED_LIBRARY)
+      for (const seed of [24301, 1, 0xdeadbeef]) {
+        const r = req(entry, { seed, count: 8 });
+        seedBatch(r, fnFor(r)).forEach((t, i) => expect(Math.max(...Array.from(t.data, Math.abs)), `${entry.id} seed ${seed} #${i}`).toBeGreaterThan(0.5));
+      }
+  });
+
+  it('Superformula read from the centre: the default sweep never passes the circle (n2 = n3 = 2, silent)', () => {
+    const e = seedEntry('superformula')!;
+    const r = req(e, { count: 8, params: { offset: 0 } });
+    for (const t of seedBatch(r)) expect(Math.max(...Array.from(t.data, Math.abs))).toBeGreaterThan(0.5);
+    // The circle itself is silent from the centre (why the sweep starts at 3).
+    const [circle] = seedBatch(req(e, { count: 1, params: { offset: 0, n2: 2, n2End: 2, n3: 2, n3End: 2 } }));
+    expect(Math.max(...Array.from(circle.data, Math.abs))).toBe(0);
+  });
+
   it('edited formulas and changed params are recorded and re-render', () => {
     const harm = seedEntry('harmonics')!;
     const r = req(harm, { expr: 'sin((n+2)*p)*0.9', count: 4 });

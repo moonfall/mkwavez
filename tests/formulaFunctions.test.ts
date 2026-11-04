@@ -280,7 +280,7 @@ describe('parameter modes as functions (Part 2)', () => {
     expect(f('fm-sweep')).toBe('fm(p, 1, 2, 4*u, 3, 0, 0)');
     expect(f('cz-phase-dist')).toBe('pd(p, 0, 1*u)');
     expect(f('cz-resonance-saw-window')).toBe('resonance(p, 1, 2+(12-2)*u)');
-    expect(f('superformula')).toBe('superformula(p, 6, 2, 2+(8-2)*u, 2+(8-2)*u, 0.25)');
+    expect(f('superformula')).toBe('superformula(p, 6, 2, 3+(8-3)*u, 3+(8-3)*u, 0.25)');
     expect(f('blancmange')).toBe('fractal(p, 1, 2, 6, 0.4+(0.8-0.4)*u)');
     expect(f('sync-sweep')).toBe('sync(p, 0, 1+(4-1)*u)');
     expect(f('zoom')).toBe('perlin(p, 1+(6-1)*u, 0, 4, 0.5)');

@@ -26,7 +26,8 @@ export interface SuperformulaParams {
   offset: number;
 }
 
-export const DEFAULT_SUPERFORMULA: SuperformulaParams = { m: 6, n1: 2, n2: 2, n2End: 8, n3: 2, n3End: 8, offset: 0.25 };
+/** n2 = n3 = 2 (with n1 = 2) is a circle — silent from the centre — so the default sweep starts at 3. */
+export const DEFAULT_SUPERFORMULA: SuperformulaParams = { m: 6, n1: 2, n2: 3, n2End: 8, n3: 3, n3End: 8, offset: 0.25 };
 
 /** Largest reading-point offset (a fraction of the inner radius: the point stays inside). */
 export const SUPERFORMULA_MAX_OFFSET = 0.9;
