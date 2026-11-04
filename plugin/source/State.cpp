@@ -38,6 +38,9 @@ juce::ValueTree toValueTree(const Document& doc) {
 
     juce::ValueTree tables(TABLES);
     for (const auto& t : doc.tables) {
+        // Generate's unadded waveforms are never saved (as in the web app: a restore leaves
+        // the Preview wavetables' slots empty until the editor shows a preview again).
+        if (isPreviewId(t.id)) continue;
         juce::ValueTree n(TABLE);
         n.setProperty(id, t.id, nullptr);
         n.setProperty(data, block(t.data.data(), t.data.size()), nullptr);

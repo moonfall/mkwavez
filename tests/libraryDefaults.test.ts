@@ -154,10 +154,14 @@ const stringify = (fx: Record<string, EntryFixture>) =>
     .join(',\n') +
   '\n}\n';
 
+// Renders every library entry's batches: ~4.5 s / ~2.5 s on a fast machine, so the 5 s
+// default is too tight once the other test files run alongside on a CI runner.
+const RENDER_ALL_MS = 60_000;
+
 describe('library defaults (pinned to main, within 2^-20)', () => {
   it("every library entry's default batches are unchanged", async () => {
     await expect(stringify(snapshot())).toMatchFileSnapshot('./fixtures/libraryDefaults.json');
-  });
+  }, RENDER_ALL_MS);
 
   it('the stored recipes re-render to the stored hashes', () => {
     const fixture = JSON.parse(fixtureText) as Record<string, EntryFixture>;
@@ -170,5 +174,5 @@ describe('library defaults (pinned to main, within 2^-20)', () => {
       expect(recipes.length, k).toBe(want.length);
       recipes.forEach((r, i) => expect(hashTable(renderRecipe(r, { compileFormula })), `${k} #${i}`).toBe(want[i]));
     }
-  });
+  }, RENDER_ALL_MS);
 });

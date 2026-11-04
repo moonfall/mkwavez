@@ -29,7 +29,8 @@ import { shape } from '../src/core/shape';
 import { DEFAULT_VOICE, modulatedPosition, type VoiceParams } from '../src/core/voice';
 import { DEFAULT_SYNTH, FILTER_MODES, NOISE_TYPES, PITCH_TARGETS, SUB_WAVES, type SynthParams } from '../src/core/synth';
 import { LFO_DIVS, LFO_SHAPES, MOD_DESTS, MOD_SOURCES, type LfoParams, type ModSlot } from '../src/core/modulation';
-import type { WavetableShape } from '../src/core/wavetable';
+import { PREVIEW_ID_BASE, type WavetableShape } from '../src/core/wavetable';
+import { TIMELINE_CAP } from '../src/core/constants';
 import { Mix, resolveMix, type PackedWavetable } from '../src/core/wavetablePlayback';
 
 const FILE = '../plugin/core/tests/golden/core.golden.txt';
@@ -73,6 +74,7 @@ function shapeInput(kind: number): Float64Array {
 
 function shapeCases() {
   for (let k = 0; k < 4; k++) record('array', `shape.${k}`, shape(shapeInput(k)), 9);
+  record('array', 'constants', [N, TIMELINE_CAP, PREVIEW_ID_BASE]);
   record('array', 'shape.1.lp12', shape(shapeInput(1), { lowpassHarmonic: 12 }), 9);
   record('array', 'shape.0.k20', shape(shapeInput(0), { kmax: 20 }), 9);
   WAVES.forEach((w, i) => record('array', `basic.${i}`, basicWave(w, 0), 9));

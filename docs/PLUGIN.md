@@ -119,6 +119,10 @@ src/plugin/host.ts          plugin mode: PluginSessionStore (the session backend
   re-sends no tables), and autosave writes changes back (250 ms debounce, since the editor
   can close at any time). A state load by the host while the editor is open reloads the
   page. Session → Export / Import (.mkwz) is shared with the browser build.
+- **Preview tables.** Generate's unadded waveforms (ids from `PREVIEW_ID_BASE` = 2^30)
+  reach the engine only while a voice plays the Preview / Preview batch wavetable, as in
+  the browser, and are left out of the saved state (`state::toValueTree`): after a restore
+  those slots stay silent until the editor shows a preview again.
 - **Host integration.** Voice slots V1–V4 (voice ids 1–4) expose 13 automatable
   parameters each; the page's voice edits set them, and automation flows back to the
   page's model (polled at 30 Hz, so nothing touches the web view from the audio thread).
@@ -177,7 +181,9 @@ addressing table map) instead of Maps.
   parameter reaches the page's model and saved project; the saved state restores in a new
   instance (same timeline, voice parameters, no tables re-sent) and an add there is saved
   again; a MIDI note sounds; a voice switched to Synth in the page plays in stereo in the
-  native engine, is saved, and plays after a restore before the editor opens; the in-page
+  native engine, is saved, and plays after a restore before the editor opens; a voice on
+  Preview batch plays Generate's unadded batch, which leaves the engine on undo and isn't
+  saved; the in-page
   prompt / confirm answer correctly; Session → Export writes a `.mkwz` through the native
   save path and Session → Import reads it back through the native open path (the test
   bypasses the dialogs with `MKWAVEZ_TEST_SAVE_DIR` / `MKWAVEZ_TEST_OPEN_FILE`).

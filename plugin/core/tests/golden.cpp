@@ -122,6 +122,11 @@ TEST("golden: prng and deriveSeed are bit-exact") {
     }
 }
 
+TEST("golden: shared constants") {
+    const char* kind_ = "array";
+    CHECK_SEQ(std::vector<double>({(double) TABLE_SIZE, (double) TIMELINE_CAP, (double) PREVIEW_ID_BASE}), "constants", 0.0);
+}
+
 TEST("golden: shape, basic waves and mip sets") {
     const char* kind_ = "array";
     (void) WAVES;

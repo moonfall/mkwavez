@@ -9,6 +9,7 @@
 //  5. the engine plays the result (a MIDI note sounds).
 // Usage: xvfb-run -a mkwavez_web_test
 #include "../source/PluginProcessor.h"
+#include "../source/State.h"
 #include "../source/WebEditor.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -148,8 +149,9 @@ int main(int argc, const char* argv[]) {
 
         // 1. The page connects and syncs its start state.
         waitFor([&] { return a.web()->link().connected() && metaOf(*a.proc).isNotEmpty(); }, 30000, "page connected and autosaved its session");
-        waitFor([&] { a.render(2); return a.doc([](const auto& d) { return d.wavetables.size() == 4 && d.voices.size() == 3; }); }, 10000,
-                "native document has the page's 4 built-in wavetables and 3 voices");
+        // Timeline, Last batch, Batches, Grid, Selection, Preview, Preview batch.
+        waitFor([&] { a.render(2); return a.doc([](const auto& d) { return d.wavetables.size() == 7 && d.voices.size() == 3; }); }, 10000,
+                "native document has the page's 7 built-in wavetables and 3 voices");
         check(a.doc([](const auto& d) { return (int) d.tables.size(); }) == 5, "5 start tables");
         check(a.doc([](const auto& d) { return (int) d.sequences.size(); }) == 3, "3 sequences");
         const auto meta = juce::JSON::parse(metaOf(*a.proc));
@@ -202,6 +204,38 @@ int main(int argc, const char* argv[]) {
             if (b == 0) m.addEvent(juce::MidiMessage::allNotesOff(1), 0);
         });
         waitFor([&] { a.render(1); return metaOf(*a.proc).contains("\"type\":\"synth\""); }, 10000, "the Synth voice is in the saved session");
+
+        // 6b. A voice on Preview batch plays Generate's unadded waveforms: the page ships them
+        //     (ids from PREVIEW_ID_BASE) only while a voice plays them, and they're never saved.
+        const auto previewTables = [&] {
+            return a.doc([](const auto& d) {
+                int n = 0;
+                for (const auto& t : d.tables) n += mkwavez::isPreviewId(t.id) ? 1 : 0;
+                return n;
+            });
+        };
+        check(previewTables() == 0, "no preview tables in the engine while no voice plays them");
+        a.web()->evaluate("mkwavez.model.updateVoice(1, { wavetableId: 6 })");
+        waitFor([&] {
+            a.render(1);
+            return previewTables() > 0 && a.doc([](const auto& d) { return !d.voices.empty() && d.voices[0].wavetableId == 6; });
+        }, 10000, "V1 on Preview batch: the page ships Generate's preview tables to the engine");
+        std::printf("     preview tables in the engine: %d\n", previewTables());
+        const double previewRms = a.render(40, [](int b, juce::MidiBuffer& m) {
+            if (b == 0) m.addEvent(juce::MidiMessage::noteOn(1, 52, (juce::uint8) 110), 0);
+        });
+        check(previewRms > 0.005, "the unadded batch sounds (rms " + juce::String(previewRms, 4) + ")");
+        a.render(40, [](int b, juce::MidiBuffer& m) {
+            if (b == 0) m.addEvent(juce::MidiMessage::allNotesOff(1), 0);
+        });
+        const auto savedTree = a.doc([](const auto& d) { return state::toValueTree(d); });
+        const int engineTables = a.doc([](const auto& d) { return (int) d.tables.size(); });
+        check(savedTree.getChildWithName("tables").getNumChildren() == engineTables - previewTables(), "preview tables are left out of the saved state");
+        a.web()->evaluate("mkwavez.model.undo()");
+        waitFor([&] {
+            a.render(1);
+            return previewTables() == 0 && a.doc([](const auto& d) { return !d.voices.empty() && d.voices[0].wavetableId != 6; });
+        }, 10000, "undo puts V1 back, and the preview tables leave the engine");
 
         // 7. Browser features the plugin replaces: in-page confirm / prompt (embedded web views
         //    don't all have them), native save (session export) and open (session import).

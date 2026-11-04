@@ -17,6 +17,14 @@ inline constexpr int KMAX = 72;
 inline constexpr int TIMELINE_CAP = 4096;
 
 /**
+ * First id of a preview table (src/core/wavetable.ts PREVIEW_ID_BASE): a waveform the web
+ * app's Generate tab shows but hasn't added. The page ships them to the engine only while a
+ * voice plays the Preview / Preview batch wavetable; they're never saved.
+ */
+inline constexpr int PREVIEW_ID_BASE = 1 << 30;
+inline constexpr bool isPreviewId(int id) { return id >= PREVIEW_ID_BASE; }
+
+/**
  * Per-octave mip levels. Level l keeps harmonics 1..MIP_HARMONICS[l], stored with
  * MIP_LENGTHS[l] samples; level 0 is the full shaped table. All levels of one table are
  * packed in one buffer of MIP_TOTAL floats.
