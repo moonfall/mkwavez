@@ -661,3 +661,8 @@ viz('add-octaves', {
   axis: (i) => ['', `circle r 2 · ${i.index + 1} octave${i.index ? 's' : ''}`, ''],
   draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, 2, 0, 1 + i.index, 0.6),
 });
+
+viz('roughen', {
+  axis: (i) => ['', `circle r 3 · persistence ${f2(0.3 + 0.5 * i.u)}`, ''],
+  draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, 3, i.u, 6, 0.3 + 0.5 * i.u),
+});
