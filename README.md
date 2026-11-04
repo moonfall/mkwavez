@@ -1,12 +1,13 @@
 # mkwavez
 
-An evolving wavetable synth: single-cycle waveforms are continually generated (later:
-mutated, bred, sampled) onto a growing timeline, and each voice plays a movable window
-over a wavetable built from it. This browser build is the development testbed; the
+An evolving wavetable synth: single-cycle waveforms are continually generated, mutated,
+bred and reshaped (sampling later) onto a growing timeline, and each voice plays a movable
+window over a wavetable built from it. This browser build is the development testbed; the
 `src/core/` DSP/data code is written to port to a plugin (JUCE/C++) and hardware.
 
-See `docs/prototype-handoff.md` (original spec + prototype), `docs/ARCHITECTURE.md`
-and `docs/ROADMAP.md`. The plugin (VST3 / AU / CLAP / LV2 / Standalone, JUCE) lives in
+**Start with `docs/OVERVIEW.md`** for what it does and what makes it different. See
+`docs/prototype-handoff.md` (original spec + prototype), `docs/ARCHITECTURE.md` and
+`docs/ROADMAP.md`. The plugin (VST3 / AU / CLAP / LV2 / Standalone, JUCE) lives in
 `plugin/`: a native C++ engine with this web app as its editor, embedded in the system
 web view; see `docs/PLUGIN.md`.
 
