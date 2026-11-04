@@ -588,3 +588,8 @@ viz('cz-resonance-sine-window', {
   axis: (i) => ['0', `0.5 − 0.5 cos p × sin(${(2 + 10 * i.u).toFixed(1)}·p)`, '2π'],
   draw: (g, w, h, i, c) => czResonance(g, w, h, i, c, (p) => 0.5 - 0.5 * Math.cos(p)),
 });
+
+viz('cz-resonance-saw-window', {
+  axis: (i) => ['0', `(1 − t) × sin(${(2 + 10 * i.u).toFixed(1)}·p)`, '2π'],
+  draw: (g, w, h, i, c) => czResonance(g, w, h, i, c, (p) => 1 - p / TAU),
+});
