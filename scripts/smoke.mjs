@@ -371,6 +371,8 @@ async function sampleChecks(page, tlCount) {
   await page.click('#smp-mode-2');
   await page.uncheck('#smp-make-wt');
   await page.waitForFunction(() => document.querySelectorAll('#smp-strip .gen-card').length === 12, null, { timeout: 5000 });
+  // The strip had 12 cards in Series mode too: let the new mode's batch be made first.
+  await page.waitForTimeout(500);
   const wts1 = await M(() => window.mkwavez.model.wavetables.length);
   const n1 = await tlCount();
   await page.click('#smp-add-batch');
@@ -699,6 +701,8 @@ async function seedChecks(page, tlCount) {
         })
         .join(' '),
     );
+  // Let the preview draw first (the basis plot appears with it), so only the edit is measured.
+  await page.waitForTimeout(300);
   const layout0 = await seedLayout();
   await page.selectOption('#seed-param-rule', '110');
   await page.fill('#seed-param-start', '5');
