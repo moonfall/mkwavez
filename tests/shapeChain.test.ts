@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { KMAX, TABLE_SIZE } from '../src/core/constants';
-import { drawingSpan, drawingValue, drawingWeight, MAX_DRAW_POINTS, normalizeDrawing, resampleStroke, type Drawing } from '../src/core/drawing';
+import { drawingSpan, drawingValue, drawingWeight, lerpDrawing, MAX_DRAW_POINTS, normalizeDrawing, resampleStroke, type Drawing } from '../src/core/drawing';
 import { basicWave, generateBasic, renderRecipe } from '../src/core/generators';
 import { mutate } from '../src/core/mutations';
 import { shape } from '../src/core/shape';
@@ -259,5 +259,45 @@ describe('chains', () => {
     const shaped = { ...src.recipe, shape: chainJson(c) };
     expect(same(renderRecipe(shaped), applyChain(src.data, c))).toBe(true);
     expect(describeRecipe(shaped)).toBe('saw · shaped: Test');
+  });
+});
+
+describe('drawing sweeps (start → end drawing)', () => {
+  it('lerpDrawing: ends are the drawings; lines stay lines; points travel along their spans', () => {
+    const a: Drawing = { tool: 'line', pts: [[0, 0.2], [0.5, 0.2]] };
+    const b: Drawing = { tool: 'line', pts: [[0.5, 0.8], [1, 0.4]] };
+    expect(lerpDrawing(a, b, 0)).toBe(a);
+    expect(lerpDrawing(a, b, 1)).toBe(b);
+    const m = lerpDrawing(a, b, 0.5);
+    expect(m.tool).toBe('line');
+    expect(m.pts[0][0]).toBeCloseTo(0.25, 12);
+    expect(m.pts[0][1]).toBeCloseTo(0.5, 12);
+    expect(m.pts[1][1]).toBeCloseTo(0.3, 12);
+    const c: Drawing = { tool: 'curve', pts: [[0, 0], [0.5, 1], [1, 0]] };
+    const half = lerpDrawing(c, b, 0.5);
+    expect(half.tool).toBe('free');
+    expect(drawingSpan(half)![0]).toBeCloseTo(0.25, 12);
+    expect(drawingValue(half, 0.25)).toBeCloseTo(0.4, 6); // (0 + 0.8) / 2 at the start of both spans
+  });
+
+  it('a step with an end drawing sweeps: first waveform = start drawing, last = end drawing; normalised and replayable', () => {
+    const start: Drawing = { tool: 'line', pts: [[0, 0.9], [1, 0.9]] };
+    const endD: Drawing = { tool: 'line', pts: [[0, 0.2], [1, 0.2]] };
+    const c = chain([{ ...newStep('clip', 'c'), draw: start, drawEnd: endD }]);
+    expect(c.steps[0].drawEnd).toEqual(endD);
+    expect(chainSweeps(c)).toBe(true);
+    const at = (d: Drawing) => applyChain(saw, chain([{ ...newStep('clip', 'c'), draw: d }]));
+    expect(same(applyChain(saw, c, { index: 0, count: 5 }), at(start))).toBe(true);
+    expect(same(applyChain(saw, c, { index: 4, count: 5 }), at(endD))).toBe(true);
+    const mid = applyChain(saw, c, { index: 2, count: 5 });
+    expect(maxDiff(mid, at(start))).toBeGreaterThan(1e-3);
+    expect(maxDiff(mid, at(endD))).toBeGreaterThan(1e-3);
+    expect(chainSweeps(chain([{ ...newStep('clip', 'c'), draw: start, drawEnd: start }]))).toBe(false);
+    expect(normalizeChain(c)).toEqual(c);
+    const r = shapeRecipe(5, c, { index: 3, count: 5 });
+    expect(same(renderRecipe(r, { resolveTable: () => saw }), applyChain(saw, c, { index: 3, count: 5 }))).toBe(true);
+    // Limit to curve too.
+    const lim = chain([{ ...newStep('harmLimit', 'l'), draw: { tool: 'line', pts: [[0, -6], [1, -6]] }, drawEnd: { tool: 'line', pts: [[0, -40], [1, -40]] } }]);
+    expect(maxDiff(applyChain(saw, lim, { index: 0, count: 3 }), applyChain(saw, lim, { index: 2, count: 3 }))).toBeGreaterThan(1e-3);
   });
 });

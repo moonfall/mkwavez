@@ -5,7 +5,7 @@
  * Amount 0 is always the input unchanged (the engine skips the step). DOM-free, seeded.
  */
 import { KMAX, TABLE_SIZE } from './constants';
-import { normalizeDrawing, drawingValue, drawingWeight, type Drawing } from './drawing';
+import { lerpDrawing, normalizeDrawing, drawingValue, drawingWeight, type Drawing } from './drawing';
 import { fft } from './fft';
 import { MUTATION_CHOICES, mutate, mutationUsesSeed, type MutationId } from './mutations';
 import { Prng } from './prng';
@@ -32,6 +32,11 @@ interface StepBase {
   readonly amount: number;
   /** Set: the amount sweeps from `amount` to this across a batch (u = index / (count − 1)). */
   readonly amountEnd?: number;
+  /**
+   * Draw steps and Limit to curve: the drawing at the end of a batch. Set = the drawing moves
+   * from `draw` to this across a batch (lerpDrawing at u = index / (count − 1)).
+   */
+  readonly drawEnd?: Drawing;
 }
 export type ShapeStep = StepBase &
   (
@@ -196,6 +201,9 @@ export function normalizeStep(raw: unknown, id: string): ShapeStep | null {
     ...(o.amountEnd !== undefined && o.amountEnd !== null ? { amountEnd: num(o.amountEnd, 0, 1, amount) } : {}),
   };
   const wave = (fb: Drawing) => normalizeDrawing(o.draw, WAVE_Y[0], WAVE_Y[1], fb);
+  /** A draw step's end drawing, if it has one (same range; falls back to its start drawing). */
+  const end = (draw: Drawing, lo: number, hi: number) =>
+    o.drawEnd && typeof o.drawEnd === 'object' ? { drawEnd: normalizeDrawing(o.drawEnd, lo, hi, draw) } : {};
   switch (op) {
     case 'clip':
     case 'soft':
@@ -206,14 +214,21 @@ export function normalizeStep(raw: unknown, id: string): ShapeStep | null {
         side: pick(o.side, ['above', 'below', 'both'] as const, 'both'),
         knee: num(o.knee, KNEE_RANGE[0], KNEE_RANGE[1], 0.1),
         draw: wave(DEFAULT_DRAWS[op]),
+        ...end(wave(DEFAULT_DRAWS[op]), WAVE_Y[0], WAVE_Y[1]),
       };
     case 'replace':
     case 'add':
     case 'mult':
-      return { ...base, op, draw: wave(DEFAULT_DRAWS[op]) };
+      return { ...base, op, draw: wave(DEFAULT_DRAWS[op]), ...end(wave(DEFAULT_DRAWS[op]), WAVE_Y[0], WAVE_Y[1]) };
     case 'push':
     case 'pull':
-      return { ...base, op, radius: num(o.radius, RADIUS_RANGE[0], RADIUS_RANGE[1], 0.4), draw: wave(DEFAULT_DRAWS[op]) };
+      return {
+        ...base,
+        op,
+        radius: num(o.radius, RADIUS_RANGE[0], RADIUS_RANGE[1], 0.4),
+        draw: wave(DEFAULT_DRAWS[op]),
+        ...end(wave(DEFAULT_DRAWS[op]), WAVE_Y[0], WAVE_Y[1]),
+      };
     case 'harmSet':
       return {
         ...base,
@@ -234,13 +249,10 @@ export function normalizeStep(raw: unknown, id: string): ShapeStep | null {
       const k1 = Math.round(num(r[1], 1, KMAX, KMAX));
       return { ...base, op, kind, value, range: [Math.min(k0, k1), Math.max(k0, k1)] };
     }
-    case 'harmLimit':
-      return {
-        ...base,
-        op,
-        mode: pick(o.mode, ['limit', 'floor', 'fit', 'scale'] as const, 'limit'),
-        draw: normalizeDrawing(o.draw, HARM_DB[0], HARM_DB[1], DEFAULT_LIMIT_DRAW),
-      };
+    case 'harmLimit': {
+      const draw = normalizeDrawing(o.draw, HARM_DB[0], HARM_DB[1], DEFAULT_LIMIT_DRAW);
+      return { ...base, op, mode: pick(o.mode, ['limit', 'floor', 'fit', 'scale'] as const, 'limit'), draw, ...end(draw, HARM_DB[0], HARM_DB[1]) };
+    }
     case 'mutation': {
       const ids = MUTATION_CHOICES.map((m) => m.id);
       return { ...base, op, mutation: pick(o.mutation, ids, 'smooth') };
@@ -441,7 +453,12 @@ function builtPhase(phase: HarmPhase, k: number, rand: Prng): number {
 }
 
 /** Harmonic steps: bins 1..KMAX of the input → target bins, then a complex blend by a. */
-function harmonicStep(s: ShapeStep, x: Float64Array, a: number, seed: number): Float64Array {
+/** A step's drawing at batch position u (its start drawing, or on the way to its end drawing). */
+export function stepDrawing(s: Extract<ShapeStep, { draw: Drawing }>, u: number): Drawing {
+  return s.drawEnd ? lerpDrawing(s.draw, s.drawEnd, u) : s.draw;
+}
+
+function harmonicStep(s: ShapeStep, x: Float64Array, a: number, seed: number, u: number): Float64Array {
   const { re, im } = spectrum(x);
   const tr = new Float64Array(KMAX + 1);
   const ti = new Float64Array(KMAX + 1);
@@ -526,10 +543,11 @@ function harmonicStep(s: ShapeStep, x: Float64Array, a: number, seed: number): F
       break;
     }
     case 'harmLimit': {
+      const limitDraw = stepDrawing(s, u);
       for (let k = 1; k <= KMAX; k++) {
         tr[k] = re[k];
         ti[k] = im[k];
-        const c = drawingValue(s.draw, (k - 1) / (KMAX - 1));
+        const c = drawingValue(limitDraw, (k - 1) / (KMAX - 1));
         if (c === null || mx === 0) continue;
         const m = mag(k);
         const present = m > mx * 1e-4;
@@ -558,13 +576,14 @@ function harmonicStep(s: ShapeStep, x: Float64Array, a: number, seed: number): F
  * One step at amount a (> 0) on the working cycle x (TABLE_SIZE samples). Returns a new
  * array (not band-limited: the engine does that). `seed` is the step's own seed.
  */
-export function applyStep(s: ShapeStep, x: Float64Array, a: number, seed: number): Float64Array {
+export function applyStep(s: ShapeStep, x: Float64Array, a: number, seed: number, u = 0): Float64Array {
   if ('draw' in s && s.op !== 'harmLimit') {
+    const d = stepDrawing(s, u);
     const y = new Float64Array(N);
     for (let i = 0; i < N; i++) {
       const t = i / N;
-      const c = drawingValue(s.draw, t);
-      const w = c === null ? 0 : drawingWeight(s.draw, t);
+      const c = drawingValue(d, t);
+      const w = c === null ? 0 : drawingWeight(d, t);
       y[i] = w > 0 ? x[i] + a * w * (drawOp(s, x[i], c!) - x[i]) : x[i];
     }
     return y;
@@ -602,6 +621,6 @@ export function applyStep(s: ShapeStep, x: Float64Array, a: number, seed: number
       return rotate(Float64Array.from(y, (v) => v * p), -d);
     }
     default:
-      return harmonicStep(s, x, a, seed);
+      return harmonicStep(s, x, a, seed, u);
   }
 }

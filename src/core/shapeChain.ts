@@ -46,9 +46,15 @@ export function stepAmount(s: ShapeStep, u: number): number {
   return s.amountEnd === undefined ? s.amount : s.amount + (s.amountEnd - s.amount) * u;
 }
 
+/** True if a step sweeps across a batch: its amount, or its drawing (to an end drawing). */
+export function stepSweeps(s: ShapeStep): boolean {
+  if (s.amountEnd !== undefined && s.amountEnd !== s.amount) return true;
+  return 'draw' in s && !!s.drawEnd && JSON.stringify(s.drawEnd) !== JSON.stringify(s.draw);
+}
+
 /** True if any enabled step sweeps across a batch (one source then gives N different results). */
 export function chainSweeps(c: ShapeChain): boolean {
-  return c.steps.some((s) => s.on && s.amountEnd !== undefined && s.amountEnd !== s.amount);
+  return c.steps.some((s) => s.on && stepSweeps(s));
 }
 
 /** True if any enabled step uses its seed (the UI shows the seed / Reroll only then). */
@@ -130,7 +136,7 @@ export function chainStages(
   for (let i = from; i < c.steps.length; i++) {
     const s = c.steps[i];
     const a = stepAmount(s, u);
-    if (s.on && a > 0) x = bandLimit(applyStep(s, x, a, stepSeed(c, s, b)));
+    if (s.on && a > 0) x = bandLimit(applyStep(s, x, a, stepSeed(c, s, b), u));
     out.push(x);
   }
   return out;

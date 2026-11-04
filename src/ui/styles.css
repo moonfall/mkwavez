@@ -3127,6 +3127,14 @@ button.shape-step-on.on {
 .shape-step-sweep.off svg polygon {
   fill: var(--muted);
 }
+.shape-step-sweep svg polyline {
+  fill: none;
+  stroke: var(--v2);
+  stroke-width: 2;
+}
+.shape-step-sweep.off svg polyline {
+  stroke: var(--muted);
+}
 canvas.shape-step-thumb {
   width: 40px;
   height: 18px;

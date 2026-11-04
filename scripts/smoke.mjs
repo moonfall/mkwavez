@@ -2376,6 +2376,24 @@ async function shapeChecks(page, tlCount) {
     `a click on a curve adds a point on it (${JSON.stringify(c.steps[0].draw.pts)})`,
   );
 
+  // An end drawing: across the batch the drawing moves from Start to End.
+  await page.click('#shape-draw-end');
+  c = await chain();
+  assert(!!c.steps[0].drawEnd && (await page.getAttribute('#shape-edit-end', 'aria-pressed')) === 'true', '↦ End gives the step an end drawing and edits it');
+  await page.mouse.move(fb.x + fb.width * 0.3, fb.y + fb.height / 2 - (0.45 / 1.25) * amp);
+  await page.mouse.down();
+  await page.mouse.move(fb.x + fb.width * 0.3, fb.y + fb.height / 2 - (0.45 / 1.25) * amp + 30, { steps: 6 });
+  await page.mouse.up();
+  c = await chain();
+  assert(c.steps[0].drawEnd.pts[0][1] < 0.4 && c.steps[0].draw.pts[0][1] === 0.45, `dragging in End moves only the end drawing (${JSON.stringify(c.steps[0].drawEnd.pts)})`);
+  await page.waitForFunction(() => document.querySelectorAll('#shape-strip .gen-card').length === 8, null, { timeout: 3000 });
+  assert(!!(await page.$('#shape-step-1 .shape-step-sweep.on polyline')), 'a moving drawing: N cards, and its step shows the drawing-sweep mark');
+  await page.click('#shape-edit-start');
+  assert((await page.getAttribute('#shape-edit-start', 'aria-pressed')) === 'true', 'Start / End picks which drawing the plot edits');
+  await page.click('#shape-draw-end');
+  c = await chain();
+  assert(c.steps[0].drawEnd === undefined && !(await page.isVisible('#shape-edit-end')), '↦ End again removes the end drawing');
+
   // Harmonics: a set's numbers, a drawn set painted on the plot, a limit curve drawn there.
   await page.click('#shape-step-3');
   await page.fill('#shape-hof', '3, 5');

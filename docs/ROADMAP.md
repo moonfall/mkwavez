@@ -131,7 +131,7 @@ Generate → Shape edits waveforms with a chain of steps (design reviewed before
   (`Recipe.shape`). Seed's "Edit · planned" toggle is gone.
 
 Known gaps: draw steps (clip / fold) run at 2048 samples without oversampling, so very
-hard folding can alias below h72; sweeps only sweep the amount (not a drawing's level);
+hard folding can alias below h72; a drawing can sweep (start → end drawing) but other settings (knee, radius, harmonic numbers) can't;
 no symmetry tool or grid snapping yet. On phones the chain list sits above the plot (it
 doesn't collapse like the libraries).
 

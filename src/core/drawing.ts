@@ -68,6 +68,33 @@ export function drawingWeight(d: Drawing, x: number): number {
   return w * w * (3 - 2 * w);
 }
 
+/**
+ * The drawing between a and b at u ∈ [0, 1] (a sweep from a start to an end drawing): each
+ * point travels along its drawing's span (the same fraction of the way through each span), so
+ * a line can move, tilt or stretch. Two lines stay a line; anything else becomes a dense
+ * polyline (64 points). u ≤ 0 / ≥ 1 return a / b themselves.
+ */
+export function lerpDrawing(a: Drawing, b: Drawing, u: number): Drawing {
+  if (u <= 0) return a;
+  if (u >= 1) return b;
+  const sa = drawingSpan(a);
+  const sb = drawingSpan(b);
+  if (!sa) return b;
+  if (!sb) return a;
+  const mix = (p: number, q: number) => p + (q - p) * u;
+  if (a.tool === 'line' && b.tool === 'line' && a.pts.length === 2 && b.pts.length === 2)
+    return { tool: 'line', pts: [0, 1].map((i) => [mix(a.pts[i][0], b.pts[i][0]), mix(a.pts[i][1], b.pts[i][1])] as Pt) };
+  const M = MAX_DRAW_POINTS;
+  const pts: Pt[] = [];
+  for (let k = 0; k < M; k++) {
+    const t = k / (M - 1);
+    const xa = sa[0] + (sa[1] - sa[0]) * t;
+    const xb = sb[0] + (sb[1] - sb[0]) * t;
+    pts.push([mix(xa, xb), mix(drawingValue(a, xa) ?? 0, drawingValue(b, xb) ?? 0)]);
+  }
+  return { tool: 'free', pts };
+}
+
 /** A freehand stroke (any order, any length) as at most `max` points: binned along x and averaged. */
 export function resampleStroke(raw: readonly Pt[], max = MAX_DRAW_POINTS): Pt[] {
   const pts = raw.filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1])).sort((a, b) => a[0] - b[0]);

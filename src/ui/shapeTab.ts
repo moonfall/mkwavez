@@ -415,29 +415,45 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   /** A step's sweep in its row: a ramp from its amount to its end amount (empty when it doesn't sweep). */
   const sweepMark = (s: Step): HTMLElement => {
     const el = h('span', { class: 'shape-step-sweep', 'aria-hidden': 'true' });
-    if (s.amountEnd === undefined) return el;
+    const moves = 'draw' in s && !!s.drawEnd;
+    if (s.amountEnd === undefined && !moves) return el;
     const y = (a: number) => (10 - a * 9).toFixed(1);
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
     svg.setAttribute('viewBox', '0 0 16 11');
     svg.setAttribute('width', '16');
     svg.setAttribute('height', '11');
-    const poly = document.createElementNS(ns, 'polygon');
-    poly.setAttribute('points', `0,10.5 0,${y(s.amount)} 16,${y(s.amountEnd)} 16,10.5`);
-    svg.append(poly);
+    if (s.amountEnd !== undefined) {
+      const poly = document.createElementNS(ns, 'polygon');
+      poly.setAttribute('points', `0,10.5 0,${y(s.amount)} 16,${y(s.amountEnd)} 16,10.5`);
+      svg.append(poly);
+    } else {
+      // Only the drawing sweeps: a line moving from low to high.
+      const line = document.createElementNS(ns, 'polyline');
+      line.setAttribute('points', '0,9 6,9 10,3 16,3');
+      svg.append(line);
+    }
     el.append(svg);
-    el.title = `Sweeps ${pct(s.amount)} → ${pct(s.amountEnd)} across the batch`;
+    el.title = [
+      s.amountEnd !== undefined ? `Sweeps ${pct(s.amount)} → ${pct(s.amountEnd)} across the batch` : '',
+      moves ? 'The drawing moves from its start to its end drawing across the batch' : '',
+    ]
+      .filter(Boolean)
+      .join('; ');
     el.classList.add('on');
     if (!s.on) el.classList.add('off');
     return el;
   };
+  /** The plot edits the selected step's end drawing (when it has one) instead of its start drawing. */
+  let editEnd = false;
+  let editEndFor: string | null = null;
   let rowSig = '';
   let dragId: string | null = null;
   const thumbs: HTMLCanvasElement[] = [];
   const renderList = () => {
     const c = chain();
     const si = selIndex();
-    const sig = JSON.stringify([c.steps.map((s) => [s.id, s.op, s.on, stepSummary(s), s.amount, s.amountEnd ?? null]), si]);
+    const sig = JSON.stringify([c.steps.map((s) => [s.id, s.op, s.on, stepSummary(s), s.amount, s.amountEnd ?? null, 'draw' in s && !!s.drawEnd]), si]);
     if (sig === rowSig) return;
     const hadFocus = list.contains(document.activeElement);
     rowSig = sig;
@@ -636,17 +652,66 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       'shape-tool',
       'Drawing tool',
       TOOL_LABELS,
-      (s) => ('draw' in s ? s.draw.tool : 'line'),
+      (s) => ('draw' in s ? s[editField(s)]!.tool : 'line'),
       (tool) => {
         const s = sel();
         if (!s || !('draw' in s)) return;
+        const f = editField(s);
         updateStep(s.id, (x) => {
-          const d = (x as DrawStep).draw;
+          const d = (x as DrawStep)[f]!;
           const pts = tool === 'line' && d.pts.length > 2 ? [d.pts[0], d.pts[d.pts.length - 1]] : d.pts;
-          return { ...x, draw: { tool, pts } } as Step;
+          return { ...x, [f]: { tool, pts } } as Step;
         });
       },
     );
+  /** "↦ End": give the step an end drawing (the drawing moves to it across the batch) or drop it. */
+  const endDrawControls = (s0: DrawStep) => {
+    const btn = h(
+      'button',
+      {
+        id: 'shape-draw-end',
+        class: 'small shape-sweep',
+        title: 'Give this step an end drawing: across the batch the drawing moves from Start to End',
+        onclick: () => {
+          const s = sel();
+          if (!s || !('draw' in s)) return;
+          if (s.drawEnd) {
+            editEnd = false;
+            updateStep(s.id, (x) => {
+              const { drawEnd: _e, ...rest } = x as DrawStep;
+              return rest as Step;
+            });
+          } else {
+            editEnd = true;
+            updateStep(s.id, (x) => ({ ...x, drawEnd: (x as DrawStep).draw }) as Step);
+          }
+          paramSig = '';
+          syncParams();
+          mainDirty = true;
+        },
+      },
+      '↦ End',
+    );
+    syncs.push((s) => {
+      const on = 'draw' in s && !!s.drawEnd;
+      btn.classList.toggle('seg-on', on);
+      btn.setAttribute('aria-pressed', String(on));
+    });
+    if (!s0.drawEnd) return [btn];
+    const which = seg(
+      'shape-edit',
+      'Edit the start or end drawing',
+      { start: 'Start', end: 'End' },
+      () => (editEnd ? 'end' : 'start'),
+      (v) => {
+        editEnd = v === 'end';
+        const cur = sel();
+        if (cur) for (const f of syncs) f(cur);
+        mainDirty = true;
+      },
+    );
+    return [btn, which];
+  };
   const resetDraw = () =>
     h(
       'button',
@@ -657,7 +722,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         onclick: () => {
           const s = sel();
           if (!s || !('draw' in s)) return;
-          updateStep(s.id, (x) => ({ ...x, draw: x.op === 'harmLimit' ? DEFAULT_LIMIT_DRAW : defaultDrawing(x.op as DrawStep['op'] & Exclude<StepOp, 'harmLimit'>) }) as Step);
+          const f = editField(s);
+          updateStep(s.id, (x) => ({ ...x, [f]: x.op === 'harmLimit' ? DEFAULT_LIMIT_DRAW : defaultDrawing(x.op as DrawStep['op'] & Exclude<StepOp, 'harmLimit'>) }) as Step);
         },
       },
       'Reset',
@@ -701,7 +767,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       if (s.op === 'soft') kids.push(range('shape-knee', 'Knee', KNEE_RANGE[0], KNEE_RANGE[1], 0.01, (x) => ('knee' in x ? x.knee : 0.1), (v, x) => ({ ...x, knee: v }) as Step, (v) => v.toFixed(2)));
       if (s.op === 'push' || s.op === 'pull')
         kids.push(range('shape-radius', 'Radius', RADIUS_RANGE[0], RADIUS_RANGE[1], 0.01, (x) => ('radius' in x ? x.radius : 0.4), (v, x) => ({ ...x, radius: v }) as Step, (v) => v.toFixed(2)));
-      kids.push(sep(), drawTools(), resetDraw());
+      kids.push(sep(), drawTools(), resetDraw(), ...endDrawControls(s as DrawStep));
     } else if (s.op === 'harmSet') {
       kids.push(
         select(
@@ -825,6 +891,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         sep(),
         drawTools(),
         resetDraw(),
+        ...endDrawControls(s),
       );
     } else if (s.op === 'mutation') {
       kids.push(
@@ -848,7 +915,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const syncParams = () => {
     const s = sel();
     const sig = s
-      ? JSON.stringify([s.id, s.op, s.op === 'harmSet' ? [s.mode === 'add' || s.mode === 'replace', s.set.kind === 'multiples' || s.set.kind === 'list', s.set.kind === 'drawn'] : 0, s.op === 'harmMod' ? s.kind : 0])
+      ? JSON.stringify(['draw' in s && !!s.drawEnd, s.id, s.op, s.op === 'harmSet' ? [s.mode === 'add' || s.mode === 'replace', s.set.kind === 'multiples' || s.set.kind === 'list', s.set.kind === 'drawn'] : 0, s.op === 'harmMod' ? s.kind : 0])
       : '';
     if (sig !== paramSig) {
       paramSig = sig;
@@ -923,7 +990,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const c = chain();
     const b = shownPos();
     const u = batchUOf(b);
-    const keys = c.steps.map((s) => `${JSON.stringify(s)}|${stepAmount(s, u)}|${stepUsesSeed(s) ? stepSeed(c, s, b) : ''}`);
+    // A step's output depends on u through its amount sweep and its drawing sweep (end drawing).
+    const keys = c.steps.map((s) => `${JSON.stringify(s)}|${stepAmount(s, u)}|${'drawEnd' in s && s.drawEnd ? u : ''}|${stepUsesSeed(s) ? stepSeed(c, s, b) : ''}`);
     let keep = 0;
     if (stageCache && stageCache.srcId === src.id) while (keep < keys.length && keep < stageCache.keys.length && keys[keep] === stageCache.keys[keep]) keep++;
     const outs = chainStages(src.data, c, b, stageCache && stageCache.srcId === src.id ? stageCache.outs.slice(0, keep) : []);
@@ -979,13 +1047,37 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const s = sel();
     return view === 'harm' && s && s.op === 'harmSet' && s.set.kind === 'drawn' ? s : null;
   };
+  /** Which of the selected step's drawings the plot edits. */
+  const editField = (s: DrawStep): 'draw' | 'drawEnd' => (editEnd && s.drawEnd ? 'drawEnd' : 'draw');
   const editable = (): Drawing | null => {
     const s = sel();
     if (!s || !('draw' in s)) return null;
-    return (s.op === 'harmLimit') === (view === 'harm') ? s.draw : null;
+    return (s.op === 'harmLimit') === (view === 'harm') ? s[editField(s)]! : null;
   };
 
-  const drawDrawing = (g: CanvasRenderingContext2D, d: Drawing, w: number, hh: number, mirror: boolean) => {
+  const drawDrawing = (g: CanvasRenderingContext2D, d: Drawing, w: number, hh: number, mirror: boolean, faded = false) => {
+    if (faded) {
+      // The other end of a drawing sweep: thin and faint, no handles.
+      g.save();
+      g.globalAlpha = 0.45;
+      g.setLineDash([3, 3]);
+      g.strokeStyle = cssColor('--v2');
+      g.lineWidth = 1.25;
+      g.beginPath();
+      const span = drawingSpan(d) ?? [0, 1];
+      const n = Math.max(2, Math.ceil((span[1] - span[0]) * w));
+      for (let j = 0; j <= n; j++) {
+        const x = span[0] + ((span[1] - span[0]) * j) / n;
+        const v = drawingValue(d, x);
+        if (v === null) continue;
+        const [px, py] = toPx([x, v], w, hh);
+        if (j) g.lineTo(px, py);
+        else g.moveTo(px, py);
+      }
+      g.stroke();
+      g.restore();
+      return;
+    }
     const color = cssColor('--v2');
     const span = drawingSpan(d) ?? [0, 1];
     for (const sign of mirror ? [1, -1] : [1]) {
@@ -1064,7 +1156,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         g.stroke();
       }
       g.restore();
-      const d = s && isDrawOp(s.op) && 'draw' in s ? s.draw : null;
+      const d = s && isDrawOp(s.op) && 'draw' in s ? s[editField(s)]! : null;
+      const other = s && isDrawOp(s.op) && 'draw' in s && s.drawEnd ? (editEnd ? s.draw : s.drawEnd) : null;
       const span = d ? drawingSpan(d) : null;
       if (span) {
         g.fillStyle = cssColor('--surface');
@@ -1079,6 +1172,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       drawWave(g, 0, 0, w, hh, scaled(inp), cssColor('--muted'), { lineWidth: 1.25 });
       g.setLineDash([]);
       drawWave(g, 0, 0, w, hh, scaled(out), cssColor('--wave'), { lineWidth: 2 });
+      if (other) drawDrawing(g, other, w, hh, false, true);
       if (d && s) drawDrawing(g, d, w, hh, (s.op === 'clip' || s.op === 'soft' || s.op === 'fold') && 'side' in s && s.side === 'both');
       legend.replaceChildren(
         h('span', {}, h('i', { class: 'mut-key-src' }), 'input'),
@@ -1110,7 +1204,10 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       g.globalAlpha = 0.9;
       bars(g, dout, w, hh - DOTS_H, cssColor('--accent'), 0.45);
       g.globalAlpha = 1;
-      if (s && s.op === 'harmLimit') drawDrawing(g, s.draw, w, hh, false);
+      if (s && s.op === 'harmLimit') {
+        if (s.drawEnd) drawDrawing(g, editEnd ? s.draw : s.drawEnd, w, hh, false, true);
+        drawDrawing(g, s[editField(s)]!, w, hh, false);
+      }
       if (s && s.op === 'harmSet' && s.set.kind === 'drawn') {
         // The painted level of each harmonic: a tick across its bar.
         g.strokeStyle = cssColor('--v2');
@@ -1185,7 +1282,17 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     p0: Pt;
     newLine: boolean;
   }
-  let drawing: { pt: [number, number] | null; raw: Pt[] | null; move?: Move; drag?: PointDrag; stepId: string; stroke: number; draw: Drawing } | null = null;
+  let drawing: {
+    pt: [number, number] | null;
+    raw: Pt[] | null;
+    move?: Move;
+    drag?: PointDrag;
+    stepId: string;
+    stroke: number;
+    draw: Drawing;
+    /** The step's drawing being edited: its start or its end drawing. */
+    field?: 'draw' | 'drawEnd';
+  } | null = null;
   /** Shift: a drag from (x0, y0) to (x, y) keeps only its larger component (in screen terms). */
   const axisLock = (x0: number, y0: number, x: number, y: number, w: number, hh: number): [number, number] => {
     const [ax, ay] = toPx([x0, y0], w, hh);
@@ -1224,7 +1331,11 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     if (!drawing) return;
     const id = drawing.stepId;
     const key = `draw:${id}:${drawing.stroke}`;
-    updateStep(id, (x) => ({ ...x, draw: d }) as Step, key);
+    // Fixed for the stroke on its first commit (Start / End can't change mid-drag).
+    const cur = sel();
+    drawing.field ??= cur && 'draw' in cur ? editField(cur) : 'draw';
+    const f = drawing.field;
+    updateStep(id, (x) => ({ ...x, [f]: d }) as Step, key);
   };
   const ptsOf = (d: Drawing): [number, number][] => d.pts.map((p) => [p[0], p[1]]);
   let painting: { stepId: string; stroke: number; mags: number[]; lastK: number } | null = null;
@@ -1609,6 +1720,11 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     if (!chain().steps.some((s) => s.id === selId)) selId = chain().steps[Math.min(lastSelIndex, chain().steps.length - 1)]?.id ?? null;
     lastSelIndex = Math.max(0, selIndex());
     const cur = sel();
+    if ((cur?.id ?? null) !== editEndFor) {
+      // Another step: edit its start drawing.
+      editEndFor = cur?.id ?? null;
+      editEnd = false;
+    }
     if (cur && `${cur.id}:${cur.op}` !== viewFor) {
       viewFor = `${cur.id}:${cur.op}`;
       view = viewOf(cur) ?? view;

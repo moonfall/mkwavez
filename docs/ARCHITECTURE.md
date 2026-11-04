@@ -173,7 +173,9 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   (canonical JSON) }`, `seed` (the chain's), `parents [sourceId]`, `batch {index,
   count}`. `renderShapeRecipe` = `applyChain(parent data, chain, batch)`.
 - **Shape chain** (core/shapeChain.ts) — `{ v: 1, name, seed, varySeed, realign, steps }`,
-  each step `{ id, op, on, amount, amountEnd?, …its settings }`. The engine: each enabled
+  each step `{ id, op, on, amount, amountEnd?, …its settings }`; draw steps and Limit to curve
+  also `draw` and an optional `drawEnd` (the drawing moves from `draw` to `drawEnd` across a
+  batch: `lerpDrawing`, points travelling along each drawing's span). The engine: each enabled
   step at its amount (`amountEnd` set = swept across a batch, u = index / (count − 1)) on
   the working cycle, band-limited to KMAX after every step, levels carried (no normalising
   between steps, so Gain drives a clip), then `shape()` (phase realign only if `realign`).
