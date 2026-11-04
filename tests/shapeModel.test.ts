@@ -277,6 +277,54 @@ describe('factory chains', () => {
     expect(w[N - 1]).toBeGreaterThan(w[0] * 2);
   });
 
+  /** Harmonic magnitudes relative to the strongest, in dB (−200 for absent). */
+  const dbs = (t: Float32Array) => {
+    const m = harmonicMagnitudes(t, 72);
+    const mx = Math.max(...m.slice(1));
+    return Array.from(m, (v) => (v > 0 ? 20 * Math.log10(v / mx) : -200));
+  };
+
+  it('Hollow out removes the even harmonics by the end; Phaser comb notches travel up the spectrum', () => {
+    const h = batch('hollow-out', saw);
+    expect(dbs(h[0])[2]).toBeGreaterThan(-8);
+    expect(dbs(h[N - 1])[2]).toBeLessThan(-100);
+    expect(dbs(h[N - 1])[3]).toBeGreaterThan(-12);
+    const notch = (t: Float32Array) => {
+      const d = dbs(t);
+      let b = 12;
+      for (let k = 12; k <= 20; k++) if (d[k] < d[b]) b = k;
+      return b;
+    };
+    const n = batch('phaser-comb', saw).slice(1).map(notch);
+    for (let i = 1; i < n.length; i++) expect(n[i]).toBeGreaterThanOrEqual(n[i - 1]);
+    expect(n.at(-1)! - n[0]).toBeGreaterThanOrEqual(4);
+  });
+
+  it('Diode grit adds even harmonics; Drawbar organ gives the drawbar harmonics; Metallic thins out non-primes', () => {
+    expect(dbs(batch('diode-grit', sine)[0])[2]).toBeGreaterThan(-25);
+    for (const src of [saw, sine, cheby]) {
+      const d = dbs(batch('drawbar-organ', src)[0]);
+      for (const k of [1, 2, 3, 4, 6, 8]) expect(d[k], `h${k}`).toBeGreaterThan(-12);
+      expect(d[9]).toBeLessThan(-24);
+    }
+    const m = dbs(batch('metallic', saw)[0]);
+    expect(m[5]).toBeGreaterThan(m[4] + 6); // a prime above its non-prime neighbour
+  });
+
+  it('Phase scatter: every waveform has the same spectrum (relative to h1) but a different shape', () => {
+    const p = batch('phase-scatter', saw);
+    const rel = (t: Float32Array) => {
+      const m = harmonicMagnitudes(t, 72);
+      return Array.from(m, (v) => v / m[1]);
+    };
+    const r0 = rel(p[0]);
+    for (const t of p.slice(1)) {
+      const r = rel(t);
+      for (let k = 1; k <= 40; k++) expect(Math.abs(r[k] - r0[k])).toBeLessThan(1e-3);
+      expect(maxDiff(t, p[0])).toBeGreaterThan(0.1);
+    }
+  });
+
   it('Tape warmth stays close to its source; Ensemble drift gives N different copies of similar brightness', () => {
     for (const src of [sine, cheby]) expect(maxDiff(batch('tape-warmth', src)[0], src)).toBeLessThan(0.3);
     const e = batch('ensemble-drift', saw);

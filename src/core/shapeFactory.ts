@@ -11,6 +11,18 @@ export interface FactoryChain {
 
 const f = (id: string, raw: unknown): FactoryChain => ({ id, chain: normalizeChain(raw) });
 
+/** Phaser comb: notch spacing as a fraction of the harmonic axis (about every 8 harmonics). */
+const COMB_PERIOD = 0.11;
+/** A comb (0 dB peaks, −30 dB notches) over a span of 1 − COMB_PERIOD starting at x0, 64 points. */
+function comb(x0: number): [number, number][] {
+  const n = 64;
+  const len = 1 - COMB_PERIOD;
+  return Array.from({ length: n }, (_, i) => {
+    const t = (i / (n - 1)) * len;
+    return [x0 + t, -15 + 15 * Math.cos((2 * Math.PI * t) / COMB_PERIOD)];
+  });
+}
+
 export const FACTORY_CHAINS: readonly FactoryChain[] = [
   f('warm-fold-organ', {
     name: 'Warm fold organ',
@@ -113,6 +125,54 @@ export const FACTORY_CHAINS: readonly FactoryChain[] = [
       { id: 'sat', op: 'soft', side: 'both', knee: 0.3, draw: { tool: 'line', pts: [[0, 0.8], [1, 0.8]] } },
       { id: 'tilt', op: 'harmMod', kind: 'tilt', value: -0.5 },
     ],
+  }),
+  // Saw-like sources morph toward a clarinet / square tone: the even harmonics fade out across the batch.
+  f('hollow-out', {
+    name: 'Hollow out',
+    seed: 1,
+    steps: [{ id: 'hollow', op: 'harmSet', mode: 'remove', set: { kind: 'even' }, fundamental: false, amount: 0, amountEnd: 1 }],
+  }),
+  // Moving notches: a comb on the harmonics whose span slides by one notch spacing across the
+  // batch (the same pattern at both ends, so the notches travel rather than fade).
+  f('phaser-comb', {
+    name: 'Phaser comb',
+    seed: 1,
+    steps: [{ id: 'comb', op: 'harmLimit', mode: 'scale', draw: { tool: 'free', pts: comb(0) }, drawEnd: { tool: 'free', pts: comb(COMB_PERIOD) } }],
+  }),
+  // One-sided saturation: adds even harmonics, edgier than Tape warmth.
+  f('diode-grit', {
+    name: 'Diode grit',
+    seed: 1,
+    steps: [
+      { id: 'diode', op: 'soft', side: 'above', knee: 0.1, draw: { tool: 'line', pts: [[0, 0.4], [1, 0.4]] } },
+      { id: 'tilt', op: 'harmMod', kind: 'tilt', value: -2 },
+    ],
+  }),
+  // Bell-like: the harmonics are stretched apart, then mostly the primes are kept.
+  f('metallic', {
+    name: 'Metallic',
+    seed: 1,
+    steps: [
+      { id: 'stretch', op: 'harmMod', kind: 'stretch', value: 1.35 },
+      { id: 'primes', op: 'harmSet', mode: 'keep', set: { kind: 'primes' }, fundamental: true, amount: 0.7 },
+    ],
+  }),
+  // An organ tone from anything: drawbar-like harmonics 1, 2, 3, 4, 6, 8, a little grit.
+  f('drawbar-organ', {
+    name: 'Drawbar organ',
+    seed: 1,
+    steps: [
+      { id: 'bars', op: 'harmSet', mode: 'replace', set: { kind: 'list', of: [1, 2, 3, 4, 6, 8] }, fundamental: true, law: 0.5, phase: 'sine' },
+      { id: 'grit', op: 'soft', side: 'both', knee: 0.15, draw: { tool: 'line', pts: [[0, 0.9], [1, 0.9]] } },
+    ],
+  }),
+  // The same spectrum, a different shape per waveform: a voice scanning the batch moves without
+  // changing tone (phase randomized, seeded, varied per waveform).
+  f('phase-scatter', {
+    name: 'Phase scatter',
+    seed: 1,
+    varySeed: true,
+    steps: [{ id: 'scatter', op: 'mutation', mutation: 'phaseRandom', amount: 1 }],
   }),
   // N subtly different copies (seeded, varied per waveform): a wavetable that shimmers rather than morphs.
   f('ensemble-drift', {
