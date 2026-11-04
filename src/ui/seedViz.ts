@@ -556,3 +556,21 @@ viz('iterated-sine-map', {
     g.restore();
   },
 });
+
+// Vowel formants: harmonic weights from two Gaussian formants (+ a 1/k floor), harmonics 1–40.
+viz('vowel-formants', {
+  axis: (i) => ['h1', `formants at h${(7 - 4 * i.u).toFixed(1)} · h${(11 + 10 * i.u).toFixed(1)}`, 'h40'],
+  draw: (g, w, h, i, c) => {
+    const env = (k: number) => Math.exp(-Math.pow((k - 7 + 4 * i.u) / 1.5, 2)) + 0.7 * Math.exp(-Math.pow((k - 11 - 10 * i.u) / 2, 2)) + 0.05 / k;
+    const s = scale(w, h, 0.5, 40.5, 0, 1.15);
+    g.strokeStyle = c.line;
+    g.lineWidth = 1;
+    g.beginPath();
+    for (let k = 1; k <= 40; k++) {
+      g.moveTo(s.x(k), s.y(0));
+      g.lineTo(s.x(k), s.y(env(k)));
+    }
+    g.stroke();
+    plot(g, s, env, 1, 40, c.accent, 1.6, 400);
+  },
+});
