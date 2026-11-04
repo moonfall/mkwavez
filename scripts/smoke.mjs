@@ -20,7 +20,7 @@
 // Step on the wavetable plays one cell; the Voice panel fits at 1440×900 / 1180×820 and 390px
 // doesn't overflow; the CC map has Position Y. Keyboard shortcuts: Space (also with a button
 // focused; types in text fields), [ / ], M, Shift+←/→ moves in the Timeline (ends no-op,
-// one undo step, ignored in text fields); no UI text says "table" (only "wavetable").
+// one undo step, ignored in text fields), Ctrl/⌘+←/→ scrolls it to its beginning / end; no UI text says "table" (only "wavetable").
 // Sequence timing: step length selector (default 1/8), "16 steps · 1/8 · 2 bars", beat /
 // bar marks on the grid follow the step length, the playhead steps twice as fast at 1/16,
 // the bar.beat readout advances; the step length survives a reload.
@@ -1754,6 +1754,7 @@ async function wordingCheck(page, where) {
  * (wrapping); M mutes the selected voice; Shift+← / → move the selected waveform in the
  * Timeline (Timeline wavetable in step, Timeline windows unchanged, strip reveals it, one
  * undo step, no-op at the ends, ignored in text fields, not taken by the batch strip);
+ * Ctrl/⌘+← / → scroll the Timeline strip to its beginning / end (selection unchanged);
  * extra modifiers are ignored; the controls advertise their shortcuts.
  */
 async function shortcutChecks(page) {
@@ -1946,6 +1947,35 @@ async function shortcutChecks(page) {
   e = await state();
   assert(e.idx === e.ids.split(',').length - 2 && e.inView, 'Shift+← scrolls the strip to the moved waveform');
   await page.click('#undo');
+  // Ctrl/⌘+← / →: scroll the strip to its beginning / end; the selection and order stay.
+  {
+    await blur();
+    await frames(); // let the undo's reveal-the-selection scroll land first
+    const strip = () => M(() => {
+      const s = document.querySelector('#timeline-scroll');
+      return { left: s.scrollLeft, max: s.scrollWidth - s.clientWidth };
+    });
+    const before = await state();
+    await page.keyboard.press('Control+ArrowLeft');
+    await frames();
+    let st = await strip();
+    let after = await state();
+    assert(st.max > 0 && st.left === 0 && after.sel === before.sel && after.ids === before.ids && after.undo === before.undo, `Ctrl+← scrolls the strip to its beginning, selection unchanged (${st.left} of ${st.max})`);
+    await page.keyboard.press('Meta+ArrowRight');
+    await frames();
+    st = await strip();
+    after = await state();
+    assert(st.left >= st.max - 1 && after.sel === before.sel && after.undo === before.undo, `⌘+→ scrolls the strip to its end (${st.left} of ${st.max})`);
+    await page.keyboard.press('Meta+ArrowLeft');
+    await frames();
+    assert((await strip()).left === 0, '⌘+← scrolls back to the beginning');
+    // (Sent to the search field directly: at this width it isn't focusable.)
+    const notTaken = await M(() =>
+      document.querySelector('#seed-search').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', ctrlKey: true, bubbles: true, cancelable: true })),
+    );
+    await frames();
+    assert(notTaken && (await strip()).left === 0, 'Ctrl+→ in a text input is left to the input (the strip stays)');
+  }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.waitForTimeout(150);
   // Ignored in a text field.

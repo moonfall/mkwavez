@@ -6,12 +6,14 @@ import type { UiContext } from './context';
  *  - [ / ]            previous / next voice tab (wrapping)
  *  - M                mute / unmute the selected voice
  *  - Shift+← / →      move the selected waveform one place earlier / later in the Timeline
+ *  - Ctrl/⌘+← / →     scroll the Timeline strip to its beginning / end (selection unchanged)
  *
  * Ignored while typing (text inputs, textareas, selects, contenteditable) and when any
  * modifier other than the listed ones is held (AltGr / Option are allowed where the layout
  * needs them for `[` / `]`; non-Latin layouts fall back to the physical key). Space on a focused checkbox / radio keeps
  * toggling it. Handled keys stop at the document (capture phase), so local handlers
- * (plain arrows in the library lists, batch strips and voice tabs) never see Shift+arrows.
+ * (plain arrows in the library lists, batch strips and voice tabs) never see Shift+ or
+ * Ctrl/⌘+arrows.
  * Panel-local keys stay with their panels (Ctrl/⌘+D in the Timeline strip, arrows in
  * lists / strips / tabs).
  */
@@ -22,6 +24,8 @@ export const SHORTCUTS = {
   mute: 'M',
   moveLeft: 'Shift+ArrowLeft',
   moveRight: 'Shift+ArrowRight',
+  timelineStart: 'Control+ArrowLeft Meta+ArrowLeft',
+  timelineEnd: 'Control+ArrowRight Meta+ArrowRight',
 } as const;
 
 /** Input types that don't take typed text (everything else does). */
@@ -37,6 +41,8 @@ export function isTextField(el: EventTarget | null): boolean {
 
 export interface ShortcutActions {
   togglePlay(): void;
+  /** Scroll the Timeline strip to its first (-1) or last (+1) waveform. */
+  scrollTimeline(to: -1 | 1): void;
 }
 
 export function installShortcuts(ctx: UiContext, actions: ShortcutActions, target: Document = document): void {
@@ -90,6 +96,12 @@ export function installShortcuts(ctx: UiContext, actions: ShortcutActions, targe
       // Elements that move their own selection with Shift+←/→ (the wavetable editor's view).
       if (e.target instanceof Element && e.target.closest('[data-shift-arrows]')) return false;
       model.moveTable(model.selectedId, e.key === 'ArrowLeft' ? -1 : 1);
+      return true;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      // Ctrl on Windows / Linux, ⌘ on macOS; not both, and no Alt (word / desktop moves).
+      if ((e.ctrlKey && e.metaKey) || e.altKey) return false;
+      actions.scrollTimeline(e.key === 'ArrowLeft' ? -1 : 1);
       return true;
     }
     const k = keyOf(e);

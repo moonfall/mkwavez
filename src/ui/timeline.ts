@@ -64,7 +64,7 @@ const voiceColor = (v: VoiceParams) => cssColor(voiceColorVar(v.id - 1));
  * stopped) is a caret on a transparent overlay canvas that redraws on its own (≤ the
  * frame-loop rate while playing, only when the markers moved), never the strip.
  */
-export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameView } {
+export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameView; scrollToEdge(to: -1 | 1): void } {
   const { model, bridge } = ctx;
   const sec = panel('sec-timeline', 'Timeline', 'tl');
 
@@ -101,14 +101,14 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
       id: 'timeline-scroll',
       tabindex: 0,
       'aria-label': 'Timeline waveforms',
-      'aria-keyshortcuts': `${SHORTCUTS.moveLeft} ${SHORTCUTS.moveRight} Control+D Meta+D`,
+      'aria-keyshortcuts': `${SHORTCUTS.moveLeft} ${SHORTCUTS.moveRight} ${SHORTCUTS.timelineStart} ${SHORTCUTS.timelineEnd} Control+D Meta+D`,
     },
     track,
   );
   sec.body.append(scroller);
   sec.body.title =
     'Shift-click (or ⌘-click) or long-press a waveform to add or remove it as a Breed parent. ' +
-    'Shift+← / → moves the selected waveform; Ctrl/⌘+D copies it to the end.';
+    'Shift+← / → moves the selected waveform; Ctrl/⌘+← / → scrolls to the beginning / end; Ctrl/⌘+D copies the selection to the end.';
   watchVisibility(grid);
 
   let dirtyGrid = true;
@@ -515,6 +515,13 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
 
   return {
     el: sec.el,
+    /** Ctrl/⌘+← / →: the strip's beginning (-1) or end (+1); the selection stays. */
+    scrollToEdge(to) {
+      if (to < 0) {
+        layout();
+        scroller.scrollLeft = 0;
+      } else scrollToEnd();
+    },
     view: {
       frame() {
         if (!sec.isOpen() || !isOnScreen(grid)) return;

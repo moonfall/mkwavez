@@ -153,7 +153,8 @@ switches (the choice is remembered).
   **Shift+← / →** moves the selected waveform one place earlier / later (it swaps with its
   neighbour; the Timeline wavetable follows, voice windows on it keep their positions and
   play what is now inside them; other wavetables are unaffected; repeated moves of the same
-  waveform are one undo step). The strip keeps the selection in view and follows new
+  waveform are one undo step). **Ctrl/⌘+← / →** scrolls the strip to its beginning / end
+  (the selection stays). The strip keeps the selection in view and follows new
   waveforms when scrolled to the end.
 - **Wavetables**: named sets of slots referencing Timeline waveforms (no copies). Four
   read-only built-ins, all live: **Timeline** (1D, everything), **Last batch** (1D,
@@ -357,6 +358,7 @@ when other modifier keys are held. Controls show theirs in tooltips (and `aria-k
 | `[` / `]` | Previous / next voice tab (wraps) |
 | M | Mute / unmute the selected voice |
 | Shift+← / Shift+→ | Move the selected waveform one place earlier / later in the Timeline |
+| Ctrl/⌘+← / Ctrl/⌘+→ | Scroll the Timeline strip to its beginning / end (the selection stays) |
 | Ctrl/⌘+D | Copy the selected waveform to the end (while the Timeline strip has focus) |
 | ← / → | Batch strips (Seed, Mutate): show the previous / next waveform; Home / End: first / last |
 | ↑ / ↓ | Seed / Mutate libraries: previous / next entry (↓ from the search moves into the list; Enter picks the first match, Esc clears) |

@@ -110,7 +110,7 @@ src/
                         (preset picker, ⋯ menu, voice copy / paste); playing.ts (what a voice plays, as the
                         engine resolves it); midi.ts (transport MIDI picker,
                         LED, popover with routing and CC map); shortcuts.ts
-                        (page-wide keys: Space, [ / ], M, Shift+←/→; one
+                        (page-wide keys: Space, [ / ], M, Shift+←/→, Ctrl/⌘+←/→; one
                         capture-phase listener, skipped in text fields); session.ts
                         (Session menu: autosave status, New / Export / Import;
                         notices)

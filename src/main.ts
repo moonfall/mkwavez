@@ -167,7 +167,7 @@ root.replaceChildren(
 );
 layout.refresh();
 
-installShortcuts(ctx, { togglePlay: () => void togglePlay(ctx) });
+installShortcuts(ctx, { togglePlay: () => void togglePlay(ctx), scrollTimeline: (to) => timeline.scrollToEdge(to) });
 
 // ---- notices (e.g. an add refused: the Timeline is full of waveforms wavetables use) ----
 const toast = h('div', { class: 'toast', id: 'notice', role: 'status', 'aria-live': 'polite', hidden: true, onclick: () => (toast.hidden = true) });
