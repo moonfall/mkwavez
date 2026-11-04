@@ -2,11 +2,12 @@ import {
   breed,
   breedBatchTable,
   breedBiasAt,
+  breedChild,
   breedWeights,
+  defaultBreedBias,
   BREED_OPS,
   isSeededOp,
   MAX_PARENTS,
-  mutationAmount,
   type BiasWalk,
   type BreedMode,
   type BreedRequest,
@@ -41,7 +42,7 @@ type BatchMode = Exclude<BreedMode, 'single'>;
 
 const MODES: { mode: BatchMode; label: string; title: string }[] = [
   { mode: 'sweep', label: 'Sweep', title: 'Sweep: child i of N uses bias B·i/N (the last is B), one seed' },
-  { mode: 'gen', label: 'Generation', title: 'Generation: N children at bias B, each with its own seed' },
+  { mode: 'gen', label: 'Generation', title: 'Generation: N children around bias B, each with its own seed and a seeded nudge of the bias (and custom weights)' },
 ];
 const WALKS: { walk: BiasWalk; label: string; title: string }[] = [
   { walk: 'path', label: 'Path', title: 'Bias walks A → B → C → … → the last parent' },
@@ -64,6 +65,8 @@ const parentVar = (i: number) => `--par-${i % MAX_PARENTS}`;
 interface BreedPrefs {
   op: string;
   bias: number;
+  /** The bias follows the default for the parent count and walk (until the slider is moved). */
+  biasAuto: boolean;
   walk: BiasWalk;
   rate: number;
   mode: BatchMode;
@@ -73,11 +76,13 @@ interface BreedPrefs {
 function parsePrefs(p: Record<string, unknown>): BreedPrefs | null {
   const num = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= max ? v : null);
   const bias = num(p.bias, 1);
+  // Prefs saved before the automatic default: 0.5 was the default, so it counts as automatic.
+  const biasAuto = typeof p.biasAuto === 'boolean' ? p.biasAuto : bias === 0.5;
   const rate = num(p.rate, 0.5);
   const op = BREED_OPS.some((o) => o.id === p.op) ? String(p.op) : null;
   const walk = p.walk === 'path' || p.walk === 'ring' || p.walk === 'weights' ? p.walk : null;
   const mode = p.mode === 'sweep' || p.mode === 'gen' ? p.mode : null;
-  return bias === null || rate === null || !op || !walk || !mode ? null : { op, bias, walk, rate, mode };
+  return bias === null || rate === null || !op || !walk || !mode ? null : { op, bias, biasAuto, walk, rate, mode };
 }
 
 const hex = (s: number) => (s >>> 0).toString(16).padStart(8, '0');
@@ -117,7 +122,9 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     0,
     BREED_OPS.findIndex((o) => o.id === DEFAULT_OP),
   );
+  /** The bias set on the slider; while biasAuto, the bias follows defaultBreedBias() instead. */
   let bias = 0.5;
+  let biasAuto = true;
   let walk: BiasWalk = 'path';
   let rate = 0.05;
   let mode: BatchMode = 'sweep';
@@ -128,7 +135,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
 
   // Operator and parameters are saved with the session (UI prefs); parents live in the model.
   const PREF = 'breed';
-  const prefNow = (): BreedPrefs => ({ op: BREED_OPS[sel].id, bias, walk, rate, mode });
+  const prefNow = (): BreedPrefs => ({ op: BREED_OPS[sel].id, bias, biasAuto, walk, rate, mode });
   const savedPrefs = (): BreedPrefs | null => {
     const p = ctx.ui.pref<unknown>(PREF, null, (v) => typeof v === 'object' && v !== null);
     return p ? parsePrefs(p as Record<string, unknown>) : null;
@@ -144,6 +151,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   if (initial) {
     sel = BREED_OPS.findIndex((o) => o.id === initial.op);
     bias = initial.bias;
+    biasAuto = initial.biasAuto;
     walk = initial.walk;
     rate = initial.rate;
     mode = initial.mode;
@@ -152,12 +160,17 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const info = () => BREED_OPS[sel];
   const parents = (): WaveTable[] => model.breedParents.map((id) => model.table(id)).filter((t): t is WaveTable => !!t);
   const weightList = () => model.breedParents.map((id) => weights.get(id) ?? 1);
+  /**
+   * The bias in use: the slider's, or (until it is moved) the default for the parent count
+   * and walk — between two parents, never on one (bias ½ of three parents on the path is B).
+   */
+  const biasNow = () => (biasAuto ? defaultBreedBias(model.breedParents.length, walk) : bias);
   const ready = () => model.breedParents.length >= 2;
   /** The result depends on the seed: a seeded operator, or mutation (seeded jitter). */
   const usesSeed = () => isSeededOp(info().id) || rate > 0;
   const request = (): BreedRequest => ({
     op: info().id,
-    bias,
+    bias: biasNow(),
     walk,
     weights: walk === 'weights' ? weightList() : undefined,
     rate,
@@ -170,19 +183,9 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
 
   /**
    * Why Add +N would only add copies, or null. A sweep at bias 0 is N copies of A. A
-   * generation is N identical children when there's no mutation (rate 0, or one parent
-   * holding all the weight, e.g. bias 0 or a path stop on B) and either the operator
-   * isn't seeded or a single parent wins every seeded pick.
+   * generation never is: each child after the first nudges the bias (breedChild()).
    */
-  const batchBlocked = (): string | null => {
-    if (mode === 'sweep') return bias === 0 ? 'Bias 0: every child would be A' : null;
-    const P = model.breedParents.length;
-    if (P < 2) return null;
-    const w = breedWeights(P, bias, walk, weightList());
-    if (mutationAmount(rate, w) > 0) return null;
-    if (Math.max(...w) >= 1 - 1e-9) return `${parentLetter(w.indexOf(Math.max(...w)))} holds all the weight: copies`;
-    return isSeededOp(info().id) ? null : 'Identical children: pick a seeded operator or raise Mutation';
-  };
+  const batchBlocked = (): string | null => (mode === 'sweep' && biasNow() === 0 ? 'Bias 0: every child would be A' : null);
 
   // Dirty flags (drawn in the frame loop).
   let mainDirty = true;
@@ -254,6 +257,12 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const biasInput = h('input', { type: 'range', id: 'breed-bias', min: 0, max: 1, step: 0.01, value: bias, 'aria-label': 'Bias (0 = parent A)' });
   biasInput.addEventListener('input', () => {
     bias = Number(biasInput.value);
+    biasAuto = false;
+    syncValues();
+  });
+  // Double-click: back to the default bias for the parents and walk.
+  biasInput.addEventListener('dblclick', () => {
+    biasAuto = true;
     syncValues();
   });
   const rateVal = h('span', { class: 'mut-amount-val', id: 'breed-rate-val' });
@@ -276,7 +285,13 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const params = h(
     'div',
     { class: 'br-params' },
-    h('label', { class: 'mut-amount br-bias', title: 'Bias: 0 = parent A, then along the walk' }, h('span', {}, 'Bias'), biasInput, biasVal),
+    h(
+      'label',
+      { class: 'mut-amount br-bias', title: 'Bias: 0 = parent A, then along the walk (double-click: the default, between two parents)' },
+      h('span', {}, 'Bias'),
+      biasInput,
+      biasVal,
+    ),
     h('div', { class: 'seg br-walk', role: 'group', 'aria-label': 'Bias walk' }, ...walkButtons),
     h(
       'label',
@@ -298,8 +313,16 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     savePrefs();
   };
 
+  /** The slider and its value follow the bias in use (the default moves with the parents and walk). */
+  const syncBias = () => {
+    const b = biasNow();
+    biasVal.textContent = pct(b);
+    biasVal.title = biasAuto ? 'Default: between two parents (move the slider to set it)' : '';
+    if (document.activeElement !== biasInput || biasAuto) biasInput.value = String(b);
+  };
+
   const syncValues = () => {
-    biasVal.textContent = pct(bias);
+    syncBias();
     rateVal.textContent = pct(rate);
     relabelCards();
     syncShownLabel();
@@ -315,6 +338,10 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
       walkButtons[i].setAttribute('aria-pressed', String(x.walk === w));
     });
     chips.classList.toggle('show-weights', w === 'weights');
+    if (biasAuto) {
+      syncBias();
+      relabelCards();
+    }
     syncGuards();
     savePrefs();
     syncShownLabel();
@@ -394,16 +421,17 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   };
 
   const cardLabel = (i: number) => (mode === 'gen' ? `child ${i + 1}` : `b ${pct(breedBiasAt(request(), i))}`);
+  const childAt = (i: number) => breedChild(request(), model.breedParents.length, i);
   const relabelCards = () => strip.resize(opts.count(), cardLabel);
 
   const syncShownLabel = () => {
     const n = opts.count();
     const i = strip.shown();
-    const b = breedBiasAt(request(), i);
-    shownLabel.textContent = mode === 'gen' ? `child ${i + 1} of ${n} · bias ${pct(b)}` : `#${i + 1} of ${n} · bias ${pct(b)}`;
+    const c = childAt(i);
+    shownLabel.textContent = mode === 'gen' ? `child ${i + 1} of ${n} · bias ${pct(c.bias)}` : `#${i + 1} of ${n} · bias ${pct(c.bias)}`;
     tagRow.title = `${title.textContent} · ${shownLabel.textContent}`;
     const P = model.breedParents.length;
-    weightsLabel.textContent = P >= 2 ? breedWeights(P, b, walk, weightList()).map((v, k) => `${parentLetter(k)} ${pctN(v)}`).join(' · ') : '';
+    weightsLabel.textContent = P >= 2 ? breedWeights(P, c.bias, walk, c.weights ?? weightList()).map((v, k) => `${parentLetter(k)} ${pctN(v)}`).join(' · ') : '';
   };
 
   /** Add buttons (need two parents; Add +N refuses batches of copies) and Add selected. */
@@ -753,7 +781,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const thumbDrawn: string[] = BREED_OPS.map(() => '');
   let thumbTarget = '';
   let thumbTargetAt = -Infinity;
-  const thumbKey = () => `${model.breedParents.join(',')}|${bias}|${walk}|${walk === 'weights' ? weightList().join(',') : ''}|${rate}|${seed}`;
+  const thumbKey = () => `${model.breedParents.join(',')}|${biasNow()}|${walk}|${walk === 'weights' ? weightList().join(',') : ''}|${rate}|${seed}`;
   let thumbParams: { ps: WaveTable[]; bias: number; walk: BiasWalk; weights?: number[]; rate: number; seed: number } | null = null;
   const drawThumbs = (now: number, deadline: number) => {
     const target = thumbKey();
@@ -762,7 +790,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
       thumbTarget = target;
       thumbTargetAt = now;
       const ps = parents();
-      thumbParams = ps.length >= 2 ? { ps, bias, walk, weights: walk === 'weights' ? weightList() : undefined, rate, seed } : null;
+      thumbParams = ps.length >= 2 ? { ps, bias: biasNow(), walk, weights: walk === 'weights' ? weightList() : undefined, rate, seed } : null;
     }
     const tp = thumbParams;
     const normal = cssColor('--text-2');
@@ -811,7 +839,15 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     cardsDirty = mainDirty = true;
     flash('');
   });
-  model.on('parents', renderChips);
+  model.on('parents', () => {
+    renderChips();
+    // The default bias depends on the parent count.
+    if (biasAuto) {
+      syncBias();
+      relabelCards();
+      syncShownLabel();
+    }
+  });
   model.on('voices', renderVoices);
   model.on('selection', syncGuards);
   model.on('timeline', () => {
@@ -832,8 +868,9 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     const i = BREED_OPS.findIndex((o) => o.id === p.op);
     if (i !== sel) lib.select(i);
     bias = p.bias;
+    biasAuto = p.biasAuto;
     rate = p.rate;
-    biasInput.value = String(bias);
+    biasInput.value = String(biasNow());
     rateInput.value = String(rate);
     setWalk(p.walk);
     setMode(p.mode);

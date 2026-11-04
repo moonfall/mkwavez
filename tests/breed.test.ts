@@ -8,6 +8,8 @@ import {
   breedWeights,
   BREED_OPS,
   childSeed,
+  defaultBreedBias,
+  isSeededOp,
   MAX_PARENTS,
   mutationAmount,
   type BiasWalk,
@@ -230,13 +232,62 @@ describe('breedBatch and recipes', () => {
     expect(same(out[3].data, pv.data)).toBe(true);
   });
 
-  it('generation: N children at one bias with derived seeds; child 0 equals the preview', () => {
+  it('generation: N children around one bias with derived seeds; child 0 equals the preview', () => {
     const out = breedBatch({ op: 'bands', bias: 0.5, walk: 'path', rate: 0.05, seed: 9, mode: 'gen', count: 4 }, [A, B]);
     const [pv] = breedBatch({ op: 'bands', bias: 0.5, walk: 'path', rate: 0.05, seed: 9, mode: 'single', count: 1 }, [A, B]);
     expect(same(out[0].data, pv.data)).toBe(true);
     expect(childSeed(9, 0)).toBe(9);
-    expect(out.every((t) => t.recipe.params.bias === 0.5 && t.recipe.seed === 9)).toBe(true);
-    for (let i = 1; i < 4; i++) expect(maxDiff(out[i].data, out[0].data)).toBeGreaterThan(1e-4);
+    expect(out.every((t) => t.recipe.params.batchBias === 0.5 && t.recipe.seed === 9)).toBe(true);
+    // Child 0 at the bias itself; the others nudged by at most a quarter of the A→B segment.
+    expect(out[0].recipe.params.bias).toBe(0.5);
+    for (let i = 1; i < 4; i++) {
+      const b = Number(out[i].recipe.params.bias);
+      expect(b).not.toBe(0.5);
+      expect(Math.abs(b - 0.5)).toBeLessThanOrEqual(0.25);
+      expect(Math.abs(b - 0.5)).toBeGreaterThanOrEqual(0.1);
+      expect(maxDiff(out[i].data, out[0].data)).toBeGreaterThan(1e-4);
+    }
+  });
+
+  it('generation: every operator gives N different children, even on a parent (3 parents, bias ½ = B)', () => {
+    // At the default mutation rate; unseeded operators even without mutation.
+    for (const op of OPS) {
+      const out = breedBatch({ op, bias: 0.5, walk: 'path', rate: isSeededOp(op) ? 0.05 : 0, seed: 77, mode: 'gen', count: 6 }, [A, B, C]);
+      for (let i = 0; i < out.length; i++)
+        for (let j = i + 1; j < out.length; j++) expect(maxDiff(out[i].data, out[j].data), `${op} #${i} vs #${j}`).toBeGreaterThan(1e-4);
+    }
+    // Custom weights move too.
+    const w = breedBatch({ op: 'mix', bias: 1, walk: 'weights', weights: [1, 1, 1], rate: 0, seed: 5, mode: 'gen', count: 3 }, [A, B, C]);
+    expect(w[0].recipe.params.weights).toBe('1,1,1');
+    expect(w[1].recipe.params.weights).not.toBe('1,1,1');
+  });
+
+  it('generation recipes from before the jitter (bias = batch bias) re-render as they were made', () => {
+    const parentsABC = [A, B, C];
+    const old = {
+      op: 'breed',
+      params: { breed: 'mix', bias: 0.5, batchBias: 0.5, mode: 'gen', walk: 'path', weights: '', rate: 0.05 },
+      seed: 9,
+      parents: [10, 11, 12],
+      batch: { index: 3, count: 8 },
+    };
+    const resolve = (id: number) => parentsABC.find((p) => p.id === id)?.data;
+    const want = breed(parentsABC.map((p) => p.data), { op: 'mix', bias: 0.5, walk: 'path', rate: 0.05, seed: childSeed(9, 3) });
+    expect(same(renderRecipe(old, { resolveTable: resolve }), want)).toBe(true);
+  });
+
+  it('default bias: between two parents, never on one', () => {
+    expect(defaultBreedBias(2, 'path')).toBe(0.5);
+    expect(defaultBreedBias(3, 'path')).toBe(0.75);
+    expect(defaultBreedBias(4, 'path')).toBe(0.5);
+    expect(defaultBreedBias(2, 'ring')).toBe(0.75);
+    expect(defaultBreedBias(3, 'weights')).toBe(0.5);
+    for (let P = 2; P <= MAX_PARENTS; P++)
+      for (const walk of ['path', 'ring'] as BiasWalk[]) {
+        const w = breedWeights(P, defaultBreedBias(P, walk), walk);
+        expect(Math.max(...w), `${P} ${walk}`).toBeCloseTo(0.5, 12);
+        expect(w.filter((v) => v > 0).length, `${P} ${walk}`).toBe(2);
+      }
   });
 
   for (const mode of ['single', 'sweep', 'gen'] as BreedMode[]) {

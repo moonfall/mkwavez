@@ -3210,12 +3210,12 @@ async function breedChecks(page, tlCount, label) {
   assert((await M(() => window.mkwavez.model.selectedId)) === selBefore, 'undo of Add shown restores the selection');
   await page.fill('#breed-rate', '0.05');
 
-  // Generation: N children at one bias, child labels, distinct; selects the last; undo.
+  // Generation: N children around one bias (each after the first nudged), child labels, distinct; selects the last; undo.
   await pick('genetic');
   await page.click('#breed-mode-gen');
   assert((await page.getAttribute('#breed-mode-gen', 'aria-pressed')) === 'true', 'Generation pressed');
   assert((await page.textContent('#breed-strip .gen-card:nth-child(1)')).trim() === 'child 1', 'generation cards labelled by child #');
-  assert((await shownTxt()) === 'child 6 of 8 · bias 30%', `generation header (${await shownTxt()})`);
+  assert(/^child 6 of 8 · bias [\d.]+%$/.test(await shownTxt()) && (await shownTxt()) !== 'child 6 of 8 · bias 30%', `generation header: the child's own (nudged) bias (${await shownTxt()})`);
   await page.waitForTimeout(300);
   n = await tlCount();
   const selGen = await M(() => window.mkwavez.model.selectedId);
@@ -3226,13 +3226,18 @@ async function breedChecks(page, tlCount, label) {
     const distinct = new Set(b.map((t) => Array.from(t.data.slice(0, 64), (v) => v.toFixed(5)).join())).size;
     return {
       biases: [...new Set(b.map((t) => t.recipe.params.bias))],
+      batchBiases: [...new Set(b.map((t) => t.recipe.params.batchBias))],
+      first: b[0].recipe.params.bias,
       modes: [...new Set(b.map((t) => t.recipe.params.mode))],
       distinct,
       sel: m.selectedId === b[7].id,
     };
   });
-  assert((await tlCount()) === n + 8 && r.biases.length === 1 && r.biases[0] === 0.3 && r.modes[0] === 'gen', 'Add +8 (generation) adds 8 at one bias');
-  assert(r.distinct > 1, `generation children differ (${r.distinct} distinct)`);
+  assert(
+    (await tlCount()) === n + 8 && r.batchBiases.length === 1 && r.batchBiases[0] === 0.3 && r.first === 0.3 && r.biases.length === 8 && r.modes[0] === 'gen',
+    `Add +8 (generation) adds 8 around one bias: child 1 at it, the others nudged (${JSON.stringify(r.biases)})`,
+  );
+  assert(r.distinct === 8, `generation children differ (${r.distinct} distinct)`);
   assert(r.sel, 'generation: Add +8 selects the last waveform added');
   await page.click('#undo');
   assert((await tlCount()) === n && (await M(() => window.mkwavez.model.selectedId)) === selGen, 'undo removes the generation and restores the selection');
@@ -3244,19 +3249,20 @@ async function breedChecks(page, tlCount, label) {
   await page.click('#undo');
   assert((await tlCount()) === n, 'undo of Add shown');
 
-  // Guards: Add +N refuses batches of copies.
+  // Guards: Add +N refuses batches of copies (a generation never is one: its children are nudged).
   await pick('mix');
   await page.fill('#breed-rate', '0');
-  assert(await page.isDisabled('#breed-add-batch'), 'generation of Crossfade at 0% mutation is disabled');
-  assert((await page.textContent('#breed-blocked')).includes('Identical'), `the reason is shown (${(await page.textContent('#breed-blocked')).trim()})`);
-  assert(!(await page.isDisabled('#breed-add-shown')), 'Add shown still adds one child');
+  assert(!(await page.isDisabled('#breed-add-batch')) && !(await page.textContent('#breed-blocked')).trim(), 'generation of Crossfade at 0% mutation is allowed (children differ)');
   await page.fill('#breed-rate', '0.05');
-  assert(!(await page.isDisabled('#breed-add-batch')) && !(await page.textContent('#breed-blocked')).trim(), 're-enabled with mutation');
   await pick('genetic');
   await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2, t3]);
   await page.fill('#breed-bias', '0.5');
-  assert(await page.isDisabled('#breed-add-batch'), 'generation at a pure parent (path stop on B of three) is disabled');
+  assert(!(await page.isDisabled('#breed-add-batch')), 'generation at a pure parent (path stop on B of three) is allowed (children differ)');
+  // Default bias: double-click goes back to it — between two parents (¾ of three on the path, ½ of two).
+  await page.dblclick('#breed-bias');
+  assert((await page.textContent('#breed-bias-val')).trim() === '75%', `three parents: default bias 75% (${(await page.textContent('#breed-bias-val')).trim()})`);
   await M((ps) => window.mkwavez.model.setBreedParents(ps), [t1, t2]);
+  assert((await page.textContent('#breed-bias-val')).trim() === '50%', 'two parents: the default bias follows (50%)');
   assert(!(await page.isDisabled('#breed-add-batch')), 'generation between two parents enabled');
   await page.click('#breed-mode-sweep');
   await page.fill('#breed-bias', '0');

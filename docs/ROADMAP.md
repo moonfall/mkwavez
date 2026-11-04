@@ -64,11 +64,13 @@ Deferred / known gaps from M2:
   is shape(A) for every operator (tested). Mutation adds seeded Jitter at
   `rate · min(1, 2·(1 − max w))`, so pure parents stay exact.
 - Breed adds one child and selects it; Breed N = Sweep (bias B·i/N, one seed; seeded
-  masks hand harmonics over monotonically) or Generation (N children at the same bias,
-  child j seed derived from the Apply seed, child 0 = preview). Breed N is disabled when it would only add
-  copies: Sweep at bias 0, or a Generation with no effective mutation (rate 0, or one
-  parent holding all the weight) and a deterministic operator or a single winning
-  parent.
+  masks hand harmonics over monotonically) or Generation (N children around bias B,
+  child j seed derived from the Apply seed, child 0 = preview; children after the first
+  nudge the bias by 0.1–0.25 of a walk segment, and custom weights by up to 2×, so every
+  operator gives N different children; recipes record each child's own bias / weights).
+  Breed N is disabled when it would only add copies: Sweep at bias 0. The default bias
+  sits between two parents (½ of two, ¾ of three on the path) until the slider is moved;
+  double-click returns to it.
 - Recipes (`op: 'breed'`) record operator, bias, batch bias, mode, walk, weights,
   rate, seed, batch index and all parent ids; re-rendering reproduces every operator ×
   walk × mode exactly (unit-tested). Preview, seeds, window following, batch window

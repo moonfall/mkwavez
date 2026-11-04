@@ -25,6 +25,17 @@
  *   parents every parent id, in order (A first)
  *   batch   { index, count }
  * Sweep table i (0-based) of N uses bias B·(i+1)/N and the Apply's seed.
+ *
+ * Generation children 1…N−1 also move their bias (and, for the weights walk, each
+ * parent's weight) by a seeded jitter around the setting (breedChild()), so every operator
+ * gives N different children — unseeded ones, and seeded ones whose picks a single parent
+ * would win, made N identical children before. Child 0 stays the preview. The recipe
+ * records the child's own bias / weights, so it re-renders without recomputing the jitter
+ * (and recipes from before re-render exactly as they were made).
+ *
+ * Default bias (defaultBreedBias()): with three or more parents on the path walk, bias ½
+ * is exactly a parent (B for three), where every operator returns that parent; the default
+ * is the middle of the walk's middle segment instead.
  */
 import { KMAX, TABLE_SIZE } from './constants';
 import { fft } from './fft';
@@ -77,6 +88,37 @@ const PHASE_EPS = 1e-4;
 const MUTATION_STREAM = 0x6a17;
 
 export const isSeededOp = (op: BreedOpId): boolean => BREED_OPS.find((o) => o.id === op)?.seeded ?? false;
+
+/** Segments of a bias walk: path P−1, ring P, weights 1 (A → the custom mix). */
+const walkSegments = (count: number, walk: BiasWalk) => (walk === 'weights' ? 1 : Math.max(1, walk === 'ring' ? count : count - 1));
+
+/**
+ * The default bias for `count` parents: the middle of the walk's middle segment (between
+ * two parents, never on one). Two parents on the path: ½; three: ¾ (between B and C);
+ * four: ½ (between B and C). Weights walk: ½.
+ */
+export function defaultBreedBias(count: number, walk: BiasWalk): number {
+  if (walk === 'weights' || count < 2) return 0.5;
+  const segs = walkSegments(count, walk);
+  return (Math.floor(segs / 2) + 0.5) / segs;
+}
+
+/**
+ * Generation jitter: the bias moves by GEN_BIAS_JITTER_MIN … GEN_BIAS_JITTER of a walk
+ * segment, either way (at least a little, so no child repeats the preview); weights ×
+ * 2^±GEN_WEIGHT_JITTER.
+ */
+export const GEN_BIAS_JITTER = 0.25;
+export const GEN_BIAS_JITTER_MIN = 0.1;
+export const GEN_WEIGHT_JITTER = 1;
+/** Stream index for the generation jitter draws. */
+const GEN_STREAM = 0x6e7a;
+
+/** v folded back into [0, 1] (no clamping: a jittered bias near 0 doesn't stick to parent A). */
+const reflect01 = (v: number) => {
+  const m = ((v % 2) + 2) % 2;
+  return m > 1 ? 2 - m : m;
+};
 
 /** Per-parent weights (sum 1) for a bias walk. Bias 0 is always [1, 0, …]. */
 export function breedWeights(count: number, bias: number, walk: BiasWalk, custom?: readonly number[]): number[] {
@@ -398,9 +440,26 @@ export function parseWeights(s: unknown): number[] | undefined {
 /** Number of children an Apply makes (1 for 'single'). */
 export const breedCount = (req: BreedRequest): number => (req.mode === 'single' ? 1 : Math.max(1, Math.round(req.count)));
 
-/** Bias of child i (0-based) of an Apply: B·(i+1)/N for a sweep, B otherwise. */
+/** Bias of child i (0-based) of an Apply: B·(i+1)/N for a sweep, B otherwise (before a generation's jitter: breedChild()). */
 export function breedBiasAt(req: BreedRequest, i: number): number {
   return req.mode === 'sweep' ? (req.bias * (i + 1)) / breedCount(req) : req.bias;
+}
+
+/**
+ * Bias and custom weights (walk 'weights') of child i of an Apply with `count` parents:
+ * breedBiasAt(), and for generation children after the first a seeded jitter around them —
+ * the bias by GEN_BIAS_JITTER_MIN…GEN_BIAS_JITTER of a walk segment either way (folded back into [0, 1]), each
+ * weight by a factor up to 2^±GEN_WEIGHT_JITTER.
+ */
+export function breedChild(req: BreedRequest, count: number, i: number): { bias: number; weights?: number[] } {
+  const bias = breedBiasAt(req, i);
+  const weights = req.walk === 'weights' ? Array.from({ length: count }, (_, p) => req.weights?.[p] ?? 1) : undefined;
+  if (req.mode !== 'gen' || i === 0) return { bias, weights };
+  const r = new Prng(deriveSeed(childSeed(req.seed, i), GEN_STREAM));
+  const u = r.bipolar();
+  const nudge = Math.sign(u || 1) * (GEN_BIAS_JITTER_MIN + (GEN_BIAS_JITTER - GEN_BIAS_JITTER_MIN) * Math.abs(u));
+  const b = reflect01(bias + nudge / walkSegments(count, req.walk));
+  return { bias: b, weights: weights?.map((w) => w * Math.pow(2, GEN_WEIGHT_JITTER * r.bipolar())) };
 }
 
 /**
@@ -410,8 +469,7 @@ export function breedBiasAt(req: BreedRequest, i: number): number {
 export function breedBatchTable(req: BreedRequest, parents: readonly WaveTable[], i: number): GeneratedTable {
   const count = breedCount(req);
   const seed = req.seed >>> 0;
-  const bias = breedBiasAt(req, i);
-  const weights = req.walk === 'weights' ? Array.from({ length: parents.length }, (_, p) => req.weights?.[p] ?? 1) : undefined;
+  const { bias, weights } = breedChild(req, parents.length, i);
   const recipe: Recipe = {
     op: 'breed',
     params: {
