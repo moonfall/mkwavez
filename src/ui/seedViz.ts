@@ -38,6 +38,8 @@ import {
   shaperAt,
   shaperCurve,
   StepCache,
+  superformulaAt,
+  superformulaRadius,
   supersawLevel,
   supersawPhases,
   type Board,
@@ -51,6 +53,7 @@ import {
   type ResonanceParams,
   type SequenceParams,
   type SplineParams,
+  type SuperformulaParams,
 } from '../core/generators';
 import { fbm, noiseField } from '../core/perlin';
 import type { ParamValue } from '../core/table';
@@ -400,16 +403,20 @@ viz('mode:shaper', {
   },
 });
 
-// Superformula: r(φ) = (|cos 1.5φ|^m + |sin 1.5φ|^m)^(−1/2), m = 2 + 6u, drawn in polar form.
-viz('superformula', {
-  axis: (i) => ['', `polar r(φ) · m = ${f2(2 + 6 * i.u)}`, ''],
+// Superformula: the shape in polar form at the shown n2 / n3 (radius vs angle is the waveform).
+viz('mode:superformula', {
+  axis: (i) => {
+    const a = superformulaAt(i.params as unknown as SuperformulaParams, i.index, i.count);
+    return ['', `m ${i.params.m} · n1 ${f2(i.params.n1)} · n2 ${f2(a.n2)} · n3 ${f2(a.n3)}`, ''];
+  },
   draw: (g, w, h, i, c) => {
-    const m = 2 + 6 * i.u;
+    const p = i.params;
+    const a = superformulaAt(p as unknown as SuperformulaParams, i.index, i.count);
     g.strokeStyle = c.grid;
     g.beginPath();
     g.arc(w / 2, h / 2, Math.min(w, h) / 2 - 5, 0, TAU);
     g.stroke();
-    polar(g, w, h, (p) => Math.pow(Math.pow(Math.abs(Math.cos(1.5 * p)), m) + Math.pow(Math.abs(Math.sin(1.5 * p)), m), -0.5), c.accent);
+    polar(g, w, h, (phi) => Math.min(1e6, superformulaRadius(p.m, p.n1, a.n2, a.n3, phi)), c.accent);
   },
 });
 

@@ -18,6 +18,7 @@ import { DEFAULT_SHAPER as SH, SHAPER_INPUTS, SHAPERS, shaperTable, type ShaperP
 import { DEFAULT_FM as FMD, FM_ROUTINGS, fmTable, type FmParams } from './fm';
 import { DEFAULT_PD as PDD, PD_SHAPES, pdTable, type PdParams } from './phaseDistortion';
 import { DEFAULT_RESONANCE as RSD, RESONANCE_WINDOWS, resonanceTable, type ResonanceParams } from './resonance';
+import { DEFAULT_SUPERFORMULA as SFD, superformulaTable, type SuperformulaParams } from './superformula';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
@@ -80,6 +81,26 @@ function nums<T extends object>(p: ModeParams, defaults: T): T {
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
 export const PARAM_MODES = [
+  {
+    mode: 'superformula',
+    id: 'superformula-shape',
+    cat: 'Shapers',
+    name: 'Superformula',
+    about:
+      'Gielis’ superformula read as radius vs angle: m sets the symmetry, n1 how pinched the shape is, n2 and n3 its ' +
+      'sides. The batch sweeps n2 and n3.',
+    params: [
+      { key: 'm', label: 'Symmetry m', min: 1, max: 24, step: 1, value: SFD.m },
+      { key: 'n1', label: 'n1 (pinch)', min: 0.1, max: 12, step: 0.05, value: SFD.n1 },
+      { key: 'n2', label: 'n2', min: 0.1, max: 20, step: 0.05, value: SFD.n2 },
+      { key: 'n2End', label: 'Batch → n2', min: 0.1, max: 20, step: 0.05, value: SFD.n2End },
+      { key: 'n3', label: 'n3', min: 0.1, max: 20, step: 0.05, value: SFD.n3 },
+      { key: 'n3End', label: 'Batch → n3', min: 0.1, max: 20, step: 0.05, value: SFD.n3End },
+    ],
+    variants: [{ id: 'superformula', values: {} }],
+    seeded: () => false,
+    render: (p, _seed, index, count) => superformulaTable(nums<SuperformulaParams>(p, SFD), index, count),
+  },
   {
     mode: 'resonance',
     id: 'resonance',

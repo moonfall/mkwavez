@@ -346,6 +346,7 @@ Seed tab, **ƒ Functions** in the legend opens this list.
 | `fm(x, carrier, ratio, index, ratio2, amount2, routing)` | sin(carrier·x + index·M) with M = sin(ratio·x) and a second modulator at `ratio2`, `amount2`: routing 0 into the modulator (nested) · 1 times it (ring) · 2 into the carrier (FM / PM: FM sweep, Nested FM, Cross PM) |
 | `pd(x, shape, amount)` | phase distortion: a sine read through a bent phase, shape 0 saw (knee) · 1 square · 2 half square, amount 0 (sine) … 1 (Phase distortion: CZ phase dist) |
 | `resonance(x, window, ratio)` | sin(ratio·x) under a window restarting every cycle: 0 raised cosine · 1 saw (falling) · 2 triangle · 3 trapezoid (Resonance: the CZ resonance presets) |
+| `superformula(x, m, n1, n2, n3)` | Gielis superformula radius vs angle, (\|cos(mx/4)\|^n2 + \|sin(mx/4)\|^n3)^(−1/n1) (Superformula) |
 | `perlin(x, freq, z, oct, pers, seed?)` | loop-seamless Perlin noise (Perlin noise: z = start + drift·u) |
 | `ca(x, rule, cells, gen, seed?)` | generation `gen` of an elementary cellular automaton as ±1 steps (Cellular automaton: gen = start + n) |
 | `dyn(x, map, control, iters, spread, output)` | chaotic map 0 logistic · 1 sine · 2 circle · 3 Hénon · 4 tent; control 0 … 1; output 0 linear / 1 soft clip (Dynamical systems) |
