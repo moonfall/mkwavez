@@ -243,14 +243,14 @@ TEST("golden: resolveMix (400 random wavetables and queries)") {
 
 // ---- engine scenarios (opcodes as in tests/golden.test.ts) ----
 
-const char* const SCENARIOS[] = {"sequence", "midi2d", "steplen", "synth", "synthEdit", "synthGuard", "stereo", "poly", "warp", "macros", "modplus", "rows"};
+const char* const SCENARIOS[] = {"sequence", "midi2d", "steplen", "synth", "synthEdit", "synthGuard", "stereo", "poly", "warp", "macros", "modplus", "mpe", "rows"};
 /** Synth voices: the same bound as the rest (measured: well under it). */
 constexpr double SYNTH_TOL = 2e-6;
 
 namespace {
 
 enum Op { opTable = 1, opRemoveTable, opWavetable, opVoice, opRemoveVoice, opSequence, opTransport, opNoteOn, opNoteOff,
-          opAllNotesOff, opBend, opPatch, opRemoveSequence, opRemoveWavetable, opMod, opPressure };
+          opAllNotesOff, opBend, opPatch, opRemoveSequence, opRemoveWavetable, opMod, opPressure, opNotePressure, opNoteSlide, opNoteBend };
 
 /** Synth params in the order of encodeSynth() in tests/golden.test.ts. */
 SynthParams decodeSynth(const std::vector<double>& op, size_t i) {
@@ -371,6 +371,9 @@ void applyOp(SynthEngine& e, Store& store, const std::vector<double>& op) {
         case opRemoveWavetable: return e.removeWavetable(ai(0));
         case opMod: return e.applyMidi(MidiVoiceEvent{MidiVoiceEvent::mod, ai(0), 0, 0, a(1)});
         case opPressure: return e.applyMidi(MidiVoiceEvent{MidiVoiceEvent::pressure, ai(0), 0, 0, a(1)});
+        case opNotePressure: return e.applyMidi(MidiVoiceEvent{MidiVoiceEvent::notePressure, ai(0), ai(1), 0, a(2)});
+        case opNoteSlide: return e.applyMidi(MidiVoiceEvent{MidiVoiceEvent::noteSlide, ai(0), ai(1), 0, a(2)});
+        case opNoteBend: return e.applyMidi(MidiVoiceEvent{MidiVoiceEvent::noteBend, ai(0), ai(1), 0, a(2)});
         default: check::report(false, "unknown golden op", __FILE__, __LINE__);
     }
 }

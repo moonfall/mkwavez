@@ -69,6 +69,10 @@ interface NoteSlot {
   key: number;
   /** Allocation order (oldest = smallest). */
   age: number;
+  /** Per-note expression (polyphonic aftertouch, MPE): pressure / slide 0..1, bend semitones. */
+  notePressure: number;
+  slide: number;
+  noteBend: number;
 }
 
 /** A pooled note of a polyphonic Synth voice. */
@@ -83,6 +87,9 @@ class PolyNote implements NoteSlot {
   gateRemaining = 0;
   key = -1;
   age = 0;
+  notePressure = 0;
+  slide = 0;
+  noteBend = 0;
   constructor(readonly index: number) {}
 }
 
@@ -125,6 +132,9 @@ class VoiceRuntime {
   key = -1;
   age = 0;
   lastPitch = Number.NaN;
+  notePressure = 0;
+  slide = 0;
+  noteBend = 0;
 
   constructor(p: VoiceParams, sampleRate: number) {
     this.params = p;
@@ -210,6 +220,8 @@ export class SynthEngine {
     bpm: 132,
     wheel: 0,
     pressure: 0,
+    slide: 0,
+    noteBend: 0,
     unisonScale: 1,
     beat: -1,
   };
@@ -361,6 +373,7 @@ export class SynthEngine {
     n.vel = vel;
     n.key = key;
     n.age = ++this.noteAge;
+    n.notePressure = n.slide = n.noteBend = 0;
     const glide = s.glide > 0 && !Number.isNaN(v.lastPitch) && (!s.glideLegato || legato);
     if (glide) {
       syn.pitch = v.lastPitch;
@@ -442,6 +455,7 @@ export class SynthEngine {
     v.freq = freq;
     v.vel = 1;
     v.key = -1;
+    v.notePressure = v.slide = v.noteBend = 0;
     v.gateRemaining = Math.max(1, Math.round(gateSamples));
     this.synthNote(v, 1, false, true);
     v.env.gateOn();
@@ -469,6 +483,7 @@ export class SynthEngine {
     }
     v.notes.push(note, velocity);
     v.key = note;
+    v.notePressure = v.slide = v.noteBend = 0;
     v.freq = midiNoteFreq(note, v.params.octave);
     v.vel = velocityGain(velocity);
     v.gateRemaining = 0;
@@ -500,6 +515,7 @@ export class SynthEngine {
       this.gateOff(v);
     } else if (wasTop) {
       v.key = v.notes.top;
+      v.notePressure = v.slide = v.noteBend = 0;
       v.freq = midiNoteFreq(v.notes.top, v.params.octave);
       v.vel = velocityGain(v.notes.topVelocity);
       this.synthNote(v, v.notes.topVelocity / 127, true, false);
@@ -547,7 +563,21 @@ export class SynthEngine {
         if (v) v[ev.type === 'mod' ? 'wheel' : 'pressure'] = Math.max(0, Math.min(1, ev.value));
         return;
       }
+      case 'notePressure':
+        return this.noteExpr(ev.voiceId, ev.note, 'notePressure', Math.max(0, Math.min(1, ev.value)));
+      case 'noteSlide':
+        return this.noteExpr(ev.voiceId, ev.note, 'slide', Math.max(0, Math.min(1, ev.value)));
+      case 'noteBend':
+        return this.noteExpr(ev.voiceId, ev.note, 'noteBend', Number.isFinite(ev.semitones) ? Math.max(-96, Math.min(96, ev.semitones)) : 0);
     }
+  }
+
+  /** Per-note expression for the slot(s) sounding `note` on a voice (its own note or pool notes). */
+  private noteExpr(voiceId: number, note: number, field: 'notePressure' | 'slide' | 'noteBend', value: number): void {
+    const v = this.findVoice(voiceId);
+    if (!v) return;
+    if (v.key === note && v.env.stage !== IDLE) v[field] = value;
+    for (const n of this.pool) if (n.owner === v && n.key === note && n.env.stage !== IDLE) n[field] = value;
   }
 
   status(out: EngineStatus): EngineStatus {
@@ -755,7 +785,9 @@ export class SynthEngine {
     c.gainTarget = p.mute ? 0 : p.level * (1 - s.velAmp + s.velAmp * n.vel);
     c.bpm = this.bpm;
     c.wheel = v.wheel;
-    c.pressure = v.pressure;
+    c.pressure = n.notePressure > v.pressure ? n.notePressure : v.pressure;
+    c.slide = n.slide;
+    c.noteBend = n.noteBend;
     n.syn!.control(p, c);
 
   }

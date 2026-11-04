@@ -18,6 +18,10 @@ inline constexpr int CC_MOD_WHEEL = 1;
 inline constexpr int CC_ALL_SOUND_OFF = 120;
 inline constexpr int CC_RESET_ALL_CONTROLLERS = 121;
 inline constexpr int CC_ALL_NOTES_OFF = 123;
+/** MPE slide: CC 74 on a member channel. */
+inline constexpr int CC_SLIDE = 74;
+/** MPE per-note bend range on member channels (semitones). */
+inline constexpr double MPE_BEND_RANGE = 48;
 inline constexpr int CC_MAX_ASSIGNABLE = 119;
 inline constexpr double LFO_RATE_MIN = 0.02;
 inline constexpr double LFO_RATE_MAX = 4;
@@ -37,7 +41,7 @@ inline double bendSemitones(double value) { return std::max(-1.0, std::min(1.0, 
 
 /** Channels are 1..16; bend value -1..1. */
 struct MidiMessage {
-    enum Kind : uint8_t { none, noteOn, noteOff, cc, bend, pressure } kind = none;
+    enum Kind : uint8_t { none, noteOn, noteOff, cc, bend, pressure, polyPressure } kind = none;
     int channel = 1;
     int a = 0; // note / controller
     int b = 0; // velocity / controller value
@@ -65,6 +69,7 @@ inline MidiMessage parseMidi(const uint8_t* data, int size) {
     switch (type) {
         case 0x80: m.kind = MidiMessage::noteOff; m.a = d1; break;
         case 0x90: m.kind = d2 == 0 ? MidiMessage::noteOff : MidiMessage::noteOn; m.a = d1; m.b = d2; break;
+        case 0xa0: m.kind = MidiMessage::polyPressure; m.a = d1; m.value = d2 / 127.0; break;
         case 0xb0: m.kind = MidiMessage::cc; m.a = d1; m.b = d2; break;
         case 0xe0: {
             const int v = ((d2 << 7) | d1) - 8192;
@@ -80,11 +85,12 @@ inline MidiMessage parseMidi(const uint8_t* data, int size) {
 /** Engine events (one voice each). allNotesOff with voiceId -1 = every voice. */
 struct MidiVoiceEvent {
     /** mod / pressure: mod wheel and channel pressure 0..1 (Synth voice matrix sources). */
-    enum Type : uint8_t { noteOn, noteOff, allNotesOff, bend, cc, mod, pressure } type = noteOn;
+    /** notePressure / noteSlide (0..1) / noteBend (semitones): per-note expression (poly aftertouch, MPE). */
+    enum Type : uint8_t { noteOn, noteOff, allNotesOff, bend, cc, mod, pressure, notePressure, noteSlide, noteBend } type = noteOn;
     int voiceId = -1;
     int note = 0; // note, or controller for cc
     int velocity = 0; // velocity, or controller value for cc
-    /** bend: semitones; mod / pressure: value 0..1. */
+    /** bend / noteBend: semitones; mod / pressure / notePressure / noteSlide: value 0..1. */
     double semitones = 0;
 };
 
@@ -93,6 +99,9 @@ inline constexpr int MAX_ROUTED_VOICES = 16;
 struct MidiRouting {
     /** Omni: every channel → selectedVoice; otherwise channel N → voice id N. */
     bool omni = true;
+    /** MPE: every channel → selectedVoice; channel 1 voice-wide, 2–16 per-note expression. */
+    bool mpe = false;
+    double mpeBendRange = MPE_BEND_RANGE;
     int selectedVoice = -1;
     int voiceIds[MAX_ROUTED_VOICES]{};
     int voiceCount = 0;
@@ -103,9 +112,10 @@ struct MidiRouting {
         return false;
     }
     int target(int channel) const {
-        const int id = omni ? selectedVoice : channel;
+        const int id = omni || mpe ? selectedVoice : channel;
         return id >= 0 && hasVoice(id) ? id : -1;
     }
+    bool member(int channel) const { return mpe && channel > 1; }
 };
 
 /**
@@ -121,6 +131,7 @@ public:
         for (auto& b : bent) b = {-1, 0};
         for (auto& b : wheel) b = {-1, 0};
         for (auto& b : press) b = {-1, 0};
+        for (auto& m : memberExpr) m = {};
     }
 
     template <typename Emit>
@@ -138,6 +149,12 @@ public:
                 if (v < 0) return;
                 slot = v;
                 emit(MidiVoiceEvent{MidiVoiceEvent::noteOn, v, msg.a, msg.b, 0});
+                if (r.member(msg.channel)) {
+                    const Expr& x = memberExpr[(size_t) ch];
+                    if (std::abs(x.bend) > 0) emit(MidiVoiceEvent{MidiVoiceEvent::noteBend, v, msg.a, 0, x.bend});
+                    if (std::abs(x.pressure) > 0) emit(MidiVoiceEvent{MidiVoiceEvent::notePressure, v, msg.a, 0, x.pressure});
+                    if (std::abs(x.slide) > 0) emit(MidiVoiceEvent{MidiVoiceEvent::noteSlide, v, msg.a, 0, x.slide});
+                }
                 return;
             }
             case MidiMessage::noteOff: {
@@ -148,6 +165,7 @@ public:
                 return;
             }
             case MidiMessage::bend: {
+                if (r.member(msg.channel)) return expr(ch, MidiVoiceEvent::noteBend, std::max(-1.0, std::min(1.0, msg.value)) * r.mpeBendRange, emit);
                 Bent& b = bent[(size_t) ch];
                 const int v = r.target(msg.channel);
                 if (b.voiceId >= 0 && b.voiceId != v) emit(MidiVoiceEvent{MidiVoiceEvent::bend, b.voiceId, 0, 0, 0});
@@ -161,6 +179,16 @@ public:
             case MidiMessage::cc: {
                 if (msg.a == CC_ALL_NOTES_OFF || msg.a == CC_ALL_SOUND_OFF) return channelOff(msg.channel, r, emit);
                 if (msg.a == CC_RESET_ALL_CONTROLLERS) {
+                    Expr& x = memberExpr[(size_t) ch];
+                    const Expr was = x;
+                    x = {};
+                    for (int note = 0; note < 128; ++note) {
+                        const int v = held[(size_t) ch][(size_t) note];
+                        if (v < 0) continue;
+                        if (std::abs(was.bend) > 0) emit(MidiVoiceEvent{MidiVoiceEvent::noteBend, v, note, 0, 0});
+                        if (std::abs(was.pressure) > 0) emit(MidiVoiceEvent{MidiVoiceEvent::notePressure, v, note, 0, 0});
+                        if (std::abs(was.slide) > 0) emit(MidiVoiceEvent{MidiVoiceEvent::noteSlide, v, note, 0, 0});
+                    }
                     Bent& b = bent[(size_t) ch];
                     if (b.voiceId >= 0) emit(MidiVoiceEvent{MidiVoiceEvent::bend, b.voiceId, 0, 0, 0});
                     b = {-1, 0};
@@ -170,6 +198,7 @@ public:
                     }
                     return;
                 }
+                if (msg.a == CC_SLIDE && r.member(msg.channel)) return expr(ch, MidiVoiceEvent::noteSlide, msg.b / 127.0, emit);
                 const int v = r.target(msg.channel);
                 if (v < 0) return;
                 emit(MidiVoiceEvent{MidiVoiceEvent::cc, v, msg.a, msg.b, 0});
@@ -178,8 +207,14 @@ public:
                 return;
             }
             case MidiMessage::pressure: {
+                if (r.member(msg.channel)) return expr(ch, MidiVoiceEvent::notePressure, msg.value, emit);
                 const int v = r.target(msg.channel);
                 if (v >= 0) track(MidiVoiceEvent::pressure, press[(size_t) ch], v, msg.value, emit);
+                return;
+            }
+            case MidiMessage::polyPressure: {
+                const int v = held[(size_t) ch][(size_t) msg.a];
+                if (v >= 0) emit(MidiVoiceEvent{MidiVoiceEvent::notePressure, v, msg.a, 0, msg.value});
                 return;
             }
         }
@@ -222,6 +257,7 @@ public:
     /** Release everything (e.g. playback reset) and recentre all bends. */
     template <typename Emit>
     void releaseAll(Emit&& emit) {
+        for (auto& m : memberExpr) m = {};
         int voices[MAX_ROUTED_VOICES];
         int n = 0;
         for (auto& ch : held)
@@ -293,6 +329,22 @@ private:
     std::array<Bent, 16> bent{};
     std::array<Bent, 16> wheel{};
     std::array<Bent, 16> press{};
+    /** MPE member channels' bend (semitones), pressure, slide: a new note on the channel starts with them. */
+    struct Expr {
+        double bend = 0, pressure = 0, slide = 0;
+    };
+    std::array<Expr, 16> memberExpr{};
+
+    /** A member channel's expression changed: its state, and an event per note it holds. */
+    template <typename Emit>
+    void expr(int ch, MidiVoiceEvent::Type type, double value, Emit&& emit) {
+        Expr& x = memberExpr[(size_t) ch];
+        (type == MidiVoiceEvent::noteBend ? x.bend : type == MidiVoiceEvent::notePressure ? x.pressure : x.slide) = value;
+        for (int note = 0; note < 128; ++note) {
+            const int v = held[(size_t) ch][(size_t) note];
+            if (v >= 0) emit(MidiVoiceEvent{type, v, note, 0, value});
+        }
+    }
 };
 
 // ---- CC → parameter map ----

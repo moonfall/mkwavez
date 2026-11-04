@@ -267,7 +267,7 @@ export class PluginHost {
     if (!this.midi) return;
     const s = this.midi.settings;
     this.midiInputs.enabled = s.input !== 'off';
-    this.bridge.sendOp({ type: 'midi/settings', enabled: s.input !== 'off', omni: s.omni, voice: this.selectedVoice(), cc: s.cc });
+    this.bridge.sendOp({ type: 'midi/settings', enabled: s.input !== 'off', omni: s.omni, mpe: s.mpe, voice: this.selectedVoice(), cc: s.cc });
   }
 
   private onHost(m: FromNative): void {

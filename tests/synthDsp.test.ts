@@ -171,7 +171,7 @@ describe('pitch math', () => {
 
   const voice = (synth: Partial<SynthParams>): VoiceParams => ({ ...DEFAULT_VOICE, id: 1, name: 'V1', type: 'synth', synth: { ...DEFAULT_SYNTH, ...synth } });
   const tables = new Map();
-  const ctl = (bend: number, blockLen: number, glideCoef: (s: number) => number): SynthControl => ({ bend, blockLen, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1, beat: -1 });
+  const ctl = (bend: number, blockLen: number, glideCoef: (s: number) => number): SynthControl => ({ bend, blockLen, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, slide: 0, noteBend: 0, unisonScale: 1, beat: -1 });
 
   it('oscillator increments follow octave / coarse / fine, sub is 1 or 2 octaves below A', () => {
     const sv = new SynthVoice(SR, 1, 64);
@@ -466,7 +466,7 @@ describe('review fixes', () => {
 
   it('ring modulation takes one mip level fewer harmonics; FM drops them by the sideband width', () => {
     const tables = new Map();
-    const c: SynthControl = { bend: 0, blockLen: 64, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1, beat: -1 };
+    const c: SynthControl = { bend: 0, blockLen: 64, tables, wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, slide: 0, noteBend: 0, unisonScale: 1, beat: -1 };
     const lv = (synth: Partial<SynthParams>) => {
       const p: VoiceParams = { ...DEFAULT_VOICE, id: 1, name: 'V1', type: 'synth', synth: { ...DEFAULT_SYNTH, mods: [], ...synth } };
       const sv = new SynthVoice(SR, 1, 64);

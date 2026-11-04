@@ -130,7 +130,7 @@ src/plugin/host.ts          plugin mode: PluginSessionStore (the session backend
   closed wins over the saved project. Play / BPM work the same way; with Host sync the
   sequencer follows the host's play state and tempo and the page shows the effective
   transport. MIDI comes from the host: the native router applies it at the sample offset;
-  the page's MIDI panel shows "Host MIDI", and its settings (on / off, Omni, CC map; saved
+  the page's MIDI panel shows "Host MIDI", and its settings (on / off, Omni, MPE, CC map; saved
   in the project) drive the native router; controller messages come back to the page for
   learn, the LED and the sliders.
 

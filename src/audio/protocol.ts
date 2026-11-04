@@ -29,7 +29,7 @@ export type ToWorklet =
    * Native engine only: host MIDI routing (it routes the host's MIDI itself). `enabled`
    * false ignores MIDI input; `voice` is the voice Omni plays (the selected tab).
    */
-  | { type: 'midi/settings'; enabled: boolean; omni: boolean; voice: number | null; cc: CcMap }
+  | { type: 'midi/settings'; enabled: boolean; omni: boolean; mpe?: boolean; voice: number | null; cc: CcMap }
   /** Ops applied in order, atomically (no audio rendered in between). */
   | { type: 'batch'; ops: ToWorklet[] };
 

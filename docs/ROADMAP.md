@@ -320,6 +320,11 @@ Open:
   envelopes), a Gate source, destinations FM, ring, saturation, width, A / B detune, LFO
   1–3 depth. Deferred to keep the panels as they are: a second source scaling a slot's
   amount, per-slot curves, envelope curves / more envelopes, LFO delay.
+- Stage 9 (MPE, polyphonic aftertouch): poly aftertouch in any mode; an MPE setting (MIDI
+  popover; in the plugin from the page's settings) with per-note bend (±48 st), pressure
+  and slide (CC 74) on channels 2–16, channel 1 voice-wide. Matrix: Aftertouch = the higher
+  of channel / note pressure, new Slide source. Not yet: MPE upper zone, MCM (RPN 6)
+  configuration, a per-voice MPE bend-range setting.
 
 Decisions / deviations:
 - New voices from "+" are offered as Synth (first in the menu) or Simple; both start on

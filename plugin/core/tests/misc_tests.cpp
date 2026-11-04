@@ -73,6 +73,31 @@ TEST("midi: parse") {
     CHECK(msg({0xc0, 5}).kind == MidiMessage::none);
 }
 
+TEST("midi: MPE member channels and polyphonic aftertouch") {
+    CHECK(msg({0xa1, 60, 127}).kind == MidiMessage::polyPressure && msg({0xa1, 60, 127}).value == 1);
+    MidiRouter router;
+    Collect c;
+    auto r = routing(false, 2, {1, 2, 3});
+    r.mpe = true;
+    router.route(msg({0xe3, 0x7f, 0x7f}), r, c); // channel 4 bend before its note: no note yet
+    CHECK(c.evs.empty());
+    router.route(msg({0x93, 67, 90}), r, c);    // the note starts with it, on the selected voice
+    CHECK(c.evs.size() == 2 && c.evs[0].type == MidiVoiceEvent::noteOn && c.evs[0].voiceId == 2);
+    CHECK(c.evs[1].type == MidiVoiceEvent::noteBend && c.evs[1].note == 67 && c.evs[1].semitones == MPE_BEND_RANGE);
+    c.evs.clear();
+    router.route(msg({0xd3, 127}), r, c);       // member pressure → that note
+    router.route(msg({0xb3, 74, 127}), r, c);   // CC 74 → slide (not a cc)
+    router.route(msg({0xe0, 0x7f, 0x7f}), r, c); // channel 1: voice-wide bend
+    CHECK(c.evs.size() == 3);
+    CHECK(c.evs[0].type == MidiVoiceEvent::notePressure && c.evs[0].semitones == 1);
+    CHECK(c.evs[1].type == MidiVoiceEvent::noteSlide && c.evs[1].note == 67);
+    CHECK(c.evs[2].type == MidiVoiceEvent::bend && c.evs[2].voiceId == 2 && c.evs[2].semitones == 2);
+    c.evs.clear();
+    router.route(msg({0xa3, 67, 64}), r, c);    // poly aftertouch on the held key
+    router.route(msg({0xa3, 68, 64}), r, c);    // not held: nothing
+    CHECK(c.evs.size() == 1 && c.evs[0].type == MidiVoiceEvent::notePressure && c.evs[0].voiceId == 2);
+}
+
 TEST("midi: a note-off reaches the voice its note-on went to") {
     MidiRouter router;
     Collect c;

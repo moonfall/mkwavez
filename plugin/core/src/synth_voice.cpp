@@ -158,6 +158,8 @@ void SynthVoice::noteOn(const VoiceParams& p, double notePitch, double velocity,
     const bool glide = s.glide > 0 && sounding && (!s.glideLegato || legato);
     if (!glide) pitch = notePitch;
     if (retrigger) {
+        nbS = 0;
+        nbSnap = true;
         configure(s, blockLen);
         fenv.gateOn();
         penv.gateOn();
@@ -247,7 +249,7 @@ void SynthVoice::pitches(const VoiceParams& p, double bendSemis) {
     const SynthParams& s = p.synth;
     const double sr = sampleRate;
     const double pe = penv.value * s.pAmount;
-    const double base = pitch + bendSemis;
+    const double base = pitch + bendSemis + nbS;
     const double pa = base + oscSemis(s.aOct, s.aCoarse, s.aFine) + (s.pTarget != PitchTarget::b ? pe : 0) + dst[DST_PITCH_A] * MOD_PITCH_SEMIS;
     const double pb = base + oscSemis(s.bOct, s.bCoarse, s.bFine) + (s.pTarget != PitchTarget::a ? pe : 0) + dst[DST_PITCH_B] * MOD_PITCH_SEMIS;
     const double fa = std::min(pitchFreq(pa), sr * 0.45);
@@ -332,6 +334,7 @@ void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
     src[SRC_MACRO3] = s.macro3;
     src[SRC_MACRO4] = s.macro4;
     src[SRC_GATE] = gateHeld ? 1 : 0;
+    src[SRC_SLIDE] = c.slide;
     applyMatrix(s.mods, src, dst);
     const double* dR = dst;
     if (lfoStereo) {
@@ -344,6 +347,13 @@ void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
     }
     const double bend = (c.bend * s.bendRange) / BEND_RANGE_SEMITONES;
     lastBend = bend;
+    if (nbSnap) {
+        nbS = c.noteBend;
+        nbSnap = false;
+    } else if (nbS != c.noteBend) {
+        nbS += (c.noteBend - nbS) * smooth;
+        if (std::abs(c.noteBend - nbS) < 1e-4) nbS = c.noteBend;
+    }
     incA0 = incA1;
     incB0 = incB1;
     incS0 = incS1;

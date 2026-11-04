@@ -42,11 +42,12 @@ describe('parseMidi', () => {
     expect(parseMidi([0x91, 64, 0])).toEqual({ kind: 'noteOff', channel: 2, note: 64 });
   });
 
-  it('ignores system, aftertouch, program change and malformed data', () => {
+  it('ignores system, program change and malformed data; parses polyphonic aftertouch', () => {
     expect(parseMidi([0xf8])).toBeNull();
     expect(parseMidi([0xf0, 1, 2, 0xf7])).toBeNull();
     expect(parseMidi([0xc0, 5])).toBeNull();
-    expect(parseMidi([0xa0, 60, 10])).toBeNull();
+    expect(parseMidi([0xa1, 60, 127])).toEqual({ kind: 'polyPressure', channel: 2, note: 60, value: 1 });
+    expect(parseMidi([0xa0, 60])).toBeNull();
     expect(parseMidi([0x90, 60])).toBeNull();
     expect(parseMidi([60, 100])).toBeNull();
     expect(parseMidi([])).toBeNull();

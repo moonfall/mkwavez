@@ -84,8 +84,8 @@ play up to 8 notes at once (or 1: monophonic, legato and glide between held note
 - **Preview and Selection wavetables** — voices can play the Timeline selection, or the
   waveform / whole batch Generate is showing, before anything is added.
 - **Sequences** — per-voice step grids with musical step lengths (1/4 … 1/16T) on a shared
-  bar clock; **Web MIDI** with channel routing, Omni, CC learn, pitch bend, mod wheel and
-  aftertouch.
+  bar clock; **Web MIDI** with channel routing, Omni, CC learn, pitch bend, mod wheel,
+  channel and polyphonic aftertouch, and MPE (per-note bend, pressure, slide).
 
 ## Working environment
 

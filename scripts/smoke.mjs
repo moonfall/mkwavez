@@ -3488,6 +3488,15 @@ async function midiChecks(label, url, browser) {
   await waitNote(3, 62, 'Omni: channel 11 plays the selected voice (V3)');
   await fire([0x8a, 62, 0]);
   await waitNote(3, -1, 'Omni note-off');
+  // MPE: member channels go to the selected voice too (Omni shows checked and locked).
+  await page.check('#midi-mpe');
+  assert((await page.isChecked('#midi-omni')) && (await page.isDisabled('#midi-omni')) && (await page.textContent('#midi-route-hint')).startsWith('MPE'), 'MPE: Omni implied, hint explains the member channels');
+  await fire([0x95, 65, 100]);
+  await waitNote(3, 65, 'MPE: a member channel (6) plays the selected voice');
+  await fire([0x85, 65, 0]);
+  await waitNote(3, -1, 'MPE note-off');
+  await page.uncheck('#midi-mpe');
+  assert(!(await page.isDisabled('#midi-omni')), 'MPE off: Omni editable again');
 
   // Learn.
   await page.click('#midi-learn-lfoDepth');

@@ -142,12 +142,13 @@ void MkwavezProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
     // MIDI routing: Omni → the chosen voice, else channel N → voice N.
     MidiRouting r;
     r.omni = ptr.omni->load() >= 0.5f;
+    r.mpe = midiSettings.mpe.load(std::memory_order_relaxed);
     const int webVoice = midiSettings.omniVoice.load(std::memory_order_relaxed);
     r.selectedVoice = webVoice >= 0 ? webVoice : juce::roundToInt(ptr.midiVoice->load());
     for (size_t i = 0; i < ccMap.cc.size(); ++i) ccMap.cc[i] = midiSettings.cc[i].load(std::memory_order_relaxed);
     const bool midiOn = midiSettings.enabled.load(std::memory_order_relaxed);
     r.voiceCount = e->voiceIds(r.voiceIds, MAX_ROUTED_VOICES);
-    const bool retarget = r.omni != routing.omni || r.selectedVoice != routing.selectedVoice || r.voiceCount != routing.voiceCount ||
+    const bool retarget = r.omni != routing.omni || r.mpe != routing.mpe || r.selectedVoice != routing.selectedVoice || r.voiceCount != routing.voiceCount ||
                           !std::equal(r.voiceIds, r.voiceIds + r.voiceCount, routing.voiceIds);
     routing = r;
     if (retarget) router.retarget(routing, [&](const MidiVoiceEvent& ev) { e->applyMidi(ev); });

@@ -29,6 +29,8 @@ export function buildMidi(ctx: UiContext, midi: MidiController, web: MidiInputs)
   const omni = h('input', { type: 'checkbox', id: 'midi-omni' });
   const omniLabel = h('span', { id: 'midi-omni-label' });
   omni.addEventListener('change', () => midi.setOmni(omni.checked));
+  const mpe = h('input', { type: 'checkbox', id: 'midi-mpe' });
+  mpe.addEventListener('change', () => midi.setMpe(mpe.checked));
   const routeHint = h('p', { class: 'hint midi-route-hint', id: 'midi-route-hint' });
 
   const ccInputs = new Map<CcParam, HTMLInputElement>();
@@ -67,13 +69,19 @@ export function buildMidi(ctx: UiContext, midi: MidiController, web: MidiInputs)
     h('label', { class: 'midi-input-row' }, h('span', {}, 'Input'), popSelect),
     message,
     h('label', { class: 'midi-omni' }, omni, omniLabel),
+    h(
+      'label',
+      { class: 'midi-omni', title: 'MPE controllers: channel 1 bends / presses the whole voice; channels 2–16 each one note (bend ±48 semitones, pressure, slide on CC 74)' },
+      mpe,
+      h('span', {}, 'MPE: per-note bend, pressure and slide (channels 2–16)'),
+    ),
     routeHint,
     h('div', { class: 'midi-cc', role: 'group', 'aria-label': 'Controller map' }, ...rows),
     h(
       'p',
       { class: 'hint' },
-      'Each voice is monophonic: the last key wins and releasing it returns to a key still held (no retrigger). ' +
-        'Held keys take over from the voice’s sequence, which resumes once they are released. Bend ±2 semitones; velocity sets loudness.',
+      'Synth voices play chords (up to their Voices setting); Simple and monophonic voices take the last key and return to a key still held (no retrigger). ' +
+        'Held keys take over from the voice’s sequence, which resumes once they are released. Bend ±2 semitones (a Synth voice’s own range); velocity sets loudness.',
     ),
   );
   if (hasPopover) {
@@ -173,11 +181,15 @@ export function buildMidi(ctx: UiContext, midi: MidiController, web: MidiInputs)
 
   const syncSettings = () => {
     const s = midi.settings;
-    omni.checked = s.omni;
+    omni.checked = s.omni || s.mpe;
+    omni.disabled = s.mpe;
+    mpe.checked = s.mpe;
     const v = ui.voiceId === null ? undefined : model.voice(ui.voiceId);
     omniLabel.textContent = `Omni: every channel plays the selected voice${v ? ` (${v.name})` : ''}`;
     const ids = model.voices.map((x) => x.id);
-    routeHint.textContent = s.omni
+    routeHint.textContent = s.mpe
+      ? 'MPE: every channel plays the selected voice (switching tabs moves it); route Aftertouch and Slide in the mod matrix. Polyphonic aftertouch works in any mode.'
+      : s.omni
       ? 'Switching voice tabs moves the keyboard to that voice.'
       : `Channel N plays voice VN (${ids.map((id) => `ch ${id} → V${id}`).join(', ') || 'no voices'}).`;
     for (const p of CC_PARAMS) {

@@ -76,9 +76,12 @@ export interface SynthControl {
   /** Level × velocity gain (0 when muted). */
   gainTarget: number;
   bpm: number;
-  /** Mod wheel and channel pressure 0..1. */
+  /** Mod wheel and pressure 0..1 (channel pressure, or the note's own when higher: poly aftertouch / MPE). */
   wheel: number;
   pressure: number;
+  /** The note's MPE slide 0..1 and per-note bend (semitones). */
+  slide: number;
+  noteBend: number;
   /** CPU guard: unison copies are scaled by this (≤ 1) when the engine is over budget. */
   unisonScale: number;
   /** Transport position in beats (quarter notes since Play), or −1 when stopped. */
@@ -310,6 +313,9 @@ export class SynthVoice {
   target = 57;
   /** Raw velocity 0..1 of the sounding note (1 for sequencer notes). */
   vel = 1;
+  /** Per-note bend (MPE), smoothed; snapped to the note's value on the first block of a note. */
+  private nbS = 0;
+  private nbSnap = false;
 
   // Block ramps (start → end of the control block).
   incA0 = 0;
@@ -472,6 +478,8 @@ export class SynthVoice {
     const glide = s.glide > 0 && sounding && (!s.glideLegato || legato);
     if (!glide) this.pitch = pitch;
     if (retrigger) {
+      this.nbS = 0;
+      this.nbSnap = true;
       this.configure(s, this.blockLen);
       this.fenv.gateOn();
       this.penv.gateOn();
@@ -583,7 +591,7 @@ export class SynthVoice {
     const s = p.synth;
     const sr = this.sampleRate;
     const pe = this.penv.value * s.pAmount;
-    const base = this.pitch + bendSemis;
+    const base = this.pitch + bendSemis + this.nbS;
     const dst = this.dst;
     const pa = base + oscSemis(s.aOct, s.aCoarse, s.aFine) + (s.pTarget !== 'b' ? pe : 0) + dst[D.pitchA] * MOD_PITCH_SEMIS;
     const pb = base + oscSemis(s.bOct, s.bCoarse, s.bFine) + (s.pTarget !== 'a' ? pe : 0) + dst[D.pitchB] * MOD_PITCH_SEMIS;
@@ -685,6 +693,7 @@ export class SynthVoice {
     src[S.macro3] = s.macro3;
     src[S.macro4] = s.macro4;
     src[S.gate] = this.gated ? 1 : 0;
+    src[S.slide] = c.slide;
     applyMatrix(s.mods, src, this.dst);
     const dst = this.dst;
     // The right channel's destinations: the matrix again with the LFOs' right-channel
@@ -701,6 +710,14 @@ export class SynthVoice {
     }
     const bend = (bendSemis * s.bendRange) / BEND_RANGE_SEMITONES;
     this.lastBend = bend;
+    // Per-note bend (MPE): snapped at a note's first block, then smoothed.
+    if (this.nbSnap) {
+      this.nbS = c.noteBend;
+      this.nbSnap = false;
+    } else if (this.nbS !== c.noteBend) {
+      this.nbS += (c.noteBend - this.nbS) * this.smooth;
+      if (Math.abs(c.noteBend - this.nbS) < 1e-4) this.nbS = c.noteBend;
+    }
     this.incA0 = this.incA1;
     this.incB0 = this.incB1;
     this.incS0 = this.incS1;

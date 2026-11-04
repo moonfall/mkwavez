@@ -30,10 +30,12 @@ export interface MidiSettings {
   /** Name of the chosen input (shown while it is unplugged). */
   inputName: string;
   omni: boolean;
+  /** MPE: every channel plays the selected voice; channels 2–16 carry one note's bend / pressure / slide. */
+  mpe: boolean;
   cc: CcMap;
 }
 
-export const DEFAULT_MIDI_SETTINGS: MidiSettings = { input: 'off', inputName: '', omni: false, cc: DEFAULT_CC_MAP };
+export const DEFAULT_MIDI_SETTINGS: MidiSettings = { input: 'off', inputName: '', omni: false, mpe: false, cc: DEFAULT_CC_MAP };
 
 /** Minimal key-value store (localStorage in the browser; may throw or be absent). */
 export interface SettingsStore {
@@ -60,6 +62,7 @@ export function parseSettings(raw: string | null): MidiSettings {
       input: typeof o.input === 'string' && o.input ? o.input : 'off',
       inputName: typeof o.inputName === 'string' ? o.inputName : '',
       omni: o.omni === true,
+      mpe: o.mpe === true,
       cc: normalizeCcMap(o.cc),
     };
   } catch {
@@ -166,7 +169,7 @@ export class MidiController {
   }
 
   private routing(): MidiRouting {
-    return { omni: this.settings.omni, selectedVoice: this.omniVoice(), voiceIds: this.model.voices.map((v) => v.id) };
+    return { omni: this.settings.omni, mpe: this.settings.mpe, selectedVoice: this.omniVoice(), voiceIds: this.model.voices.map((v) => v.id) };
   }
 
   /** The selected voice or the voice list changed: move a held pitch bend with its channel. */
@@ -194,6 +197,13 @@ export class MidiController {
     if (omni === this.settings.omni) return;
     // Held notes stay tracked to the voice they went to; their note-offs still arrive there.
     this.settings = { ...this.settings, omni };
+    this.save();
+    this.retarget();
+  }
+
+  setMpe(mpe: boolean): void {
+    if (mpe === this.settings.mpe) return;
+    this.settings = { ...this.settings, mpe };
     this.save();
     this.retarget();
   }

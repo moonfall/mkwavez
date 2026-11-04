@@ -49,9 +49,9 @@ enum class ModEnvMode : uint8_t { ad, adsr };
 /** Sources (order = MOD_SOURCES in TS). */
 enum ModSource : int8_t {
     SRC_NONE = -1, SRC_LFO1, SRC_LFO2, SRC_LFO3, SRC_FENV, SRC_PENV, SRC_MENV, SRC_VEL, SRC_WHEEL, SRC_AT, SRC_KEY, SRC_RAND,
-    SRC_MACRO1, SRC_MACRO2, SRC_MACRO3, SRC_MACRO4, SRC_GATE
+    SRC_MACRO1, SRC_MACRO2, SRC_MACRO3, SRC_MACRO4, SRC_GATE, SRC_SLIDE
 };
-inline constexpr int N_SOURCES = 16;
+inline constexpr int N_SOURCES = 17;
 /** Destinations (order = MOD_DESTS in TS). */
 enum ModDest : int8_t {
     DST_NONE = -1, DST_PITCH_A, DST_PITCH_B, DST_POS_A, DST_POSY_A, DST_POS_B, DST_POSY_B, DST_LEVEL_A, DST_LEVEL_B, DST_SUB,

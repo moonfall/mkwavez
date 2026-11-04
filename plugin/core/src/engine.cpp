@@ -250,6 +250,7 @@ void SynthEngine::startNote(VoiceRuntime& v, NoteState& n, double freq, double v
     n.vel = vel;
     n.key = key;
     n.age = ++noteAge;
+    n.notePressure = n.slide = n.noteBend = 0;
     const bool glide = s.glide > 0 && v.hasLastPitch && (!s.glideLegato || legato);
     if (glide) {
         syn.pitch = v.lastPitch;
@@ -330,6 +331,7 @@ void SynthEngine::noteOn(int32_t voiceId, double freq, double gateSamples) {
     v->freq = freq;
     v->vel = 1;
     v->key = -1;
+    v->notePressure = v->slide = v->noteBend = 0;
     v->gateRemaining = std::max<int64_t>(1, (int64_t) std::floor(gateSamples + 0.5));
     synthNote(*v, 1, false, true);
     v->env.gateOn();
@@ -352,6 +354,7 @@ void SynthEngine::midiNoteOn(int32_t voiceId, int note, int velocity) {
     }
     v->notes.push(note, velocity);
     v->key = note;
+    v->notePressure = v->slide = v->noteBend = 0;
     v->freq = midiNoteFreq(note, v->params.octave);
     v->vel = velocityGain(velocity);
     v->gateRemaining = 0;
@@ -376,6 +379,7 @@ void SynthEngine::midiNoteOff(int32_t voiceId, int note) {
         gateOff(*v);
     } else if (wasTop) {
         v->key = v->notes.top();
+        v->notePressure = v->slide = v->noteBend = 0;
         v->freq = midiNoteFreq(v->notes.top(), v->params.octave);
         v->vel = velocityGain(v->notes.topVelocity());
         synthNote(*v, v->notes.topVelocity() / 127.0, true, false);
@@ -417,8 +421,20 @@ void SynthEngine::applyMidi(const MidiVoiceEvent& ev) {
                 (ev.type == MidiVoiceEvent::mod ? v->wheel : v->pressure) = x;
             }
             return;
+        case MidiVoiceEvent::notePressure: return noteExpr(ev.voiceId, ev.note, 0, std::max(0.0, std::min(1.0, ev.semitones)));
+        case MidiVoiceEvent::noteSlide: return noteExpr(ev.voiceId, ev.note, 1, std::max(0.0, std::min(1.0, ev.semitones)));
+        case MidiVoiceEvent::noteBend: return noteExpr(ev.voiceId, ev.note, 2, std::isfinite(ev.semitones) ? std::max(-96.0, std::min(96.0, ev.semitones)) : 0);
         case MidiVoiceEvent::cc: return;
     }
+}
+
+void SynthEngine::noteExpr(int32_t voiceId, int note, int field, double value) {
+    VoiceRuntime* v = findVoice(voiceId);
+    if (!v) return;
+    const auto set = [&](NoteState& n) { (field == 0 ? n.notePressure : field == 1 ? n.slide : n.noteBend) = value; };
+    if (v->key == note && v->env.stage != Adsr::Idle) set(*v);
+    for (PolyNote& n : notePool)
+        if (n.owner == v && n.key == note && n.env.stage != Adsr::Idle) set(n);
 }
 
 void SynthEngine::status(EngineStatus& out) const {
@@ -613,7 +629,9 @@ void SynthEngine::controlSynth(VoiceRuntime& v, int blockLen, NoteState& n) {
     ctl.gainTarget = p.mute ? 0 : p.level * (1 - s.velAmp + s.velAmp * n.vel);
     ctl.bpm = bpm;
     ctl.wheel = v.wheel;
-    ctl.pressure = v.pressure;
+    ctl.pressure = n.notePressure > v.pressure ? n.notePressure : v.pressure;
+    ctl.slide = n.slide;
+    ctl.noteBend = n.noteBend;
     n.syn->control(p, ctl);
 }
 

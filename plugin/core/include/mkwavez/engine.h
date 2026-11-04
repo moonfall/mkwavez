@@ -80,6 +80,8 @@ struct NoteState {
     /** MIDI key (-1: sequencer note / none) and allocation order. */
     int key = -1;
     uint64_t age = 0;
+    /** Per-note expression (poly aftertouch, MPE): pressure / slide 0..1, bend semitones. */
+    double notePressure = 0, slide = 0, noteBend = 0;
     /** Gate on: attack, decay or sustain. */
     bool held() const { return env.stage == Adsr::Attack || env.stage == Adsr::Decay || env.stage == Adsr::Sustain; }
 };
@@ -201,6 +203,7 @@ private:
     NoteState& allocate(VoiceRuntime& v, int key);
     void startNote(VoiceRuntime& v, NoteState& n, double freq, double vel, double vel01, int key, bool legato);
     bool hasNotes(const VoiceRuntime& v) const;
+    void noteExpr(int32_t voiceId, int note, int field, double value);
     double simpleSample(VoiceRuntime& v, double e, double blockT);
     void renderMixed(VoiceRuntime& v, double blockT, double& l, double& r);
     void control(int blockLen);

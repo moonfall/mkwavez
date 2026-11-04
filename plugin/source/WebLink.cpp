@@ -295,6 +295,7 @@ void WebLink::applyBatch(const juce::var& ops) {
             const auto voice = op.getProperty("voice", {});
             ms.omniVoice = voice.isVoid() || voice.isUndefined() ? 0 : (int) voice; // 0 = no voice
             setParam(params::omni, (bool) op.getProperty("omni", false) ? 1.0f : 0.0f);
+            ms.mpe = (bool) op.getProperty("mpe", false);
             const auto cc = op.getProperty("cc", {});
             // Order = CC_PARAMS (src/core/midi.ts) = mkwavez::CcParam.
             const char* keys[CC_PARAM_COUNT] = {"position", "positionY", "lfoDepth", "lfoRate", "level", "cutoff", "resonance",

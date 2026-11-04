@@ -672,6 +672,17 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
 - Mod wheel (CC 1, besides whatever the CC map does with it) and channel pressure (0xDn,
   parsed by parseMidi) are routed as `mod` / `pressure` events: per-voice values the
   Synth voice's matrix reads. Synth voices scale the (±2 st) bend by their own bend range.
+- Per-note expression: polyphonic aftertouch (0xAn, any mode) goes to the voice its key
+  went to as `notePressure`. MPE (a setting; lower zone): every channel plays the selected
+  voice; channel 1 stays voice-wide (bend, pressure, mod wheel); a member channel's bend
+  (× `mpeBendRange`, default ±48 st), pressure and CC 74 become `noteBend` /
+  `notePressure` / `noteSlide` for the notes it holds, and the router remembers each member
+  channel's values so a note starts with what was sent before it (CC 121 clears them). In
+  the engine each note slot (a voice's own note, pool notes) keeps its pressure, slide and
+  bend (reset when the slot starts a note; expression for a note not sounding is ignored).
+  The Aftertouch source is the higher of channel and note pressure, Slide is a source of its
+  own, and the note's bend is added to its pitch (snapped at its first block, then smoothed
+  like the bend). Simple voices ignore per-note expression.
 - MIDI vs sequence: while a voice has held keys, its sequence's steps are skipped (the
   sequencer keeps counting); once all keys are up, the next step plays as usual.
   Transport stop releases only voices without held keys. Muted voices stay silent.

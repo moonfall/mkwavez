@@ -195,6 +195,9 @@ const OP = {
   removeWavetable: 14, // id
   mod: 15, // voice value (mod wheel 0..1)
   pressure: 16, // voice value (channel pressure 0..1)
+  notePressure: 17, // voice note value (poly aftertouch / MPE pressure 0..1)
+  noteSlide: 18, // voice note value (MPE slide 0..1)
+  noteBend: 19, // voice note semitones (MPE per-note bend)
 } as const;
 
 const VOICE_FIELDS = [
@@ -341,6 +344,12 @@ function applyOp(e: SynthEngine, op: Op): void {
       return e.applyMidi({ type: 'mod', voiceId: a[0], value: a[1] });
     case OP.pressure:
       return e.applyMidi({ type: 'pressure', voiceId: a[0], value: a[1] });
+    case OP.notePressure:
+      return e.applyMidi({ type: 'notePressure', voiceId: a[0], note: a[1], value: a[2] });
+    case OP.noteSlide:
+      return e.applyMidi({ type: 'noteSlide', voiceId: a[0], note: a[1], value: a[2] });
+    case OP.noteBend:
+      return e.applyMidi({ type: 'noteBend', voiceId: a[0], note: a[1], semitones: a[2] });
     case OP.removeVoice:
       return e.removeVoice(a[0]);
     case OP.sequence:
@@ -857,6 +866,44 @@ const SCENARIOS: Scenario[] = [
       [7000, OP.noteOn, 1, 57, 100],
       [9000, OP.noteOn, 1, 62, 80],
       [13000, OP.allNotesOff, -1],
+    ],
+  },
+  {
+    // Per-note expression (MPE / polyphonic aftertouch): a polyphonic voice's notes bend,
+    // press (aftertouch → cutoff, taking over from lower channel pressure) and slide (→ A
+    // position) independently; a monophonic voice's note too; expression for a released or
+    // unknown note is ignored.
+    name: 'mpe',
+    sampleRate: 48000,
+    frames: 14000,
+    ops: [
+      ...WAVES.slice(0, 4).map((_, i): Op => [0, OP.table, i + 1, i]),
+      wavetableOp(0, 0, '1d', 'blend', [[1, 2, 3, 4]]),
+      voiceOp(0, {
+        id: 1,
+        type: 'synth',
+        windowEnd: 3,
+        position: 0.2,
+        release: 0.1,
+        synth: synth({ poly: 4, cutoff: 600, mods: [{ src: 'at', dst: 'cutoff', amt: 0.6 }, { src: 'slide', dst: 'posA', amt: 0.7 }] }),
+      }),
+      voiceOp(0, { id: 2, type: 'synth', windowEnd: 3, position: 0.6, level: 0.5, synth: synth({ poly: 1, cutoff: 900, mods: [{ src: 'at', dst: 'levelA', amt: -0.5 }] }) }),
+      [20, OP.noteOn, 1, 48, 100],
+      [20, OP.noteOn, 1, 55, 100],
+      [20, OP.noteOn, 1, 64, 100],
+      [20, OP.noteOn, 2, 40, 90],
+      [1500, OP.noteBend, 1, 55, 2],
+      [2500, OP.noteBend, 1, 64, -12],
+      [3000, OP.notePressure, 1, 48, 0.8],
+      [3500, OP.pressure, 1, 0.3],
+      [4000, OP.noteSlide, 1, 64, 0.9],
+      [5000, OP.notePressure, 2, 40, 0.7],
+      [6000, OP.noteBend, 2, 40, 1],
+      [7000, OP.noteOff, 1, 55],
+      [7100, OP.noteBend, 1, 55, 5],
+      [7200, OP.notePressure, 1, 99, 1],
+      [9000, OP.noteOn, 1, 55, 100],
+      [11000, OP.allNotesOff, -1],
     ],
   },
   {

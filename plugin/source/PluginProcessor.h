@@ -35,6 +35,8 @@ struct WebMidiSettings {
     std::atomic<bool> enabled{true};
     /** Voice Omni plays (the selected tab), or -1 = the `midiVoice` parameter. */
     std::atomic<int> omniVoice{-1};
+    /** MPE: channels 2–16 carry per-note bend / pressure / slide. */
+    std::atomic<bool> mpe{false};
     std::array<std::atomic<int>, mkwavez::CC_PARAM_COUNT> cc{};
     WebMidiSettings() {
         const mkwavez::CcMap d;

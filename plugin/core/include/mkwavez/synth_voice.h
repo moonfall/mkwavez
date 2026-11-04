@@ -32,6 +32,8 @@ struct SynthControl {
     double gainTarget = 0;
     double bpm = 132;
     double wheel = 0, pressure = 0;
+    /** The note's MPE slide and per-note bend (semitones). */
+    double slide = 0, noteBend = 0;
     double unisonScale = 1;
     /** Transport position in beats, or −1 when stopped. */
     double beat = -1;
@@ -112,6 +114,8 @@ private:
     double waA0 = 0, waA1 = 0, waB0 = 0, waB1 = 0, wsA = 1, wsB = 1;
     uint8_t lfoDone[LFO_COUNT]{};
     bool gateHeld = false;
+    double nbS = 0;
+    bool nbSnap = false;
     double dFm0 = 0, dFm1 = 0, dSat0 = 0, dSat1 = 0, dW0 = 0, dW1 = 0;
     Prng noiseR;
     double pinkR0 = 0, pinkR1 = 0, pinkR2 = 0;

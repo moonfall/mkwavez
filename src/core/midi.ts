@@ -2,7 +2,8 @@
  * MIDI → voice events. Portable (no Web MIDI, no DOM): byte parsing, channel routing
  * (channel N → voice N, or Omni → one chosen voice), note tracking so a note-off reaches
  * the voice its note-on went to, pitch-bend scaling, the velocity curve and the
- * CC → parameter map (with learn). The per-voice note stack (last-note priority,
+ * CC → parameter map (with learn), MPE (channel 1 voice-wide, channels 2–16 one note each:
+ * per-note bend, pressure and slide) and polyphonic aftertouch. The per-voice note stack (last-note priority,
  * legato) lives in the engine (engine/noteStack.ts), next to the sequencer it overrides.
  */
 import { CUTOFF_MAX, CUTOFF_MIN, type SynthParams } from './synth';
@@ -14,6 +15,10 @@ export const CC_MOD_WHEEL = 1;
 export const CC_ALL_SOUND_OFF = 120;
 export const CC_RESET_ALL_CONTROLLERS = 121;
 export const CC_ALL_NOTES_OFF = 123;
+/** MPE slide (the third dimension, Y): CC 74 on a member channel. */
+export const CC_SLIDE = 74;
+/** MPE per-note pitch-bend range on member channels (the MPE default), semitones. */
+export const MPE_BEND_RANGE = 48;
 /** Highest assignable controller (120..127 are channel mode messages). */
 export const CC_MAX_ASSIGNABLE = 119;
 
@@ -36,12 +41,14 @@ export type MidiMessage =
   | { readonly kind: 'cc'; readonly channel: number; readonly cc: number; readonly value: number }
   | { readonly kind: 'bend'; readonly channel: number; readonly value: number }
   /** Channel pressure (aftertouch), 0..1. */
-  | { readonly kind: 'pressure'; readonly channel: number; readonly value: number };
+  | { readonly kind: 'pressure'; readonly channel: number; readonly value: number }
+  /** Polyphonic aftertouch (key pressure), 0..1. */
+  | { readonly kind: 'polyPressure'; readonly channel: number; readonly note: number; readonly value: number };
 
 /**
  * Parse one complete MIDI message (Web MIDI and plugin hosts deliver whole messages, no
  * running status). Note-on with velocity 0 is a note-off. Returns null for everything else
- * (polyphonic aftertouch, program change, system messages, malformed data).
+ * (program change, system messages, malformed data).
  */
 export function parseMidi(data: ArrayLike<number>): MidiMessage | null {
   if (data.length < 2) return null;
@@ -58,6 +65,8 @@ export function parseMidi(data: ArrayLike<number>): MidiMessage | null {
     case 0x90:
       if (!hasD2) return null;
       return d2 === 0 ? { kind: 'noteOff', channel, note: d1 } : { kind: 'noteOn', channel, note: d1, velocity: d2 };
+    case 0xa0:
+      return hasD2 ? { kind: 'polyPressure', channel, note: d1, value: d2 / 127 } : null;
     case 0xb0:
       return hasD2 ? { kind: 'cc', channel, cc: d1, value: d2 } : null;
     case 0xd0:
@@ -100,7 +109,11 @@ export type MidiVoiceEvent =
   | { readonly type: 'bend'; readonly voiceId: number; readonly semitones: number }
   /** Mod wheel (CC 1) and channel pressure, 0..1: Synth voice mod matrix sources. */
   | { readonly type: 'mod'; readonly voiceId: number; readonly value: number }
-  | { readonly type: 'pressure'; readonly voiceId: number; readonly value: number };
+  | { readonly type: 'pressure'; readonly voiceId: number; readonly value: number }
+  /** Per-note expression (polyphonic aftertouch, MPE): pressure / slide 0..1, bend in semitones. */
+  | { readonly type: 'notePressure'; readonly voiceId: number; readonly note: number; readonly value: number }
+  | { readonly type: 'noteSlide'; readonly voiceId: number; readonly note: number; readonly value: number }
+  | { readonly type: 'noteBend'; readonly voiceId: number; readonly note: number; readonly semitones: number };
 
 /** Router output: engine events, plus controller moves for the CC map (applied to params). */
 export type MidiRouterEvent =
@@ -110,6 +123,13 @@ export type MidiRouterEvent =
 export interface MidiRouting {
   /** Omni: every channel goes to `selectedVoice`; otherwise channel N → voice id N. */
   readonly omni: boolean;
+  /**
+   * MPE (lower zone): every channel goes to `selectedVoice`; channel 1 (master) bends /
+   * presses the whole voice, channels 2–16 each the notes they hold (per-note bend over
+   * `mpeBendRange`, pressure, slide on CC 74).
+   */
+  readonly mpe?: boolean;
+  readonly mpeBendRange?: number;
   readonly selectedVoice: number | null;
   /** Voices that exist. */
   readonly voiceIds: readonly number[];
@@ -117,9 +137,12 @@ export interface MidiRouting {
 
 /** The voice a channel plays, or null. */
 export function targetVoice(channel: number, r: MidiRouting): number | null {
-  const id = r.omni ? r.selectedVoice : channel;
+  const id = r.omni || r.mpe ? r.selectedVoice : channel;
   return id !== null && r.voiceIds.includes(id) ? id : null;
 }
+
+/** An MPE member channel (per-note expression) under this routing. */
+const isMember = (channel: number, r: MidiRouting) => r.mpe === true && channel > 1;
 
 /**
  * Stateful router. Remembers where each held note went (per source, channel and note), so
@@ -138,6 +161,27 @@ export class MidiRouter {
    * reset them like the bend.
    */
   private held2: Record<'mod' | 'pressure', Map<number, { voiceId: number; value: number }>> = { mod: new Map(), pressure: new Map() };
+  /** MPE member channels' current bend (semitones), pressure and slide: a new note on the channel starts with them. */
+  private member = new Map<number, { bend: number; pressure: number; slide: number }>();
+
+  /** Notes held from (source, channel): [note, voice id]. */
+  private notesOn(source: number, channel: number): [number, number][] {
+    const out: [number, number][] = [];
+    for (const [k, v] of this.held) if (Math.floor(k / 2048) === source && Math.floor((k % 2048) / 128) === channel - 1) out.push([k % 128, v]);
+    return out;
+  }
+
+  /** A member channel's expression changed: its state, and an event per note it holds. */
+  private expr(source: number, channel: number, kind: 'bend' | 'pressure' | 'slide', value: number): MidiRouterEvent[] {
+    const k = MidiRouter.bendKey(source, channel);
+    const st = this.member.get(k) ?? { bend: 0, pressure: 0, slide: 0 };
+    st[kind] = value;
+    if (st.bend === 0 && st.pressure === 0 && st.slide === 0) this.member.delete(k);
+    else this.member.set(k, st);
+    return this.notesOn(source, channel).map(([note, voiceId]) =>
+      kind === 'bend' ? { type: 'noteBend', voiceId, note, semitones: value } : { type: kind === 'pressure' ? 'notePressure' : 'noteSlide', voiceId, note, value },
+    );
+  }
 
   private track(kind: 'mod' | 'pressure', source: number, channel: number, v: number, value: number): MidiVoiceEvent[] {
     const k = MidiRouter.bendKey(source, channel);
@@ -179,6 +223,13 @@ export class MidiRouter {
         if (v === null) return out;
         this.held.set(k, v);
         out.push({ type: 'noteOn', voiceId: v, note: msg.note, velocity: msg.velocity });
+        // MPE: the note starts with its channel's bend / pressure / slide (sent before it).
+        const st = isMember(msg.channel, routing) ? this.member.get(MidiRouter.bendKey(source, msg.channel)) : undefined;
+        if (st) {
+          if (st.bend) out.push({ type: 'noteBend', voiceId: v, note: msg.note, semitones: st.bend });
+          if (st.pressure) out.push({ type: 'notePressure', voiceId: v, note: msg.note, value: st.pressure });
+          if (st.slide) out.push({ type: 'noteSlide', voiceId: v, note: msg.note, value: st.slide });
+        }
         return out;
       }
       case 'noteOff': {
@@ -189,6 +240,7 @@ export class MidiRouter {
         return [{ type: 'noteOff', voiceId: v, note: msg.note }];
       }
       case 'bend': {
+        if (isMember(msg.channel, routing)) return this.expr(source, msg.channel, 'bend', Math.max(-1, Math.min(1, msg.value)) * (routing.mpeBendRange ?? MPE_BEND_RANGE));
         const k = MidiRouter.bendKey(source, msg.channel);
         const out: MidiRouterEvent[] = [];
         const prev = this.bent.get(k);
@@ -205,6 +257,7 @@ export class MidiRouter {
       case 'cc': {
         if (msg.cc === CC_ALL_NOTES_OFF || msg.cc === CC_ALL_SOUND_OFF) return this.channelOff(msg.channel, routing, source);
         if (msg.cc === CC_RESET_ALL_CONTROLLERS) return this.resetControllers(msg.channel, source);
+        if (msg.cc === CC_SLIDE && isMember(msg.channel, routing)) return this.expr(source, msg.channel, 'slide', msg.value / 127);
         const v = targetVoice(msg.channel, routing);
         if (v === null) return [];
         // The mod wheel is also a mod matrix source (whatever the CC map does with it).
@@ -212,8 +265,14 @@ export class MidiRouter {
         return [{ type: 'cc', voiceId: v, cc: msg.cc, value: msg.value }];
       }
       case 'pressure': {
+        if (isMember(msg.channel, routing)) return this.expr(source, msg.channel, 'pressure', msg.value);
         const v = targetVoice(msg.channel, routing);
         return v === null ? [] : this.track('pressure', source, msg.channel, v, msg.value);
+      }
+      case 'polyPressure': {
+        // Key pressure: to the voice that key went to, whatever the routing now.
+        const v = this.held.get(MidiRouter.key(source, msg.channel, msg.note));
+        return v === undefined ? [] : [{ type: 'notePressure', voiceId: v, note: msg.note, value: msg.value }];
       }
 
     }
@@ -227,6 +286,16 @@ export class MidiRouter {
   private resetControllers(channel: number, source: number): MidiVoiceEvent[] {
     const k = MidiRouter.bendKey(source, channel);
     const out: MidiVoiceEvent[] = [];
+    // An MPE member channel's expression (and that of the notes it holds).
+    const st = this.member.get(k);
+    if (st) {
+      this.member.delete(k);
+      for (const [note, voiceId] of this.notesOn(source, channel)) {
+        if (st.bend) out.push({ type: 'noteBend', voiceId, note, semitones: 0 });
+        if (st.pressure) out.push({ type: 'notePressure', voiceId, note, value: 0 });
+        if (st.slide) out.push({ type: 'noteSlide', voiceId, note, value: 0 });
+      }
+    }
     const prev = this.bent.get(k);
     if (prev) {
       this.bent.delete(k);
@@ -296,6 +365,7 @@ export class MidiRouter {
   /** A device went away: release its notes and recentre the pitch bend it applied. */
   releaseSource(source: number): MidiVoiceEvent[] {
     const out: MidiVoiceEvent[] = [];
+    for (const k of [...this.member.keys()]) if (Math.floor(k / 16) === source) this.member.delete(k);
     for (const [k, v] of [...this.held]) {
       if (Math.floor(k / 2048) !== source) continue;
       this.held.delete(k);
@@ -318,6 +388,7 @@ export class MidiRouter {
 
   /** MIDI turned off / input switched: release everything and recentre all bends. */
   releaseAll(): MidiVoiceEvent[] {
+    this.member.clear();
     const out: MidiVoiceEvent[] = this.voicesOff(new Set(this.held.values()));
     for (const v of new Set([...this.bent.values()].map((b) => b.voiceId))) out.push({ type: 'bend', voiceId: v, semitones: 0 });
     this.bent.clear();

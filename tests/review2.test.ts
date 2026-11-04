@@ -135,7 +135,7 @@ describe('3: unison copies fade, copy 0 stays put, the guard has hysteresis', ()
   });
 
   it('unison is symmetric around the centre pitch and pan for every count; copies glide to new places', () => {
-    const c: SynthControl = { bend: 0, blockLen: 64, tables: new Map(), wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1, beat: -1 };
+    const c: SynthControl = { bend: 0, blockLen: 64, tables: new Map(), wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, slide: 0, noteBend: 0, unisonScale: 1, beat: -1 };
     const s = new SynthVoice(SR, 1, 64);
     const priv = s as unknown as { ratA: Float64Array; gAL: Float64Array; gAR: Float64Array };
     let prev = 1;
@@ -223,7 +223,7 @@ describe('4: mod wheel / pressure resets', () => {
 
 describe('5–7', () => {
   it('a tempo-synced free-running LFO glides into lock with the transport (no jump at Play); rate modulation scales it', () => {
-    const c: SynthControl = { bend: 0, blockLen: 64, tables: new Map(), wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1, beat: 0 };
+    const c: SynthControl = { bend: 0, blockLen: 64, tables: new Map(), wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, slide: 0, noteBend: 0, unisonScale: 1, beat: 0 };
     const p = sv(1, { lfos: [{ ...DEFAULT_LFO, sync: true, div: '1/4', phase: 0.25 }, DEFAULT_LFO, DEFAULT_LFO] });
     const s = new SynthVoice(SR, 1, 64);
     const inc = (2 * 64) / SR; // one cycle per beat at 120 BPM
@@ -283,7 +283,7 @@ describe('follow-up 2', () => {
   });
 
   it('an LFO steered back across 0 does not start a new S&H cycle', () => {
-    const c: SynthControl = { bend: 0, blockLen: 64, tables: new Map(), wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, unisonScale: 1, beat: 0 };
+    const c: SynthControl = { bend: 0, blockLen: 64, tables: new Map(), wtA: undefined, wtB: undefined, slew: 0.1, glideCoef: () => 1, gainTarget: 1, bpm: 120, wheel: 0, pressure: 0, slide: 0, noteBend: 0, unisonScale: 1, beat: 0 };
     const p = sv(1, { lfos: [{ ...DEFAULT_LFO, shape: 'sh', sync: true, div: '1/4' }, DEFAULT_LFO, DEFAULT_LFO] });
     const s = new SynthVoice(SR, 1, 64);
     // Locked phase just behind the LFO's: it is steered back; values only change on forward wraps.

@@ -117,6 +117,8 @@ const ctl = (o: Partial<SynthControl> = {}): SynthControl => ({
   bpm: 120,
   wheel: 0,
   pressure: 0,
+  slide: 0,
+  noteBend: 0,
   unisonScale: 1,
   beat: -1,
   ...o,
