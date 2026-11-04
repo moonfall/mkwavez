@@ -25,6 +25,7 @@ import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch'
 import { h, selectField, slider } from './dom';
 import { ask } from './dialogs';
 import { buildLibrary } from './library';
+import { seedViz, type VizColors } from './seedViz';
 import { buildShapeOnAdd, previewOf, SHAPE_CARDS_MS } from './shapeOnAdd';
 
 /** Minimum interval between preview restarts while typing / dragging. */
@@ -476,6 +477,11 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     ),
   );
   const specBox = h('div', { class: 'gen-plot-box' }, specC);
+  // What the builder is based on (seedViz.ts); hidden for builders without one.
+  const basisC = h('canvas', { id: 'seed-basis', role: 'img', 'aria-label': 'What the builder is based on' });
+  const basisBox = h('div', { class: 'gen-plot-box' }, basisC);
+  const basisAxis = h('div', { class: 'gen-axis' }, h('span'), h('span'), h('span'));
+  const basisPlot = h('div', { class: 'gen-plot gen-plot-basis', id: 'seed-basis-plot', hidden: true }, basisBox, basisAxis);
   const viewer = h(
     'div',
     { class: 'gen-viewer' },
@@ -484,6 +490,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       { class: 'gen-views' },
       h('div', { class: 'gen-plot gen-plot-wave' }, waveBox, axis('0', 'π', '2π')),
       h('div', { class: 'gen-plot gen-plot-spec' }, specBox, axis('h1', 'dB (−60…0)', `h${SPEC_BINS}`)),
+      basisPlot,
     ),
   );
 
@@ -704,7 +711,45 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     }
     gs.stroke();
     if (t) drawSpectrum(gs, sw, sh, t.data, cssColor('--accent'), { bins: SPEC_BINS });
+    drawBasis(cur, i, failed);
   };
+
+  /**
+   * The basis plot: the entry's picture for the shown waveform (formula presets only while
+   * unedited — an edited formula may no longer be what the picture shows).
+   */
+  const drawBasis = (cur: Job | null, i: number, failed: boolean) => {
+    const e = entry();
+    const v = e.mode === 'formula' && edits.has(e.id) ? undefined : seedViz(e.id);
+    // Toggled before any canvas is sized: hiding / showing it resizes the others.
+    if (basisPlot.hidden !== !v) {
+      basisPlot.hidden = !v;
+      mainDirty = true; // redraw the wave and spectrum at their new widths next frame
+    }
+    if (!v) return;
+    const [g, w, hh] = fit(basisC, Math.max(30, basisBox.clientHeight || 90));
+    const req = cur?.req ?? request();
+    const count = req.count;
+    const index = Math.min(i, count - 1);
+    const input = { params: req.params, seed: req.seed, index, count, u: batchU(index, count), inputs: req.inputs?.length ? req.inputs[index % req.inputs.length] : undefined };
+    const labels = v.axis(input);
+    basisAxis.childNodes.forEach((n, k) => (n.textContent = labels[k]));
+    basisAxis.title = labels[1];
+    basisC.setAttribute('aria-label', `What ${e.name} is based on: ${labels[1]}`);
+    if (failed && cur) return;
+    v.draw(g, w, hh, input, vizColors());
+  };
+  const vizColors = (): VizColors => ({
+    line: cssColor('--text-2'),
+    accent: cssColor('--accent'),
+    muted: cssColor('--muted'),
+    grid: cssColor('--surface-2'),
+    axis: cssColor('--border'),
+    bg: cssColor('--bg'),
+    heatLo: cssColor('--heat-lo'),
+    heatMid: cssColor('--heat-mid'),
+    heatHi: cssColor('--heat-hi'),
+  });
 
   const drawCards = () => {
     cardsDirty = false;

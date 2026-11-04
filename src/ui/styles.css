@@ -2535,6 +2535,25 @@ input.seed-expr:focus-visible {
 .gen-plot-spec {
   flex: 1 1 0;
 }
+/* Seed: what the builder is based on (only for builders that have a picture). The
+   caption stays on one line (ellipsis; the full text is the tooltip). */
+.gen-plot-basis {
+  flex: 0.8 1 0;
+}
+.gen-plot-basis .gen-axis {
+  gap: 4px;
+  white-space: nowrap;
+}
+.gen-plot-basis .gen-axis span {
+  flex: none;
+}
+.gen-plot-basis .gen-axis span:nth-child(2) {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
 .gen-plot canvas {
   background: var(--bg);
 }
@@ -2716,7 +2735,8 @@ button.gen-card.failed .gen-card-label::after {
   .gen-plot-wave .gen-plot-box {
     height: 150px;
   }
-  .gen-plot-spec .gen-plot-box {
+  .gen-plot-spec .gen-plot-box,
+  .gen-plot-basis .gen-plot-box {
     height: 90px;
   }
 }

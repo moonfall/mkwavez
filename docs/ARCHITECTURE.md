@@ -90,7 +90,8 @@ src/
                         context.ts UiState (selected voice tab, shared by voices.ts
                         and sequences.ts); canvas.ts drawing + theme (setTheme,
                         stored in localStorage); transport.ts the top bar;
-                        generate.ts hosts the tabs: seed.ts (Seed tab), mutate.ts
+                        generate.ts hosts the tabs: seed.ts (Seed tab; seedViz.ts
+                        its basis plot: what each builder is based on), mutate.ts
                         (Mutate tab), breed.ts (Breed tab) and shapeTab.ts (Shape
                         tab: chain column, step settings, the drawable plot, Apply
                         to, Write back); shapeOnAdd.ts (the Shape chip in Seed /

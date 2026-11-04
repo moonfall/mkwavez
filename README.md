@@ -100,7 +100,10 @@ switches (the choice is remembered).
   sliders write its expression until it is edited). **Edit as formula** (basic presets and
   every parameter mode) writes the equivalent formula — the current values, with `n` / `u`
   where the batch varies — into Blank formula, where it renders the same waveforms. The
-  large view shows one waveform of the batch with its spectrum; the strip below shows all N
+  large view shows one waveform of the batch with its spectrum and, for builders where it
+  helps, a small picture of what the builder is based on (a shaper's transfer curve, the
+  noise plane a Perlin loop is read from, a cellular automaton's generations, a glyph's
+  outline, …; formula presets only while unedited); the strip below shows all N
   (click, or ←/→ when focused). The previews are exactly what gets added: "Add shown"
   adds that one waveform, "Add batch (+N)" all N (a voice on the built-in **Last batch**
   wavetable — V1 at start — then plays exactly those waveforms). Modes that use randomness
