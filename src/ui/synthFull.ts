@@ -10,8 +10,8 @@
 import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
 import { TABLE_SIZE } from '../core/constants';
-import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, type FilterMode, type OscSource, type SynthParams } from '../core/synth';
-import { LFO_DIVS, LFO_RATE_MAX_HZ, LFO_RATE_MIN_HZ, LFO_SHAPE_LABELS, LFO_SHAPES, type LfoDiv, type LfoParams, type LfoShape } from '../core/modulation';
+import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, type FilterMode, type OscSource, type SynthParams } from '../core/synth';
+import { isPeriodicShape, LFO_DIVS, LFO_RATE_MAX_HZ, LFO_RATE_MIN_HZ, LFO_SHAPE_LABELS, LFO_SHAPES, type LfoDiv, type LfoParams, type LfoShape } from '../core/modulation';
 import type { VoicePatch, VoiceParams } from '../core/voice';
 import { shapeLabel } from '../core/wavetable';
 import { Mix } from '../core/wavetablePlayback';
@@ -26,6 +26,10 @@ export const pct = (v: number) => `${Math.round(v * 100)}%`;
 export const secs = (v: number) => (v < 1 ? `${Math.round(v * 1000)} ms` : `${v.toFixed(2)} s`);
 export const hz = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 1 : 2)} k` : `${Math.round(v)} Hz`);
 export const signed = (v: number, digits = 0, unit = '') => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(digits)}${unit}`;
+/** A pan position: C, L 40, R 100. */
+export const panText = (x: number) => (Math.abs(x) < 0.01 ? 'C' : `${x < 0 ? 'L' : 'R'} ${Math.round(Math.abs(x) * 100)}`);
+const kPan = (x: number) => (Math.abs(x) < 0.01 ? 'C' : `${x < 0 ? 'L' : 'R'}${Math.round(Math.abs(x) * 100)}`);
+const deg = (x: number) => `${Math.round(x * 360)}°`;
 
 export const logTaper = (min: number, max: number): Taper => ({
   toU: (v) => Math.log(Math.max(min, v) / min) / Math.log(max / min),
@@ -214,6 +218,7 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
       K(`synf-${o}-spread`, 'Spread', (v) => v.synth[key('Spread')] as number, (x) => ({ synth: { [key('Spread')]: x } }), linear(0, 1), pct, { name: N('unison stereo spread'), off: (v) => (v.synth[key('Unison')] as number) < 2 }),
     ];
     const level = K(`synf-${o}-level`, 'Level', (v) => v.synth[key('Level')] as number, (x) => ({ synth: { [key('Level')]: x } }), linear(0, 1), pct, { name: N('level') });
+    const pan = K(`synf-${o}-pan`, 'Pan', (v) => v.synth[key('Pan')] as number, (x) => ({ synth: { [key('Pan')]: x } }), linear(-1, 1), kPan, { bipolar: true, name: N('pan'), reset: 0 });
     // Window / position: 1D From · To · Pos; 2D From X/Y · To X/Y · Pos X/Y; Rows: no X window.
     const from = K(`synf-${o}-from`, 'From', (v) => src(v).windowStart, (x) => putSrc({ windowStart: x }), linear(0, 1), (x) => `#${x + 1}`, { int: true, name: N('window from'), range: (v) => [0, dims(v).W - 1] });
     const to = K(`synf-${o}-to`, 'To', (v) => src(v).windowEnd, (x) => putSrc({ windowEnd: x }), linear(0, 1), (x) => `#${x + 1}`, { int: true, name: N('window to'), range: (v) => [0, dims(v).W - 1] });
@@ -245,7 +250,7 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
       },
     });
     draws.push({ draw: oscDrawer(model, bridge, () => o, pad, scope, tag, vis), canvas: () => (pad.canvas.hidden ? scope : pad.canvas) });
-    return group(`synf-osc-${o}`, `Osc ${O}`, [vis, ...tune.map((c) => c.el), level.el, from.el, fromY.el, to.el, toY.el, pos.el, posY.el], [wtSel], 'synf-osc');
+    return group(`synf-osc-${o}`, `Osc ${O}`, [vis, ...tune.map((c) => c.el), level.el, pan.el, from.el, fromY.el, to.el, toY.el, pos.el, posY.el], [wtSel], 'synf-osc');
   };
 
   // ---- mix ----
@@ -255,6 +260,7 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
     C('synf-sub-oct', 'Oct', [[1, '−1'], [2, '−2']] as const, (v) => v.synth.subOct, (x) => ({ synth: { subOct: x } }), { name: 'Sub octave' }).el,
     K('synf-noise', 'Noise', (v) => v.synth.noiseLevel, sw('noiseLevel'), linear(0, 1), pct, { name: 'Noise level' }).el,
     C('synf-noise-type', 'Colour', [['white', 'White'], ['pink', 'Pink']] as const, (v) => v.synth.noiseType, (x) => ({ synth: { noiseType: x } }), { name: 'Noise colour' }).el,
+    K('synf-noise-width', 'N width', (v) => v.synth.noiseWidth, sw('noiseWidth'), linear(0, 1), pct, { name: 'Noise stereo width (0 = the same on both sides)', reset: 0 }).el,
     K('synf-ring', 'Ring', (v) => v.synth.ringLevel, sw('ringLevel'), linear(0, 1), pct, { name: 'Ring modulation A × B' }).el,
     K('synf-fm', 'FM', (v) => v.synth.fm, sw('fm'), linear(0, 1), pct, { name: 'FM: osc B modulates osc A’s phase' }).el,
     C('synf-sync', 'Sync B', OFF_ON, (v) => v.synth.sync, (x) => ({ synth: { sync: x } }), { name: 'Hard sync: each cycle of osc B restarts osc A', pressed: (x) => x }).el,
@@ -267,6 +273,11 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
     [
       selCell<FilterMode>('synf-filter-mode', 'Mode', 'Filter mode', FILTER_MODES.map((m) => [m, FILTER_MODE_LABELS[m]] as const), (v) => v.synth.filterMode, (x) => ({ synth: { filterMode: x } })),
       K('synf-cutoff', 'Cutoff', (v) => v.synth.cutoff, sw('cutoff'), logTaper(CUTOFF_MIN, CUTOFF_MAX), kHz, { name: 'Cutoff (Hz)' }).el,
+      K('synf-fspread', 'Spread', (v) => v.synth.filterSpread, sw('filterSpread'), linear(-1, 1), (x) => signed((x * FILTER_SPREAD_OCTAVES) / 2, 1), {
+        bipolar: true,
+        name: 'Stereo filter spread (octaves per side: left down, right up)',
+        reset: 0,
+      }).el,
       K('synf-res', 'Res', (v) => v.synth.resonance, sw('resonance'), linear(0, 1), pct, { name: 'Resonance' }).el,
       K('synf-drive', 'Drive', (v) => v.synth.drive, sw('drive'), linear(0, 1), pct, { name: 'Drive (before the filter)' }).el,
       K('synf-sat', 'Sat', (v) => v.synth.sat, sw('sat'), linear(0, 1), pct, { name: 'Saturation (after the filter)' }).el,
@@ -361,15 +372,39 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
     );
   };
 
-  // ---- output ----
+  // ---- stereo controls of the Output group ----
+  const oscStereo = (o: 'a' | 'b') => {
+    const O = o.toUpperCase();
+    const ph = `${o}PhaseSpread` as const;
+    const ps = `${o}PosSpread` as const;
+    return [
+      K(`synf-${o}-phase`, `${O} phase`, (v) => v.synth[ph], sw(ph), linear(0, 0.5), deg, { name: `Osc ${O} stereo phase (the right channel reads ahead)`, reset: 0 }).el,
+      K(`synf-${o}-pspread`, `${O} pos ↔`, (v) => v.synth[ps], sw(ps), linear(0, 1), pct, { name: `Osc ${O} stereo position (left and right read the window apart)`, reset: 0 }).el,
+    ];
+  };
+  const lfoStereo = (n: number) => {
+    const get = (v: VoiceParams) => v.synth.lfos[n];
+    return K(`synf-lfo${n}-stereo`, `LFO ${n + 1} ↔`, (v) => get(v).stereo, (x) => ({ synth: { lfos: voice()!.synth.lfos.map((l, i) => (i === n ? { ...l, stereo: x } : l)) } }), linear(0, 0.5), deg, {
+      name: `LFO ${n + 1} stereo phase (the right channel runs ahead on positions, levels, cutoff, amp; periodic shapes only)`,
+      off: (v) => !isPeriodicShape(get(v).shape),
+      reset: 0,
+    }).el;
+  };
+  // ---- output: level, octave, glide, bend, then the stereo image (pan, width, stereo phase /
+  // position per oscillator, the LFOs' stereo phases) ----
   const out = group('synf-out', 'Output', [
     K('synf-out-level', 'Level', (v) => v.level, (x) => ({ level: x }), linear(0, 1), pct, { name: 'Output level' }).el,
-    K('synf-pan', 'Pan', (v) => v.synth.pan, sw('pan'), linear(-1, 1), (x) => (Math.abs(x) < 0.01 ? 'C' : `${x < 0 ? 'L' : 'R'}${Math.round(Math.abs(x) * 100)}`), { bipolar: true, name: 'Pan', reset: 0 }).el,
-    K('synf-width', 'Width', (v) => v.synth.width, sw('width'), linear(0, 2), pct, { name: 'Stereo width of the unison spread (0 = mono)' }).el,
     K('synf-oct', 'Octave', (v) => v.octave, (x) => ({ octave: x }), linear(-2, 2), (x) => signed(x), { int: true, name: 'Voice octave', reset: 0 }).el,
     K('synf-glide', 'Glide', (v) => v.synth.glide, sw('glide'), timeTaper(2), (x) => (x < 0.002 ? 'off' : kSecs(x)), { name: 'Glide' }).el,
     C('synf-legato', 'Legato', OFF_ON, (v) => v.synth.glideLegato, (x) => ({ synth: { glideLegato: x } }), { name: 'Glide only between overlapping notes', pressed: (x) => x }).el,
     K('synf-bend', 'Bend', (v) => v.synth.bendRange, sw('bendRange'), linear(0, 24), (x) => `±${x}`, { int: true, name: 'Pitch-bend range (semitones)' }).el,
+    K('synf-pan', 'Pan', (v) => v.synth.pan, sw('pan'), linear(-1, 1), kPan, { bipolar: true, name: 'Pan', reset: 0 }).el,
+    K('synf-width', 'Width', (v) => v.synth.width, sw('width'), linear(0, 2), pct, { name: 'Stereo width (0 = mono)' }).el,
+    ...oscStereo('a'),
+    ...oscStereo('b'),
+    lfoStereo(0),
+    lfoStereo(1),
+    lfoStereo(2),
   ]);
 
   const guard = h('span', { class: 'syn-guard', id: 'synf-guard', hidden: true, title: 'Too many unison copies sound at once: the CPU guard plays fewer' }, 'CPU guard: reduced');

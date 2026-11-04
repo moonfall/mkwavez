@@ -14,6 +14,7 @@ namespace mkwavez {
 
 inline constexpr double CONTROL_SMOOTH_SEC = 0.005;
 inline constexpr uint32_t NOISE_SEED = 0x5eed;
+inline constexpr uint32_t NOISE_R_SEED = 0x5eee;
 inline constexpr uint32_t MOD_SEED = 0x10f0;
 inline constexpr double UNISON_GLIDE_SEC = 0.03;
 inline constexpr double UNISON_FADE_SEC = 0.01;
@@ -55,9 +56,15 @@ public:
     void forEachTable(Fn&& fn) const {
         a.forEachTable(fn);
         b.forEachTable(fn);
+        aR.forEachTable(fn);
+        bR.forEachTable(fn);
     }
 
     WtOsc a, b;
+    /** Right-channel table mixes (stereo position / a stereo LFO on a position). */
+    WtOsc aR, bR;
+    bool rA = false, rB = false;
+    bool stereo = false;
     Adsr fenv, penv, menv;
     MultiFilter filter, filterR;
     double outL = 0, outR = 0;
@@ -73,7 +80,7 @@ private:
     void stepLfos(const SynthParams& s, double bpm, int blockLen, double beat);
     void unison(const SynthParams& s, double scale);
     int copies(int n, double* w0, double* w1, double* ph, double centre, double* pl, double* pn);
-    double place(int count, int n, double cents, double spread, double* pl, double* pn, double* rat, double* gl, double* gr);
+    double place(int count, int n, double cents, double spr, double* pl, double* pn, double* rat, double* gl, double* gr);
 
     double sampleRate;
     int blockLen = 64;
@@ -83,7 +90,6 @@ private:
     double wA0[MAX_UNISON]{}, wA1[MAX_UNISON]{}, wB0[MAX_UNISON]{}, wB1[MAX_UNISON]{};
     int uA = 1, uB = 1;
     double maxRatA = 1, maxRatB = 1;
-    bool stereo = false;
     double uniStep, uniGlide;
     double plA[MAX_UNISON]{}, plB[MAX_UNISON]{}, pnA[MAX_UNISON]{}, pnB[MAX_UNISON]{};
     double phCA = 0, phCB = 0;
@@ -95,7 +101,21 @@ private:
     bool cutSet = false;
     double k0 = 2, k1 = 2;
     double lv0[5]{}, lv1[5]{};
-    double gain = 0;
+    double gain = 0, gainR = 0;
+    double opA0 = 0, opA1 = 0, opB0 = 0, opB1 = 0;
+    double psA0 = 0, psA1 = 0, psB0 = 0, psB1 = 0;
+    double fsS = 0, dCutS = 0;
+    double offL0 = 0, offL1 = 0, offR0 = 0, offR1 = 0;
+    double dLv0[2]{}, dLv1[2]{};
+    Prng noiseR;
+    double pinkR0 = 0, pinkR1 = 0, pinkR2 = 0;
+    double nwC = 1, nwS = 0;
+    bool spread = false;
+    double lfoOutR[LFO_COUNT]{};
+    bool lfoStereo = false;
+    double srcR[N_SOURCES]{};
+    double dstR[N_DESTS]{};
+    double gainTargetR = 0;
     double lfoPhase[LFO_COUNT]{}, lfoCur[LFO_COUNT]{}, lfoPrev[LFO_COUNT]{}, lfoAge[LFO_COUNT]{}, lfoOut[LFO_COUNT]{};
     Prng modRng;
     double noteRand = 0;

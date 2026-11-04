@@ -31,9 +31,14 @@ struct LfoParams {
     int div = 7; // 1/4
     bool retrig = false;
     double phase = 0;
+    /** Stereo phase 0..0.5: the right channel's copy runs this far ahead (periodic shapes only). */
+    double stereo = 0;
     double fade = 0;
     double depth = 1;
 };
+
+/** Shapes a stereo phase applies to (S&H / smooth random draw one value for both sides). */
+inline bool isPeriodicShape(LfoShape s) { return s != LfoShape::sh && s != LfoShape::smooth; }
 
 inline double lfoRateHz(const LfoParams& l, double bpm) { return l.sync ? bpm / 60 / LFO_DIV_BEATS[(size_t) l.div] : l.rate; }
 
@@ -45,9 +50,10 @@ inline constexpr int N_SOURCES = 11;
 /** Destinations (order = MOD_DESTS in TS). */
 enum ModDest : int8_t {
     DST_NONE = -1, DST_PITCH_A, DST_PITCH_B, DST_POS_A, DST_POSY_A, DST_POS_B, DST_POSY_B, DST_LEVEL_A, DST_LEVEL_B, DST_SUB,
-    DST_NOISE, DST_CUTOFF, DST_RES, DST_DRIVE, DST_AMP, DST_PAN, DST_LFO1_RATE, DST_LFO2_RATE, DST_LFO3_RATE
+    DST_NOISE, DST_CUTOFF, DST_RES, DST_DRIVE, DST_AMP, DST_PAN, DST_LFO1_RATE, DST_LFO2_RATE, DST_LFO3_RATE,
+    DST_PAN_A, DST_PAN_B, DST_F_SPREAD
 };
-inline constexpr int N_DESTS = 18;
+inline constexpr int N_DESTS = 21;
 
 inline constexpr double MOD_PITCH_SEMIS = 12;
 inline constexpr double MOD_CUTOFF_OCTAVES = 6;

@@ -72,8 +72,8 @@ void SynthEngine::zombie(Retired::Kind kind, const void* ptr) {
 
 void SynthEngine::collectZombies() {
     if (nZombies == 0) return;
-    // Pointers voices may still read (Simple osc + Synth A / B), sorted for lookup.
-    constexpr int PER_VOICE = 3 * (WtOsc::MAX_LIVE + 1);
+    // Pointers voices may still read (Simple osc + Synth A / B and their right-channel mixes), sorted for lookup.
+    constexpr int PER_VOICE = 5 * (WtOsc::MAX_LIVE + 1);
     const void* live[MAX_VOICES * PER_VOICE];
     int nLive = 0;
     const auto add = [&](const MipSet* t) { live[nLive++] = t; };
@@ -409,7 +409,10 @@ void SynthEngine::control(int blockLen) {
         const VoiceRuntime& v = *voices[(size_t) i];
         if (!v.syn || v.params.type != VoiceType::synth || (!v.notes.size && v.gateRemaining <= 0)) continue;
         const SynthParams& s = v.params.synth;
-        copies += s.aUnison + (s.bLevel > 0 || s.ringLevel > 0 || s.fm > 0 || s.sync ? s.bUnison : 0);
+        // A stereo phase / position reads every copy twice: those copies count double.
+        const int xa = s.aPhaseSpread > 0 || s.aPosSpread > 0 ? 2 : 1;
+        const int xb = s.bPhaseSpread > 0 || s.bPosSpread > 0 ? 2 : 1;
+        copies += s.aUnison * xa + (s.bLevel > 0 || s.ringLevel > 0 || s.fm > 0 || s.sync ? s.bUnison * xb : 0);
     }
     const double low = UNISON_BUDGET * 0.75;
     if (copies > UNISON_BUDGET)

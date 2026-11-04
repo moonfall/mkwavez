@@ -7,7 +7,9 @@
  *    exactly as it did.
  *  - 'synth': two wavetable oscillators (A: the voice's own wavetable / window / position;
  *    B: `synth.b`), sub oscillator, noise, ring modulation → multimode filter → amp, with
- *    filter / pitch envelopes, glide and pan (see engine/synthVoice.ts).
+ *    filter / pitch envelopes, glide, and a stereo path (unison spread, per-oscillator pan,
+    stereo phase / position, noise width, filter spread, stereo LFOs, width, pan; see
+    engine/synthVoice.ts).
  *
  * Every voice carries a `synth` block (Simple voices keep it, unused), so switching a voice's
  * type keeps its synth settings.
@@ -134,6 +136,25 @@ export interface SynthParams {
   readonly sat: number;
   /** Stereo width of the voice (0 = mono, 1 = as is, 2 = wider). */
   readonly width: number;
+  /** Stereo position of each oscillator −1 (left) .. 1 (right): a balance pan on its own signal, before the filter. */
+  readonly aPan: number;
+  readonly bPan: number;
+  /**
+   * Stereo phase per oscillator, 0..0.5 cycles: the right channel reads the oscillator this
+   * far ahead of the left (0.5 = opposite phase; cancels odd harmonics in a mono sum).
+   */
+  readonly aPhaseSpread: number;
+  readonly bPhaseSpread: number;
+  /**
+   * Stereo position per oscillator, 0..1: the left channel reads the window at position −
+   * spread / 2, the right at + spread / 2 (X axis; reflected at the window's edges).
+   */
+  readonly aPosSpread: number;
+  readonly bPosSpread: number;
+  /** Noise stereo width 0..1 (0 = the same noise on both sides, 1 = uncorrelated left / right). */
+  readonly noiseWidth: number;
+  /** Filter cutoff spread −1..1: the left cutoff moves down and the right up (1 = FILTER_SPREAD_OCTAVES apart). */
+  readonly filterSpread: number;
 }
 
 export const MAX_UNISON = 4;
@@ -144,6 +165,8 @@ export const FM_DEPTH = 1.5;
 export const FILTER_ENV_OCTAVES = 6;
 /** Velocity amount 1: velocity 0 closes the cutoff by this many octaves (velocity 127: none). */
 export const FILTER_VEL_OCTAVES = 4;
+/** Filter spread ±1 = the two channels' cutoffs this many octaves apart. */
+export const FILTER_SPREAD_OCTAVES = 2;
 export const CUTOFF_MIN = 20;
 export const CUTOFF_MAX = 20000;
 
@@ -216,6 +239,14 @@ export const DEFAULT_SYNTH: SynthParams = {
   bSpread: 0.6,
   sat: 0,
   width: 1,
+  aPan: 0,
+  bPan: 0,
+  aPhaseSpread: 0,
+  bPhaseSpread: 0,
+  aPosSpread: 0,
+  bPosSpread: 0,
+  noiseWidth: 0,
+  filterSpread: 0,
 };
 
 /** Amp ADSR of a new Synth voice (Simple voices keep their own defaults). */
@@ -265,6 +296,14 @@ export const SYNTH_RANGES: Readonly<Partial<Record<keyof SynthParams, readonly [
   bSpread: [0, 1],
   sat: [0, 1],
   width: [0, 2],
+  aPan: [-1, 1],
+  bPan: [-1, 1],
+  aPhaseSpread: [0, 0.5],
+  bPhaseSpread: [0, 0.5],
+  aPosSpread: [0, 1],
+  bPosSpread: [0, 1],
+  noiseWidth: [0, 1],
+  filterSpread: [-1, 1],
 };
 
 
@@ -294,6 +333,7 @@ export function normalizeLfo(raw: unknown, def: LfoParams = DEFAULT_LFO): LfoPar
     div: (LFO_DIVS as readonly unknown[]).includes(o.div) ? (o.div as LfoParams['div']) : def.div,
     retrig: typeof o.retrig === 'boolean' ? o.retrig : def.retrig,
     phase: clampNum(o.phase, def.phase, [0, 1]),
+    stereo: clampNum(o.stereo, def.stereo, [0, 0.5]),
     fade: clampNum(o.fade, def.fade, [0, 10]),
     depth: clampNum(o.depth, def.depth, [0, 1]),
   };

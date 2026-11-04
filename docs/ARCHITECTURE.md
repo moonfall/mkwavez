@@ -278,7 +278,10 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   source, sub (wave, octave, level), noise (type, level), ring, FM, hard sync, unison per
   osc (copies, detune, spread), filter (mode, cutoff Hz, resonance, drive, key track, env /
   velocity amounts), saturation, filter ADSR, pitch envelope (A, D, ± semitones, target),
-  velocity → amp, glide (+ legato only), bend range, pan, width, three LFOs, the mod
+  velocity → amp, glide (+ legato only), bend range, pan, width, the stereo controls
+  (oscillator pan `aPan` / `bPan`, stereo phase `aPhaseSpread` / `bPhaseSpread` 0..½
+  cycle, stereo position `aPosSpread` / `bPosSpread`, `noiseWidth`, `filterSpread` ±1),
+  three LFOs (each with a stereo phase, `stereo` 0..½), the mod
   envelope (AD / ADSR) and 8 matrix slots (source, destination, amount −1..1). Ranges in
   SYNTH_RANGES; `normalizeSynth` validates untrusted data (missing fields → the Init
   patch's, so new fields need no schema bump; unknown fields kept).
@@ -446,7 +449,14 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   160 px for the full range, Shift ×4 finer; release = one undo step), double-click resets
   tuning, unison, pan and ± amounts (`reset`); the arc is an SVG path with `pathLength` 100 and a dash array. At 1440×900
   and 1180×820 with only Sequence collapsed it fits (roomy at 1440, dense at 1180, also
-  with both oscillators on 2D wavetables); the Synth panel body has 6 / 8 px padding. The Seed tab fills Generate (library column;
+  with both oscillators on 2D wavetables; at 1180 dense exactly: a column is 38 px and a
+  group 6 px more, so another column there needs one taken out); the Synth panel body has 6 / 8 px padding.
+  Stereo controls: each Osc group has its pan, Mix the noise width, Filter the spread, and
+  the Output group (level, octave, glide, legato, bend) the stereo image — pan, width, each
+  oscillator's stereo phase / position and the three LFOs' stereo phases (kept out of the
+  LFO groups so each stays one dense column). On the pages: Osc has Tune (oct · semi ·
+  fine on one row), Level · pan and Stereo (phase · position); Mix pairs noise level ·
+  width; Filter has Spread; the Mod page's LFO editor has Stereo. The Seed tab fills Generate (library column;
   formula row; wave + spectrum flex; batch row + strip), and so does Mutate (library
   column | source + parameters row; wave + spectrum flex; batch row + strip; the batch
   row wraps when the column is narrower than ~700 px, via a container query), and so
@@ -682,9 +692,7 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
 - Per sample: osc B copies (FM source: B's first copy), osc A copies at phase + FM, mixer
   (A, B, ring A × B, sub with polyBLEP square, seeded white / pink noise), drive, filter
   (two ZDF SVF cores; LP24 = Butterworth first stage + resonant second), saturation, amp,
-  width (mid / side), soft limiter (linear to ±1, < ±2). While unison copies are spread the
-  voice is stereo (a second filter, which starts from the first one's state; back to mono
-  once the copies are gone and both filters agree). Unison places are symmetric for every
+  width (mid / side), soft limiter (linear to ±1, < ±2). Unison places are symmetric for every
   count (1: centre; 2: ±½ detune, hard left / right; 3: centre, ±1; 4: ±⅓, ±1 — detune
   and spread alike); when the count changes, copies glide to their new places (~30 ms) and
   fade in / out over 10 ms (weights towards 1/√n). The pitch reference is a virtual centre
@@ -697,8 +705,35 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   them jump (a slow division can take up to about a cycle to lock; only forward wraps start
   a new S&H cycle); LFO-rate modulation multiplies their speed (unlocked while it is non-zero,
   then they glide back into lock). Denormal-range filter / pink state is flushed per block.
+- Stereo path: the voice runs two channels (a second filter, which starts from the first
+  one's state) while anything makes them differ, and goes back to one once nothing does and
+  both filters agree — so a voice without stereo settings costs and sounds as before
+  (left = right, bit for bit). What makes them differ:
+  - unison spread (copies' balance pans);
+  - oscillator pan (`aPan` / `bPan`, matrix `panA` / `panB`): a balance pan on each
+    oscillator's own sum before the mixer; ring modulation takes the unpanned sums;
+  - stereo phase (`aPhaseSpread` / `bPhaseSpread`): every copy's right-channel read is that
+    many cycles ahead (smoothed like the unison places; ½ inverts a sine on the right, so
+    it cancels odd harmonics in the mono sum);
+  - stereo position (`aPosSpread` / `bPosSpread`): left at position − spread / 2, right at
+    + spread / 2 on X (reflected). The right channel reads a second table mix (`aR` / `bR`,
+    WtOsc), which starts as a copy of the left's (`copyFrom`), resolves at its own position
+    with the same slew and Step-mode wraps, and is dropped once it reads where the left does
+    and plays the same tables with the same weights (`sameMix`), so it crossfades back;
+  - noise width: a second seeded stream (`NOISE_R_SEED`, its own pink filter) mixed in
+    with opposite signs, L = c·n₁ + s·n₂, R = c·n₁ − s·n₂ (θ = width·π/4: uncorrelated at
+    1, same loudness throughout);
+  - filter spread (± `FILTER_SPREAD_OCTAVES` / 2 per side, matrix `fSpread`, smoothed);
+  - stereo LFOs: an LFO with a stereo phase (periodic shapes; S&H / smooth random are
+    shared) has a right-channel output running that far ahead; the matrix is summed again
+    with it and the right channel takes its `STEREO_DESTS` from that sum — positions (via
+    the right table mix), A / B levels, cutoff and amp. Pitch, pan, drive and the rest
+    stay shared (the left channel is the LFO's own phase).
+  The smoothed stereo controls snap onto their target within 1e-6, so they settle exactly
+  and the voice can return to mono. Width now applies to all of them, not only unison.
 - CPU guard: per control block the engine counts the unison copies of Synth voices holding
-  a note (release tails don't count); over `UNISON_BUDGET` (32) it limits — each voice's
+  a note (release tails don't count; an oscillator with a stereo phase or position reads
+  each copy twice, so its copies count double); over `UNISON_BUDGET` (32) it limits — each voice's
   copies are scaled by budget / count (floor, ≥ 1 per oscillator: 8 voices at 4 + 4 →
   2 + 2; they fade, never cut) until the count falls to ¾ of the budget (hysteresis) — and
   `status.unisonLimited` is set. Bench (`npm run bench`, node, this machine): 8 Synth

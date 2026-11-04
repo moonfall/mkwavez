@@ -43,6 +43,65 @@ export class WtOsc {
   heldTable: MipSet | null = null;
   targetId: TableId = -1;
 
+  /**
+   * Take over another oscillator's whole state (the Synth voice's right-channel reader
+   * starting from its left one, so the right channel starts from exactly what plays).
+   */
+  copyFrom(o: WtOsc): void {
+    this.phase = o.phase;
+    this.mipLevel = o.mipLevel;
+    this.step = o.step;
+    this.index = o.index;
+    this.indexY = o.indexY;
+    for (let k = 0; k < MAX_LIVE; k++) {
+      this.ids[k] = o.ids[k];
+      this.tabs[k] = o.tabs[k];
+      this.w0[k] = o.w0[k];
+      this.w1[k] = o.w1[k];
+    }
+    this.n = o.n;
+    this.win.x0 = o.win.x0;
+    this.win.x1 = o.win.x1;
+    this.win.y0 = o.win.y0;
+    this.win.y1 = o.win.y1;
+    this.heldId = o.heldId;
+    this.heldTable = o.heldTable;
+    this.targetId = o.targetId;
+  }
+
+  /**
+   * Whether this block plays exactly the same tables with the same weight ramps as `o`
+   * (entries in any order): then either can stand in for the other without a step.
+   */
+  sameMix(o: WtOsc): boolean {
+    if (this.step !== o.step) return false;
+    if (this.step) return this.n === o.n && this.heldId === o.heldId && this.targetId === o.targetId && (this.n === 0 || this.tabs[0] === o.tabs[0]);
+    let live = 0;
+    for (let k = 0; k < this.n; k++) {
+      if (this.w0[k] === 0 && this.w1[k] === 0) continue;
+      live++;
+      let found = false;
+      for (let j = 0; j < o.n; j++) {
+        if (o.ids[j] === this.ids[k]) {
+          if (o.tabs[j] !== this.tabs[k] || o.w0[j] !== this.w0[k] || o.w1[j] !== this.w1[k]) return false;
+          found = true;
+          break;
+        }
+      }
+      if (!found) return false;
+    }
+    let liveO = 0;
+    for (let j = 0; j < o.n; j++) if (o.w0[j] !== 0 || o.w1[j] !== 0) liveO++;
+    return live === liveO;
+  }
+
+  /** Forget the mix (nothing plays until the next resolve). */
+  clear(): void {
+    for (let k = 0; k < MAX_LIVE; k++) this.tabs[k] = null;
+    this.n = 0;
+    this.heldTable = null;
+  }
+
   /** Keep the current mix without ramping (block start = previous block end). */
   hold(): void {
     for (let k = 0; k < this.n; k++) this.w0[k] = this.w1[k];

@@ -16,12 +16,14 @@ import {
   FILTER_ENV_OCTAVES,
   FILTER_MODE_LABELS,
   FILTER_MODES,
+  FILTER_SPREAD_OCTAVES,
   type FilterMode,
   type OscSource,
   type SynthParams,
 } from '../core/synth';
 import {
   EMPTY_SLOT,
+  isPeriodicShape,
   LFO_DIVS,
   LFO_RATE_MAX_HZ,
   LFO_RATE_MIN_HZ,
@@ -48,7 +50,7 @@ import { isOnScreen, watchVisibility, type UiState } from './context';
 import { h, isNarrowShell, voiceColorVar } from './dom';
 import { linear, type Taper } from './knob';
 import { buildPresetControls } from './presets';
-import { buildSynthFull, hz, logTaper, oscDrawer, pct, secs, signed, timeTaper } from './synthFull';
+import { buildSynthFull, hz, logTaper, oscDrawer, panText, pct, secs, signed, timeTaper } from './synthFull';
 import { createVoicePad } from './voicePad';
 
 export type SynthPage = 'osc' | 'mix' | 'filter' | 'env' | 'mod';
@@ -259,6 +261,38 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
       },
     };
   };
+  /** Three sliders on one row, each with its own range [min, max, step]. */
+  const trio = (
+    id: string,
+    label: string,
+    get: (v: VoiceParams) => readonly [number, number, number],
+    put: (x: readonly [number, number, number]) => VoicePatch,
+    ranges: readonly (readonly [number, number, number])[],
+    fmt: (x: readonly [number, number, number]) => string,
+    o: { ids: readonly [string, string, string]; labels: readonly [string, string, string]; title?: string },
+  ): Control => {
+    const val = h('span', { class: 'crow-val' });
+    const ins = ranges.map(([min, max, step], i) => h('input', { type: 'range', id: o.ids[i], min, max, step, value: 0, 'aria-label': o.labels[i] }));
+    const read = () => [Number(ins[0].value), Number(ins[1].value), Number(ins[2].value)] as const;
+    for (const i of ins) {
+      i.addEventListener('input', () => {
+        val.textContent = fmt(read());
+        set(put(read()));
+      });
+      i.addEventListener('change', commit);
+    }
+    const el = h('div', { class: 'crow crow3', id, title: o.title ?? '' }, h('span', {}, label), ...ins, val);
+    return {
+      el,
+      sync(v) {
+        const x = get(v);
+        ins.forEach((i, k) => {
+          if (document.activeElement !== i || Number(i.value) !== x[k]) i.value = String(x[k]);
+        });
+        val.textContent = fmt(x);
+      },
+    };
+  };
   /** A row with a label and arbitrary content (segments). */
   const lineRow = (label: string, ...content: HTMLElement[]) => h('div', { class: 'crow crow-line' }, h('span', {}, label), h('div', { class: 'crow-line-c' }, ...content));
 
@@ -313,16 +347,19 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     wtSig = sig;
     wtSel.replaceChildren(...model.wavetables.map((w) => h('option', { value: String(w.id) }, `${w.name} · ${shapeLabel(w)}`)));
   };
-  // Octave · coarse on one row.
-  const tuneRow = pair(
+  // Octave · coarse · fine on one row.
+  const tuneRow = trio(
     'syn-tune',
-    'Oct · semi',
-    (v) => [v.synth[k('Oct')], v.synth[k('Coarse')]],
-    (x, y) => ({ synth: { [k('Oct')]: x, [k('Coarse')]: y } }),
-    () => [3, 24],
-    1,
-    (x, y) => `${signed(x)} ${signed(y)}`,
-    { min: [-3, -24], ids: ['syn-oct', 'syn-coarse'], labels: ['Octave', 'Coarse (semitones)'] },
+    'Tune',
+    (v) => [v.synth[k('Oct')], v.synth[k('Coarse')], v.synth[k('Fine')]],
+    ([x, y, z]) => ({ synth: { [k('Oct')]: x, [k('Coarse')]: y, [k('Fine')]: z } }),
+    [
+      [-3, 3, 1],
+      [-24, 24, 1],
+      [-100, 100, 1],
+    ],
+    ([x, y, z]) => `${signed(x)} ${signed(y)} ${signed(z)}c`,
+    { ids: ['syn-oct', 'syn-coarse', 'syn-fine'], labels: ['Octave', 'Coarse (semitones)', 'Fine (cents)'], title: 'Octave · semitones · cents' },
   );
   const sk = (name: 'Unison' | 'Detune' | 'Spread') => `${osc}${name}` as 'aUnison' | 'aDetune' | 'aSpread';
   const unison = seg<number>('syn-unison', 'Unison copies', [[1, '1'], [2, '2'], [3, '3'], [4, '4']] as const, (v) => v.synth[sk('Unison')], (x) => ({ synth: { [sk('Unison')]: x } }));
@@ -337,8 +374,29 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     (x, y) => `${Math.round(x)}ct ${Math.round(y * 100)}%`,
     { ids: ['syn-detune', 'syn-spread'], labels: ['Unison detune (cents)', 'Unison stereo spread'] },
   );
-  const fineRow = row('syn-fine', 'Fine', (v) => v.synth[k('Fine')], (x) => ({ synth: { [k('Fine')]: x } }), linear(-100, 100), (x) => signed(x, 0, ' ct'), { snap: Math.round });
-  const levelRow = row('syn-level', 'Level', (v) => v.synth[k('Level')], (x) => ({ synth: { [k('Level')]: x } }), linear(0, 1), pct);
+  const ok = (name: 'Pan' | 'PhaseSpread' | 'PosSpread') => `${osc}${name}` as 'aPan' | 'aPhaseSpread' | 'aPosSpread';
+  // Level · stereo pan of the oscillator (before the filter).
+  const levelRow = pair(
+    'syn-level',
+    'Level',
+    (v) => [v.synth[k('Level')], v.synth[ok('Pan')]],
+    (x, y) => ({ synth: { [k('Level')]: x, [ok('Pan')]: y } }),
+    () => [1, 1],
+    0.001,
+    (x, y) => `${pct(x)} ${panText(y)}`,
+    { min: [0, -1], ids: ['syn-level', 'syn-osc-pan'], labels: ['Level', 'Oscillator pan'] },
+  );
+  // Stereo phase (right channel ahead, 0..½ cycle) · stereo position spread.
+  const stereoRow = pair(
+    'syn-stereo',
+    'Stereo',
+    (v) => [v.synth[ok('PhaseSpread')], v.synth[ok('PosSpread')]],
+    (x, y) => ({ synth: { [ok('PhaseSpread')]: x, [ok('PosSpread')]: y } }),
+    () => [0.5, 1],
+    0.001,
+    (x, y) => `${Math.round(x * 360)}° ${pct(y)}`,
+    { ids: ['syn-phase-spread', 'syn-pos-spread'], labels: ['Stereo phase (the right channel reads ahead)', 'Stereo position (left and right read the window apart)'] },
+  );
   const dims = (v: VoiceParams) => {
     const wt = model.wavetable(src(v).wavetableId);
     const W = wt && wt.shape !== 'rows' ? Math.max(1, wt.rows[0]?.length ?? 1) : 1;
@@ -356,10 +414,10 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     'div',
     { class: 'crows' },
     tuneRow.el,
-    fineRow.el,
     levelRow.el,
     lineRow('Unison', unison.el, guardNote),
     detuneSpread.el,
+    stereoRow.el,
     ws.el,
     we.el,
     px.el,
@@ -387,18 +445,27 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const mixSub = row('syn-mix-sub', 'Sub', (v) => v.synth.subLevel, sw('subLevel'), linear(0, 1), pct);
   const subWave = seg('syn-sub-wave', 'Sub waveform', [['sine', 'Sine'], ['square', 'Square']] as const, (v) => v.synth.subWave, (x) => ({ synth: { subWave: x } }));
   const subOct = seg('syn-sub-oct', 'Sub octave', [[1, '−1'], [2, '−2']] as const, (v) => v.synth.subOct, (x) => ({ synth: { subOct: x } }));
-  const mixNoise = row('syn-mix-noise', 'Noise', (v) => v.synth.noiseLevel, sw('noiseLevel'), linear(0, 1), pct);
+  const mixNoise = pair(
+    'syn-mix-noise',
+    'Noise',
+    (v) => [v.synth.noiseLevel, v.synth.noiseWidth],
+    (x, y) => ({ synth: { noiseLevel: x, noiseWidth: y } }),
+    () => [1, 1],
+    0.001,
+    (x, y) => `${pct(x)} ↔${pct(y)}`,
+    { ids: ['syn-mix-noise', 'syn-noise-width'], labels: ['Noise level', 'Noise stereo width'] },
+  );
   const noiseType = seg('syn-noise-type', 'Noise colour', [['white', 'White'], ['pink', 'Pink']] as const, (v) => v.synth.noiseType, (x) => ({ synth: { noiseType: x } }));
   const mixRing = row('syn-mix-ring', 'Ring A×B', (v) => v.synth.ringLevel, sw('ringLevel'), linear(0, 1), pct);
   const glide = row('syn-glide', 'Glide', (v) => v.synth.glide, sw('glide'), timeTaper(2), (x) => (x < 0.002 ? 'off' : secs(x)));
   const legato = check('syn-legato', 'Legato only', (v) => v.synth.glideLegato, (x) => ({ synth: { glideLegato: x } }), 'Glide only between overlapping notes');
   const bend = intRow('syn-bend', 'Bend', (v) => v.synth.bendRange, sw('bendRange'), () => [0, 24], (x) => `±${x} st`);
-  const pan = row('syn-pan', 'Pan', (v) => v.synth.pan, sw('pan'), linear(-1, 1), (x) => (Math.abs(x) < 0.01 ? 'C' : `${x < 0 ? 'L' : 'R'} ${Math.round(Math.abs(x) * 100)}`));
+  const pan = row('syn-pan', 'Pan', (v) => v.synth.pan, sw('pan'), linear(-1, 1), panText);
   const outLevel = row('syn-out', 'Output', (v) => v.level, (x) => ({ level: x }), linear(0, 1), pct);
   const oct = intRow('syn-voice-oct', 'Octave', (v) => v.octave, (x) => ({ octave: x }), () => [-2, 2], (x) => signed(x));
   const syncChk = check('syn-sync', 'Sync B', (v) => v.synth.sync, (x) => ({ synth: { sync: x } }), 'Hard sync: each cycle of osc B restarts osc A');
   const fmRow = row('syn-fm', 'FM B→A', (v) => v.synth.fm, sw('fm'), linear(0, 1), pct, { title: 'Osc B modulates osc A’s phase' });
-  const width = row('syn-width', 'Width', (v) => v.synth.width, sw('width'), linear(0, 2), pct, { title: 'Stereo width of the unison spread (0 = mono)' });
+  const width = row('syn-width', 'Width', (v) => v.synth.width, sw('width'), linear(0, 2), pct, { title: 'Stereo width (0 = mono)' });
   const pageMix = h(
     'div',
     { class: 'syn-page syn-page-2col', id: 'syn-page-mix', role: 'tabpanel' },
@@ -415,6 +482,9 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const envAmt = row('syn-env-amt', 'Env amt',
  (v) => v.synth.envAmount, sw('envAmount'), linear(-1, 1), (x) => signed(x * FILTER_ENV_OCTAVES, 1, ' oct'));
   const velAmt = row('syn-vel-amt', 'Velocity', (v) => v.synth.velAmount, sw('velAmount'), linear(0, 1), pct, { title: 'Softer notes close the filter' });
+  const fSpread = row('syn-filter-spread', 'Spread', (v) => v.synth.filterSpread, sw('filterSpread'), linear(-1, 1), (x) => signed((x * FILTER_SPREAD_OCTAVES) / 2, 1, ' oct'), {
+    title: 'Stereo filter spread: the left cutoff moves down, the right up (± octaves per side)',
+  });
   const satRow = row('syn-sat', 'Saturate', (v) => v.synth.sat, sw('sat'), linear(0, 1), pct, { title: 'Saturation after the filter' });
   const resp = h('canvas', { id: 'syn-response', role: 'img', 'aria-label': 'Filter response' });
   const respLabel = h('span', { class: 'plot-tag', id: 'syn-response-label' });
@@ -423,7 +493,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const pageFilter = h(
     'div',
     { class: 'syn-page', id: 'syn-page-filter', role: 'tabpanel' },
-    h('div', { class: 'syn-ctrl' }, h('div', { class: 'syn-head' }, mode.el), h('div', { class: 'crows' }, cutoff.el, res.el, drive.el, satRow.el, keyTrack.el, envAmt.el, velAmt.el)),
+    h('div', { class: 'syn-ctrl' }, h('div', { class: 'syn-head' }, mode.el), h('div', { class: 'crows' }, cutoff.el, fSpread.el, res.el, drive.el, satRow.el, keyTrack.el, envAmt.el, velAmt.el)),
     visFilter,
   );
 
@@ -506,6 +576,9 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const lfoDepth = row('syn-lfo-depth', 'Depth', (v) => lfo(v).depth, (x) => putLfo({ depth: x }), linear(0, 1), pct);
   const lfoFade = row('syn-lfo-fade', 'Fade in', (v) => lfo(v).fade, (x) => putLfo({ fade: x }), timeTaper(5), (x) => (x < 0.002 ? 'off' : secs(x)));
   const lfoPhase = row('syn-lfo-phase', 'Phase', (v) => lfo(v).phase, (x) => putLfo({ phase: x }), linear(0, 1), (x) => `${Math.round(x * 360)}°`);
+  const lfoStereo = row('syn-lfo-stereo', 'Stereo', (v) => lfo(v).stereo, (x) => putLfo({ stereo: x }), linear(0, 0.5), (x) => `${Math.round(x * 360)}°`, {
+    title: 'Stereo phase: the right channel’s LFO runs ahead (positions, levels, cutoff, amp); periodic shapes only',
+  });
   const divRow = h('div', { class: 'crow crow-line' }, h('span', {}, 'Division'), h('div', { class: 'crow-line-c' }, lfoDiv.el));
   const lfoBox = h(
     'div',
@@ -517,6 +590,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     lfoDepth.el,
     lfoFade.el,
     lfoPhase.el,
+    lfoStereo.el,
   );
   const mMode = seg<ModEnvMode>('syn-menv-mode', 'Mod envelope mode', [['ad', 'AD'], ['adsr', 'ADSR']] as const, (v) => v.synth.mMode, (x) => ({ synth: { mMode: x } }));
   const mRows = [
@@ -591,8 +665,10 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     width,
     satRow,
 
-    fineRow,
     levelRow,
+    stereoRow,
+    fSpread,
+    lfoStereo,
     ws,
     we,
     px,
@@ -678,6 +754,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     menvBox.hidden = modEdit !== 'env';
     const synced = lfo(v).sync;
     lfoRate.el.hidden = synced;
+    lfoStereo.input.disabled = !isPeriodicShape(lfo(v).shape);
     divRow.hidden = !synced;
     mRows[2].el.hidden = mRows[3].el.hidden = v.synth.mMode === 'ad';
     ampBox.hidden = envPage !== 'amp';

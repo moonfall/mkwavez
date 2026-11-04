@@ -19,6 +19,7 @@ inline constexpr int MAX_UNISON = 4;
 inline constexpr double FM_DEPTH = 1.5;
 inline constexpr double FILTER_ENV_OCTAVES = 6;
 inline constexpr double FILTER_VEL_OCTAVES = 4;
+inline constexpr double FILTER_SPREAD_OCTAVES = 2;
 inline constexpr double CUTOFF_MIN = 20;
 inline constexpr double CUTOFF_MAX = 20000;
 
@@ -74,6 +75,12 @@ struct SynthParams {
     double bDetune = 12, bSpread = 0.6;
     double sat = 0;
     double width = 1;
+    /** Stereo: oscillator pans, stereo phase (cycles), stereo position, noise width, filter spread. */
+    double aPan = 0, bPan = 0;
+    double aPhaseSpread = 0, bPhaseSpread = 0;
+    double aPosSpread = 0, bPosSpread = 0;
+    double noiseWidth = 0;
+    double filterSpread = 0;
 };
 
 /** Semitone offset of an oscillator's tuning. */
