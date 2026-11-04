@@ -593,3 +593,12 @@ viz('cz-resonance-saw-window', {
   axis: (i) => ['0', `(1 − t) × sin(${(2 + 10 * i.u).toFixed(1)}·p)`, '2π'],
   draw: (g, w, h, i, c) => czResonance(g, w, h, i, c, (p) => 1 - p / TAU),
 });
+
+// Euclidean pulses: k = 1 + (4+n)%15 onsets over 16 steps, as the formula spreads them.
+viz('euclidean-pulses', {
+  axis: (i) => ['', `E(${1 + ((4 + i.index) % 15)}, 16)`, ''],
+  draw: (g, w, h, i, c) => {
+    const k = 1 + ((4 + i.index) % 15);
+    rhythmCircle(g, w, h, c, Array.from({ length: 16 }, (_, j) => Math.floor((j * k) / 16) - Math.floor(((j - 1) * k) / 16)));
+  },
+});
