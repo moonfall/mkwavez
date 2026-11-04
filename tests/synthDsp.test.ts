@@ -279,7 +279,8 @@ describe('Synth voice in the engine', () => {
         e.applyMidi({ type: 'noteOff', voiceId: 1, note });
       }
     }
-  });
+    // 6 extremes × 4 notes × SR / 4 samples, two expects per sample: ~4 s on a fast machine.
+  }, 30_000);
 
   it('plays sequencer and MIDI notes; pan moves it between channels', () => {
     const e = engine();
