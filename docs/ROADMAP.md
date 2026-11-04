@@ -284,6 +284,13 @@ Open:
   presets (Init + Sub bass, Pluck, Evolving pad, Sync lead, Brass, Noise sweep on the
   built-in wavetables; user presets saved with the session, exported / imported as JSON);
   copy / paste a voice between tabs.
+- Stage 4 (stereo voice): the path runs on two channels whenever something makes them
+  differ, and back on one otherwise (unchanged output for patches without stereo
+  settings). Per-oscillator pan, stereo phase and stereo position (a second table mix per
+  oscillator for the right channel), noise width, filter cutoff spread, a stereo phase per
+  LFO driving per-channel destinations (positions, levels, cutoff, amp); new matrix
+  destinations A pan, B pan, filter spread; width applies to every stereo source; the CPU
+  guard counts double-read copies twice. No change to the wavetables.
 
 Decisions / deviations:
 - New voices from "+" are offered as Synth (first in the menu) or Simple; both start on

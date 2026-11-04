@@ -497,11 +497,14 @@ export class SynthEngine {
     // count: they would make every note-on look like two voices). Over the budget each
     // voice's copies are scaled to fit it (floor, ≥ 1); with hysteresis the limit stays on
     // until the count falls to 3/4 of the budget (so it doesn't flap). Copies fade, never cut.
+    // An oscillator with a stereo phase / position reads every copy twice: its copies count double.
     let copies = 0;
     for (const v of this.voices) {
       if (!v.syn || v.params.type !== 'synth' || (!v.notes.size && v.gateRemaining <= 0)) continue;
       const s = v.params.synth;
-      copies += s.aUnison + (s.bLevel > 0 || s.ringLevel > 0 || s.fm > 0 || s.sync ? s.bUnison : 0);
+      const xa = s.aPhaseSpread > 0 || s.aPosSpread > 0 ? 2 : 1;
+      const xb = s.bPhaseSpread > 0 || s.bPosSpread > 0 ? 2 : 1;
+      copies += s.aUnison * xa + (s.bLevel > 0 || s.ringLevel > 0 || s.fm > 0 || s.sync ? s.bUnison * xb : 0);
     }
     const low = UNISON_BUDGET * 0.75;
     if (copies > UNISON_BUDGET) this.unisonLimited = true;

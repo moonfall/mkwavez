@@ -243,7 +243,7 @@ TEST("golden: resolveMix (400 random wavetables and queries)") {
 
 // ---- engine scenarios (opcodes as in tests/golden.test.ts) ----
 
-const char* const SCENARIOS[] = {"sequence", "midi2d", "steplen", "synth", "synthEdit", "synthGuard", "rows"};
+const char* const SCENARIOS[] = {"sequence", "midi2d", "steplen", "synth", "synthEdit", "synthGuard", "stereo", "rows"};
 /** Synth voices: the same bound as the rest (measured: well under it). */
 constexpr double SYNTH_TOL = 2e-6;
 
@@ -268,11 +268,13 @@ SynthParams decodeSynth(const std::vector<double>& op, size_t i) {
     s.sync = d() != 0; s.fm = d();
     s.aUnison = (int) d(); s.aDetune = d(); s.aSpread = d(); s.bUnison = (int) d(); s.bDetune = d(); s.bSpread = d();
     s.sat = d(); s.width = d();
+    s.aPan = d(); s.bPan = d(); s.aPhaseSpread = d(); s.bPhaseSpread = d(); s.aPosSpread = d(); s.bPosSpread = d();
+    s.noiseWidth = d(); s.filterSpread = d();
     s.b.wavetableId = (int) d(); s.b.windowStart = (int) d(); s.b.windowEnd = (int) d(); s.b.windowStartY = (int) d();
     s.b.windowEndY = (int) d(); s.b.position = d(); s.b.positionY = d();
     for (auto& l : s.lfos) {
         l.shape = (LfoShape) (int) d(); l.rate = d(); l.sync = d() != 0; l.div = (int) d(); l.retrig = d() != 0;
-        l.phase = d(); l.fade = d(); l.depth = d();
+        l.phase = d(); l.fade = d(); l.depth = d(); l.stereo = d();
     }
     for (auto& m : s.mods) {
         m.src = (ModSource) (int) d(); m.dst = (ModDest) (int) d(); m.amt = d();

@@ -8,6 +8,12 @@
  *   noise (white / pink, seeded) ─┤
  *   ring (A × B) ──────┘
  *
+ * Stereo: the path runs on two channels whenever something makes them differ — unison
+ * spread, oscillator pan, stereo phase (the right channel reads ahead), stereo position (a
+ * second table mix per oscillator, aR / bR, at its own position), noise width, filter
+ * spread, or a stereo LFO on a per-channel destination (STEREO_DESTS) — and back on one
+ * (one filter) once nothing does and both filters agree again.
+ *
  * Pitch (glide, bend, oscillator tuning, pitch envelope) and the mixer / filter controls are
  * computed once per control block and ramped linearly across it; the filter envelope runs
  * per sample, so the cutoff is recomputed (and smooth) every sample. Fixed state, no
@@ -26,6 +32,7 @@ import {
   LFO_RATE_MAX_HZ,
 
   lfoRateHz,
+  isPeriodicShape,
   lfoWave,
   MOD_CUTOFF_OCTAVES,
   MOD_LFO_RATE_OCTAVES,
@@ -35,7 +42,7 @@ import {
   reflect01,
   SRC_INDEX,
 } from '../modulation';
-import { FILTER_ENV_OCTAVES, FILTER_VEL_OCTAVES, FM_DEPTH, MAX_UNISON, oscSemis, type SynthParams } from '../synth';
+import { FILTER_ENV_OCTAVES, FILTER_SPREAD_OCTAVES, FILTER_VEL_OCTAVES, FM_DEPTH, MAX_UNISON, oscSemis, type SynthParams } from '../synth';
 import type { TableId } from '../table';
 import type { VoiceParams } from '../voice';
 import type { PackedWavetable } from '../wavetablePlayback';
@@ -47,6 +54,8 @@ import { WtOsc } from './wtOsc';
 export const CONTROL_SMOOTH_SEC = 0.005;
 /** Seed of the per-voice noise generators (mixed with the voice id). */
 export const NOISE_SEED = 0x5eed;
+/** Seed of the right channel's second noise stream (noise width). */
+export const NOISE_R_SEED = 0x5eee;
 /** Seed of the per-voice modulation randomness (S&H, smooth random, per-note random). */
 export const MOD_SEED = 0x10f0;
 
@@ -98,6 +107,14 @@ export const UNISON_FADE_SEC = 0.01;
 const D = DST_INDEX;
 const S = SRC_INDEX;
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
+const clamp11 = (x: number) => (x < -1 ? -1 : x > 1 ? 1 : x);
+/** Smoothed stereo controls snap onto their target this close (so they settle exactly, e.g. on 0). */
+const SNAP = 1e-6;
+/** One-pole step of `x` towards `t` by `c`, snapping onto `t` once within SNAP. */
+function approach(x: number, t: number, c: number): number {
+  const y = x + (t - x) * c;
+  return Math.abs(t - y) < SNAP ? t : y;
+}
 /** Pink noise (Paul Kellet's economy filter) is scaled by this to match white noise's loudness. */
 export const PINK_GAIN = 0.32;
 
@@ -136,6 +153,15 @@ export class SynthVoice {
   readonly sampleRate: number;
   readonly a = new WtOsc();
   readonly b = new WtOsc();
+  /**
+   * Right-channel table mixes: used while the right channel reads an oscillator at another
+   * position than the left (stereo position, or a stereo LFO on a position); otherwise the
+   * right channel reads `a` / `b` too.
+   */
+  readonly aR = new WtOsc();
+  readonly bR = new WtOsc();
+  rA = false;
+  rB = false;
   readonly fenv = new Adsr();
   /** Pitch envelope: attack → decay to 0 (sustain 0), stepped once per control block. */
   readonly penv = new Adsr();
@@ -165,8 +191,10 @@ export class SynthVoice {
   /** Highest detune ratio among the rendered copies (for the mip level). */
   private maxRatA = 1;
   private maxRatB = 1;
-  /** Stereo: unison copies are spread (two filters run; kept until the two filters agree again). */
+  /** Stereo: the channels differ (two filters run; kept until the two filters agree again). */
   stereo = false;
+  /** Unison copies are spread this block. */
+  private spread = false;
   /** Copy weights' largest change per block. */
   private readonly uniStep: number;
   /** One-pole coefficient per block for copies gliding to new places. */
@@ -186,6 +214,14 @@ export class SynthVoice {
   private pink0 = 0;
   private pink1 = 0;
   private pink2 = 0;
+  /** The right channel's second noise stream (noise width) and its pink filter. */
+  private readonly noiseR: Prng;
+  private pinkR0 = 0;
+  private pinkR1 = 0;
+  private pinkR2 = 0;
+  /** Noise width this block as a rotation: L = c·n1 + s·n2, R = c·n1 − s·n2. */
+  private nwC = 1;
+  private nwS = 0;
   subPhase = 0;
 
   /** Glided pitch (MIDI semitones, voice octave included) and the note it glides to. */
@@ -211,6 +247,29 @@ export class SynthVoice {
   private lv1 = new Float64Array(5);
   /** Amp gain (level × velocity), smoothed per sample like the Simple voice's. */
   gain = 0;
+  /** The right channel's amp gain (differs from `gain` with a stereo LFO on amp). */
+  gainR = 0;
+  /** Oscillator pans (−1..1) at the block start / end. */
+  private opA0 = 0;
+  private opA1 = 0;
+  private opB0 = 0;
+  private opB1 = 0;
+  /** Stereo phase (cycles the right channel reads ahead) per oscillator at the block start / end. */
+  private psA0 = 0;
+  private psA1 = 0;
+  private psB0 = 0;
+  private psB1 = 0;
+  /** Filter spread (octaves between the channels, smoothed) and a stereo LFO's cutoff difference. */
+  private fsS = 0;
+  private dCutS = 0;
+  /** log2-cutoff offsets of the left / right channel at the block start / end. */
+  private offL0 = 0;
+  private offL1 = 0;
+  private offR0 = 0;
+  private offR1 = 0;
+  /** Right minus left level of osc A / B (stereo LFO on a level) at the block start / end. */
+  private readonly dLv0 = new Float64Array(2);
+  private readonly dLv1 = new Float64Array(2);
   /** Pan gains at the block start / end. */
   panL0 = 1;
   panL1 = 1;
@@ -229,12 +288,19 @@ export class SynthVoice {
   private readonly lfoPrev = new Float64Array(LFO_COUNT);
   private readonly lfoAge = new Float64Array(LFO_COUNT);
   readonly lfoOut = new Float64Array(LFO_COUNT);
+  /** The right channel's LFO outputs (an LFO's stereo phase; equal to lfoOut otherwise). */
+  readonly lfoOutR = new Float64Array(LFO_COUNT);
+  /** Some LFO has a stereo phase this block (the matrix is summed for the right channel too). */
+  private lfoStereo = false;
   private readonly modRng: Prng;
   /** Per-note random −1..1 (drawn at each retriggered note). */
   noteRand = 0;
   /** Matrix sources (MOD_SOURCES order) and summed destinations (MOD_DESTS order) of this block. */
   readonly src = new Float64Array(N_SOURCES);
   readonly dst = new Float64Array(N_DESTS);
+  /** The right channel's sources / destinations (with a stereo LFO). */
+  private readonly srcR = new Float64Array(N_SOURCES);
+  private readonly dstR = new Float64Array(N_DESTS);
   /** Drive after modulation (block rate). */
   private driveM = 0;
   /** Envelope settings last configured (filter ADSR, pitch AD, mod ADSR + mode). */
@@ -244,6 +310,7 @@ export class SynthVoice {
   constructor(sampleRate: number, voiceId: number, blockLen: number, lfoPhases?: readonly number[]) {
     this.sampleRate = sampleRate;
     this.noise = new Prng(deriveSeed(NOISE_SEED, voiceId));
+    this.noiseR = new Prng(deriveSeed(NOISE_R_SEED, voiceId));
     this.modRng = new Prng(deriveSeed(MOD_SEED, voiceId));
     this.smooth = 1 - Math.exp(-blockLen / (CONTROL_SMOOTH_SEC * sampleRate));
     this.uniStep = blockLen / (UNISON_FADE_SEC * sampleRate);
@@ -410,6 +477,7 @@ export class SynthVoice {
   /** Advance the LFOs by one block; their outputs (−1..1 × depth × fade-in) land in lfoOut. */
   private stepLfos(s: SynthParams, bpm: number, blockLen: number, beat: number): void {
     const dt = blockLen / this.sampleRate;
+    let stereo = false;
     for (let i = 0; i < LFO_COUNT; i++) {
       const l = s.lfos[i];
       // Rate modulation uses the previous block's matrix (an LFO may modulate another's
@@ -440,7 +508,15 @@ export class SynthVoice {
       const fade = l.fade > 0 ? Math.min(1, age / l.fade) : 1;
       this.lfoAge[i] = age + dt;
       this.lfoOut[i] = lfoWave(l.shape, ph, this.lfoCur[i], this.lfoPrev[i]) * l.depth * fade;
+      if (l.stereo > 0 && l.depth > 0 && isPeriodicShape(l.shape)) {
+        // The right channel's copy runs `stereo` cycles ahead.
+        let phR = ph + l.stereo;
+        if (phR >= 1) phR -= 1;
+        this.lfoOutR[i] = lfoWave(l.shape, phR, this.lfoCur[i], this.lfoPrev[i]) * l.depth * fade;
+        stereo = true;
+      } else this.lfoOutR[i] = this.lfoOut[i];
     }
+    this.lfoStereo = stereo;
   }
 
   /**
@@ -477,6 +553,18 @@ export class SynthVoice {
     src[S.rand] = this.noteRand;
     applyMatrix(s.mods, src, this.dst);
     const dst = this.dst;
+    // The right channel's destinations: the matrix again with the LFOs' right-channel
+    // outputs (only the STEREO_DESTS entries are used); without a stereo LFO, the left's.
+    let dR = dst;
+    if (this.lfoStereo) {
+      const sr = this.srcR;
+      sr.set(src);
+      sr[S.lfo1] = this.lfoOutR[0];
+      sr[S.lfo2] = this.lfoOutR[1];
+      sr[S.lfo3] = this.lfoOutR[2];
+      applyMatrix(s.mods, sr, this.dstR);
+      dR = this.dstR;
+    }
     const bend = (bendSemis * s.bendRange) / BEND_RANGE_SEMITONES;
     this.lastBend = bend;
     this.incA0 = this.incA1;
@@ -485,17 +573,58 @@ export class SynthVoice {
     this.pitches(p, bend);
     this.unison(s, c.unisonScale);
     this.mips(s, Math.max(this.incA0, this.incA1), Math.max(this.incB0, this.incB1));
-
+    this.aR.mipLevel = this.a.mipLevel;
+    this.bR.mipLevel = this.b.mipLevel;
 
     // Table mixes.
     this.posA = dst[D.posA] ? reflect01(p.position + dst[D.posA]) : p.position;
     this.posYA = dst[D.posYA] ? reflect01(p.positionY + dst[D.posYA]) : p.positionY;
     this.posB = dst[D.posB] ? reflect01(s.b.position + dst[D.posB]) : s.b.position;
     this.posYB = dst[D.posYB] ? reflect01(s.b.positionY + dst[D.posYB]) : s.b.positionY;
+    // Right channel: its own positions (stereo LFO), then the stereo position spread
+    // (left at − spread / 2, right at + spread / 2 on X).
+    const pAR = dR[D.posA] ? reflect01(p.position + dR[D.posA]) : p.position;
+    const pYAR = dR[D.posYA] ? reflect01(p.positionY + dR[D.posYA]) : p.positionY;
+    const pBR = dR[D.posB] ? reflect01(s.b.position + dR[D.posB]) : s.b.position;
+    const pYBR = dR[D.posYB] ? reflect01(s.b.positionY + dR[D.posYB]) : s.b.positionY;
+    const xAL = s.aPosSpread > 0 ? reflect01(this.posA - s.aPosSpread / 2) : this.posA;
+    const xAR = s.aPosSpread > 0 ? reflect01(pAR + s.aPosSpread / 2) : pAR;
+    const xBL = s.bPosSpread > 0 ? reflect01(this.posB - s.bPosSpread / 2) : this.posB;
+    const xBR = s.bPosSpread > 0 ? reflect01(pBR + s.bPosSpread / 2) : pBR;
     this.a.hold();
-    if (wtA) this.a.resolve(tables, wtA, p.windowStart, p.windowEnd, p.windowStartY, p.windowEndY, this.posA, this.posYA, slew);
+    if (xAR !== xAL || pYAR !== this.posYA) {
+      if (!this.rA) {
+        // The right channel starts from exactly what the left plays, then moves on.
+        this.aR.copyFrom(this.a);
+        this.rA = true;
+      }
+    }
+    if (wtA) this.a.resolve(tables, wtA, p.windowStart, p.windowEnd, p.windowStartY, p.windowEndY, xAL, this.posYA, slew);
+    if (this.rA) {
+      this.aR.hold();
+      if (wtA) this.aR.resolve(tables, wtA, p.windowStart, p.windowEnd, p.windowStartY, p.windowEndY, xAR, pYAR, slew);
+      // Back on one mix once the right reads where the left does and has caught up with it.
+      if (xAR === xAL && pYAR === this.posYA && this.aR.sameMix(this.a)) {
+        this.rA = false;
+        this.aR.clear();
+      }
+    }
     this.b.hold();
-    if (wtB) this.b.resolve(tables, wtB, s.b.windowStart, s.b.windowEnd, s.b.windowStartY, s.b.windowEndY, this.posB, this.posYB, slew);
+    if (xBR !== xBL || pYBR !== this.posYB) {
+      if (!this.rB) {
+        this.bR.copyFrom(this.b);
+        this.rB = true;
+      }
+    }
+    if (wtB) this.b.resolve(tables, wtB, s.b.windowStart, s.b.windowEnd, s.b.windowStartY, s.b.windowEndY, xBL, this.posYB, slew);
+    if (this.rB) {
+      this.bR.hold();
+      if (wtB) this.bR.resolve(tables, wtB, s.b.windowStart, s.b.windowEnd, s.b.windowStartY, s.b.windowEndY, xBR, pYBR, slew);
+      if (xBR === xBL && pYBR === this.posYB && this.bR.sameMix(this.b)) {
+        this.rB = false;
+        this.bR.clear();
+      }
+    }
 
     // Filter: block-rate part of the log cutoff (smoothed), resonance.
     const cut =
@@ -515,6 +644,31 @@ export class SynthVoice {
     lv[2] += (clamp01(s.subLevel + dst[D.sub]) - lv[2]) * this.smooth;
     lv[3] += (clamp01(s.noiseLevel + dst[D.noise]) - lv[3]) * this.smooth;
     lv[4] += (s.ringLevel - lv[4]) * this.smooth;
+    // Stereo controls: filter spread (± half on each side) plus a stereo LFO's cutoff
+    // difference on the right; right − left levels; oscillator pans; stereo phases; noise width.
+    const sm = this.smooth;
+    this.fsS = approach(this.fsS, clamp11(s.filterSpread + dst[D.fSpread]) * FILTER_SPREAD_OCTAVES, sm);
+    this.dCutS = approach(this.dCutS, (dR[D.cutoff] - dst[D.cutoff]) * MOD_CUTOFF_OCTAVES, sm);
+    this.offL0 = this.offL1;
+    this.offR0 = this.offR1;
+    this.offL1 = this.fsS === 0 ? 0 : -this.fsS / 2;
+    this.offR1 = this.fsS / 2 + this.dCutS;
+    const dl = this.dLv1;
+    this.dLv0.set(dl);
+    dl[0] = approach(dl[0], dR === dst ? 0 : clamp01(s.aLevel + dR[D.levelA]) - clamp01(s.aLevel + dst[D.levelA]), sm);
+    dl[1] = approach(dl[1], dR === dst ? 0 : clamp01(s.bLevel + dR[D.levelB]) - clamp01(s.bLevel + dst[D.levelB]), sm);
+    this.opA0 = this.opA1;
+    this.opB0 = this.opB1;
+    this.opA1 = approach(this.opA1, clamp11(s.aPan + dst[D.panA]), sm);
+    this.opB1 = approach(this.opB1, clamp11(s.bPan + dst[D.panB]), sm);
+    // A phase moves more slowly (a fast change is a pitch blip on the right).
+    this.psA0 = this.psA1;
+    this.psB0 = this.psB1;
+    this.psA1 = approach(this.psA1, s.aPhaseSpread, this.uniGlide);
+    this.psB1 = approach(this.psB1, s.bPhaseSpread, this.uniGlide);
+    const th = (s.noiseWidth * Math.PI) / 4;
+    this.nwC = s.noiseWidth > 0 ? Math.cos(th) : 1;
+    this.nwS = s.noiseWidth > 0 ? Math.sin(th) : 0;
     // Pan.
     const pan = Math.max(-1, Math.min(1, s.pan + dst[D.pan]));
     const gl = pan > 0 ? 1 - pan : 1;
@@ -524,15 +678,53 @@ export class SynthVoice {
     this.panL1 += (gl - this.panL1) * this.smooth;
     this.panR1 += (gr - this.panR1) * this.smooth;
     this.gainTarget = gainTarget * Math.max(0, 1 + dst[D.amp]);
+    this.gainTargetR = gainTarget * Math.max(0, 1 + dR[D.amp]);
+
+    // Stereo while anything makes the channels differ; back to mono once nothing does and
+    // both filters agree (they then have the same input and state).
+    const wide =
+      this.spread ||
+      this.rA ||
+      this.rB ||
+      this.opA0 !== 0 ||
+      this.opA1 !== 0 ||
+      this.opB0 !== 0 ||
+      this.opB1 !== 0 ||
+      this.psA0 !== 0 ||
+      this.psA1 !== 0 ||
+      this.psB0 !== 0 ||
+      this.psB1 !== 0 ||
+      this.offL0 !== 0 ||
+      this.offL1 !== 0 ||
+      this.offR0 !== 0 ||
+      this.offR1 !== 0 ||
+      this.dLv0[0] !== 0 ||
+      this.dLv1[0] !== 0 ||
+      this.dLv0[1] !== 0 ||
+      this.dLv1[1] !== 0 ||
+      this.gainTargetR !== this.gainTarget ||
+      this.gainR !== this.gain ||
+      (this.nwS !== 0 && (this.lv0[3] > 0 || this.lv1[3] > 0));
+    if (wide && !this.stereo) {
+      // The right channel takes over the left filter's state: no transient.
+      this.filterR.copyFrom(this.filter);
+      this.stereo = true;
+    } else if (!wide && this.stereo && this.filter.closeTo(this.filterR)) {
+      this.stereo = false;
+    }
     this.filter.flush();
     this.filterR.flush();
 
     if (Math.abs(this.pink0) < 1e-20) this.pink0 = 0;
     if (Math.abs(this.pink1) < 1e-20) this.pink1 = 0;
     if (Math.abs(this.pink2) < 1e-20) this.pink2 = 0;
+    if (Math.abs(this.pinkR0) < 1e-20) this.pinkR0 = 0;
+    if (Math.abs(this.pinkR1) < 1e-20) this.pinkR1 = 0;
+    if (Math.abs(this.pinkR2) < 1e-20) this.pinkR2 = 0;
   }
 
   private gainTarget = 0;
+  private gainTargetR = 0;
 
   /**
    * Unison per oscillator: the copies wanted (after the CPU guard), their weights (fading
@@ -552,15 +744,7 @@ export class SynthVoice {
 
     this.maxRatA = this.place(this.uA, nA, s.aDetune, s.aSpread, this.plA, this.pnA, this.ratA, this.gAL, this.gAR);
     this.maxRatB = this.place(this.uB, nB, s.bDetune, s.bSpread, this.plB, this.pnB, this.ratB, this.gBL, this.gBR);
-    const spread = (this.uA > 1 && s.aSpread > 0) || (this.uB > 1 && s.bSpread > 0);
-    if (spread && !this.stereo) {
-      // The right channel takes over the left filter's state: no transient.
-      this.filterR.copyFrom(this.filter);
-      this.stereo = true;
-    } else if (!spread && this.stereo && this.filter.closeTo(this.filterR)) {
-      // Back to mono once both channels have the same input and state.
-      this.stereo = false;
-    }
+    this.spread = (this.uA > 1 && s.aSpread > 0) || (this.uB > 1 && s.bSpread > 0);
   }
 
   /**
@@ -612,18 +796,20 @@ export class SynthVoice {
 
   /**
    * One sample at `blockT` (0..1) through the block, given the amp envelope value `e`, into
-   * outL / outR (equal unless unison copies are spread). Returns the mid ((L + R) / 2).
+   * outL / outR (equal unless the voice is stereo). Returns the mid ((L + R) / 2).
    * Advances the oscillators and envelopes.
    */
   render(p: VoiceParams, e: number, blockT: number, tables: ReadonlyMap<TableId, MipSet>): number {
     const s = p.synth;
     this.gain += (this.gainTarget - this.gain) * 0.002;
+    const stereo = this.stereo;
+    if (stereo) this.gainR += (this.gainTargetR - this.gainR) * 0.002;
+    else this.gainR = this.gain;
     const fe = this.fenv.next();
     const t = blockT;
     const incA = this.incA0 + (this.incA1 - this.incA0) * t;
     const incB = this.incB0 + (this.incB1 - this.incB0) * t;
     const incS = this.incS0 + (this.incS1 - this.incS0) * t;
-    const stereo = this.stereo;
     let yL = 0;
     let yR = 0;
     if (e > 0) {
@@ -634,6 +820,14 @@ export class SynthVoice {
       const ls = l0[2] + (l1[2] - l0[2]) * t;
       const ln = l0[3] + (l1[3] - l0[3]) * t;
       const lr = l0[4] + (l1[4] - l0[4]) * t;
+      // The right channel reads separately with a stereo phase (ahead by psX cycles) or a
+      // stereo position (its own table mix, aR / bR).
+      const psB = stereo ? this.psB0 + (this.psB1 - this.psB0) * t : 0;
+      const psA = stereo ? this.psA0 + (this.psA1 - this.psA0) * t : 0;
+      const splitB = stereo && (psB !== 0 || this.rB);
+      const splitA = stereo && (psA !== 0 || this.rA);
+      const oscBR = this.rB ? this.bR : this.b;
+      const oscAR = this.rA ? this.aR : this.a;
       // Osc B first (it may modulate A's phase).
       let sbL = 0;
       let sbR = 0;
@@ -642,10 +836,14 @@ export class SynthVoice {
         // FM source: B at its centre pitch (with one copy, that copy).
         if (s.fm > 0) b0 = this.b.read(this.uB === 1 ? this.phB[0] : this.phCB, t);
         for (let i = 0; i < this.uB; i++) {
-          const raw = this.b.read(this.phB[i], t);
-          const v = raw * (this.wB0[i] + (this.wB1[i] - this.wB0[i]) * t);
+          const w = this.wB0[i] + (this.wB1[i] - this.wB0[i]) * t;
+          const v = this.b.read(this.phB[i], t) * w;
           sbL += v * this.gBL[i];
-          sbR += v * this.gBR[i];
+          if (splitB) {
+            let ph = this.phB[i] + psB;
+            if (ph >= 1) ph -= 1;
+            sbR += oscBR.read(ph, t) * w * this.gBR[i];
+          } else sbR += v * this.gBR[i];
         }
       }
       let saL = 0;
@@ -655,13 +853,31 @@ export class SynthVoice {
         for (let i = 0; i < this.uA; i++) {
           let ph = this.phA[i] + fmOff;
           ph -= Math.floor(ph);
-          const v = this.a.read(ph, t) * (this.wA0[i] + (this.wA1[i] - this.wA0[i]) * t);
+          const w = this.wA0[i] + (this.wA1[i] - this.wA0[i]) * t;
+          const v = this.a.read(ph, t) * w;
           saL += v * this.gAL[i];
-          saR += v * this.gAR[i];
+          if (splitA) {
+            let phR = ph + psA;
+            if (phR >= 1) phR -= 1;
+            saR += oscAR.read(phR, t) * w * this.gAR[i];
+          } else saR += v * this.gAR[i];
         }
       }
-      let x = la * saL + lb * sbL + lr * saL * sbL;
-      let xr = la * saR + lb * sbR + lr * saR * sbR;
+      let x: number;
+      let xr: number;
+      if (stereo) {
+        // Oscillator pans (balance, like the voice's) on each oscillator's own signal; ring
+        // modulation takes the unpanned signals. Right-channel levels differ with a stereo LFO.
+        const pa = this.opA0 + (this.opA1 - this.opA0) * t;
+        const pb = this.opB0 + (this.opB1 - this.opB0) * t;
+        const laR = la + (this.dLv0[0] + (this.dLv1[0] - this.dLv0[0]) * t);
+        const lbR = lb + (this.dLv0[1] + (this.dLv1[1] - this.dLv0[1]) * t);
+        x = la * saL * (pa > 0 ? 1 - pa : 1) + lb * sbL * (pb > 0 ? 1 - pb : 1) + lr * saL * sbL;
+        xr = laR * saR * (pa < 0 ? 1 + pa : 1) + lbR * sbR * (pb < 0 ? 1 + pb : 1) + lr * saR * sbR;
+      } else {
+        x = la * saL + lb * sbL + lr * saL * sbL;
+        xr = x;
+      }
       if (ls > 0) {
         if (s.subWave === 'square') {
           let q = this.subPhase < 0.5 ? 1 : -1;
@@ -685,17 +901,42 @@ export class SynthVoice {
           this.pink2 = 0.57 * this.pink2 + w * 1.0526913;
           q = ln * (this.pink0 + this.pink1 + this.pink2 + w * 0.1848) * PINK_GAIN;
         } else q = ln * w;
-        x += q;
-        xr += q;
+        if (stereo && this.nwS !== 0) {
+          // Noise width: a second, independent stream mixed in with opposite signs (the
+          // channels decorrelate; each keeps the same loudness).
+          const w2 = this.noiseR.bipolar();
+          let q2: number;
+          if (s.noiseType === 'pink') {
+            this.pinkR0 = 0.99765 * this.pinkR0 + w2 * 0.099046;
+            this.pinkR1 = 0.963 * this.pinkR1 + w2 * 0.2965164;
+            this.pinkR2 = 0.57 * this.pinkR2 + w2 * 1.0526913;
+            q2 = ln * (this.pinkR0 + this.pinkR1 + this.pinkR2 + w2 * 0.1848) * PINK_GAIN;
+          } else q2 = ln * w2;
+          x += this.nwC * q + this.nwS * q2;
+          xr += this.nwC * q - this.nwS * q2;
+        } else {
+          x += q;
+          xr += q;
+        }
       }
       const cut = this.cut0 + (this.cut1 - this.cut0) * t + fe * s.envAmount * FILTER_ENV_OCTAVES;
-      const g = cutoffG(Math.pow(2, cut), this.sampleRate);
+      let cutL = cut;
+      let cutR = cut;
+      if (stereo) {
+        // Filter spread / a stereo LFO on the cutoff.
+        const oL = this.offL0 + (this.offL1 - this.offL0) * t;
+        const oR = this.offR0 + (this.offR1 - this.offR0) * t;
+        if (oL !== 0) cutL += oL;
+        if (oR !== 0) cutR += oR;
+      }
+      const g = cutoffG(Math.pow(2, cutL), this.sampleRate);
       const k = this.k0 + (this.k1 - this.k0) * t;
       const mode = FILTER_MODE_INDEX[s.filterMode];
       const amp = e * this.gain;
       yL = driveSample(this.filter.process(driveSample(x, this.driveM), mode, g, k), s.sat) * amp;
       if (stereo) {
-        yR = driveSample(this.filterR.process(driveSample(xr, this.driveM), mode, g, k), s.sat) * amp;
+        const gR = cutR === cutL ? g : cutoffG(Math.pow(2, cutR), this.sampleRate);
+        yR = driveSample(this.filterR.process(driveSample(xr, this.driveM), mode, gR, k), s.sat) * (e * this.gainR);
         if (s.width !== 1) {
           const m = (yL + yR) * 0.5;
           const d = (yL - yR) * 0.5 * s.width;
@@ -714,6 +955,7 @@ export class SynthVoice {
     if (this.phCB >= 1) {
       this.phCB -= Math.floor(this.phCB);
       this.b.wrapped(tables);
+      if (this.rB) this.bR.wrapped(tables);
       if (s.sync) {
         // Restart A where it would be had it started at B's wrap (less aliasing than 0):
         // the fraction of this sample after the wrap, at A's own increments.
@@ -721,6 +963,7 @@ export class SynthVoice {
         this.phCA = (frac * incA) % 1;
         for (let j = 0; j < this.uA; j++) this.phA[j] = (frac * incA * this.ratA[j]) % 1;
         this.a.wrapped(tables);
+        if (this.rA) this.aR.wrapped(tables);
         synced = true;
       }
     }
@@ -734,6 +977,7 @@ export class SynthVoice {
       if (this.phCA >= 1) {
         this.phCA -= Math.floor(this.phCA);
         this.a.wrapped(tables);
+        if (this.rA) this.aR.wrapped(tables);
       }
       for (let i = 0; i < this.uA; i++) {
         const ph = this.phA[i] + incA * this.ratA[i];

@@ -52,13 +52,24 @@ export interface LfoParams {
   readonly retrig: boolean;
   /** Start phase 0..1. */
   readonly phase: number;
+  /**
+   * Stereo phase 0..0.5 cycles: the right channel's copy of the LFO runs this far ahead of
+   * the left on the destinations that are per channel (STEREO_DESTS). Periodic shapes only:
+   * S&H and smooth random are the same on both sides.
+   */
+  readonly stereo: number;
   /** Fade-in after each note (seconds, 0 = none). */
   readonly fade: number;
   /** Output depth 0..1. */
   readonly depth: number;
 }
 
-export const DEFAULT_LFO: LfoParams = { shape: 'sine', rate: 2, sync: false, div: '1/4', retrig: false, phase: 0, fade: 0, depth: 1 };
+export const DEFAULT_LFO: LfoParams = { shape: 'sine', rate: 2, sync: false, div: '1/4', retrig: false, phase: 0, stereo: 0, fade: 0, depth: 1 };
+
+/** Shapes a stereo phase applies to (the random ones draw one value per cycle for both sides). */
+export function isPeriodicShape(shape: LfoShape): boolean {
+  return shape !== 'sh' && shape !== 'smooth';
+}
 export const LFO_COUNT = 3;
 
 /** LFO rate in Hz at `bpm` (synced: one cycle per division). */
@@ -104,6 +115,9 @@ export const MOD_DESTS = [
   'lfo1Rate',
   'lfo2Rate',
   'lfo3Rate',
+  'panA',
+  'panB',
+  'fSpread',
 ] as const;
 export type ModDest = (typeof MOD_DESTS)[number];
 export const MOD_DEST_LABELS: Readonly<Record<ModDest, string>> = {
@@ -125,7 +139,16 @@ export const MOD_DEST_LABELS: Readonly<Record<ModDest, string>> = {
   lfo1Rate: 'LFO 1 rate',
   lfo2Rate: 'LFO 2 rate',
   lfo3Rate: 'LFO 3 rate',
+  panA: 'A pan',
+  panB: 'B pan',
+  fSpread: 'Filter spread',
 };
+
+/**
+ * Destinations with a value per channel: a stereo LFO (LfoParams.stereo) drives the right
+ * channel's copy from its own phase. The rest take the left (the LFO's own phase).
+ */
+export const STEREO_DESTS: readonly ModDest[] = ['posA', 'posYA', 'posB', 'posYB', 'levelA', 'levelB', 'cutoff', 'amp'];
 
 export const SRC_INDEX: Readonly<Record<ModSource, number>> = Object.fromEntries(MOD_SOURCES.map((s, i) => [s, i])) as Record<ModSource, number>;
 export const DST_INDEX: Readonly<Record<ModDest, number>> = Object.fromEntries(MOD_DESTS.map((d, i) => [d, i])) as Record<ModDest, number>;

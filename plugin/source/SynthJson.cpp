@@ -17,7 +17,8 @@ const char* const LFO_SHAPES[] = {"sine", "tri", "saw", "square", "sh", "smooth"
 const char* const LFO_DIVS[] = {"8/1", "4/1", "2/1", "1/1", "1/2", "1/2D", "1/2T", "1/4", "1/4D", "1/4T", "1/8", "1/8D", "1/8T", "1/16", "1/16T", "1/32"};
 const char* const MOD_SOURCES[] = {"lfo1", "lfo2", "lfo3", "fenv", "penv", "menv", "vel", "wheel", "at", "key", "rand"};
 const char* const MOD_DESTS[] = {"pitchA", "pitchB", "posA", "posYA", "posB", "posYB", "levelA", "levelB", "sub", "noise",
-                                 "cutoff", "res", "drive", "amp", "pan", "lfo1Rate", "lfo2Rate", "lfo3Rate"};
+                                 "cutoff", "res", "drive", "amp", "pan", "lfo1Rate", "lfo2Rate", "lfo3Rate",
+                                 "panA", "panB", "fSpread"};
 
 template <size_t N>
 int indexOf(const char* const (&list)[N], const juce::var& v, int fallback) {
@@ -101,6 +102,7 @@ juce::var encode(const SynthParams& s) {
         set(x, "div", LFO_DIVS[l.div]);
         set(x, "retrig", l.retrig);
         set(x, "phase", l.phase);
+        set(x, "stereo", l.stereo);
         set(x, "fade", l.fade);
         set(x, "depth", l.depth);
         lfos.add(x);
@@ -130,6 +132,14 @@ juce::var encode(const SynthParams& s) {
     set(o, "bSpread", s.bSpread);
     set(o, "sat", s.sat);
     set(o, "width", s.width);
+    set(o, "aPan", s.aPan);
+    set(o, "bPan", s.bPan);
+    set(o, "aPhaseSpread", s.aPhaseSpread);
+    set(o, "bPhaseSpread", s.bPhaseSpread);
+    set(o, "aPosSpread", s.aPosSpread);
+    set(o, "bPosSpread", s.bPosSpread);
+    set(o, "noiseWidth", s.noiseWidth);
+    set(o, "filterSpread", s.filterSpread);
     return o;
 }
 
@@ -189,6 +199,7 @@ SynthParams decode(const juce::var& o) {
             l.div = indexOf(LFO_DIVS, x.getProperty("div", {}), ld.div);
             l.retrig = flag(x, "retrig", ld.retrig);
             l.phase = num(x, "phase", ld.phase, 0, 1);
+            l.stereo = num(x, "stereo", ld.stereo, 0, 0.5);
             l.fade = num(x, "fade", ld.fade, 0, 10);
             l.depth = num(x, "depth", ld.depth, 0, 1);
         }
@@ -219,6 +230,14 @@ SynthParams decode(const juce::var& o) {
     s.bSpread = num(o, "bSpread", d.bSpread, 0, 1);
     s.sat = num(o, "sat", d.sat, 0, 1);
     s.width = num(o, "width", d.width, 0, 2);
+    s.aPan = num(o, "aPan", d.aPan, -1, 1);
+    s.bPan = num(o, "bPan", d.bPan, -1, 1);
+    s.aPhaseSpread = num(o, "aPhaseSpread", d.aPhaseSpread, 0, 0.5);
+    s.bPhaseSpread = num(o, "bPhaseSpread", d.bPhaseSpread, 0, 0.5);
+    s.aPosSpread = num(o, "aPosSpread", d.aPosSpread, 0, 1);
+    s.bPosSpread = num(o, "bPosSpread", d.bPosSpread, 0, 1);
+    s.noiseWidth = num(o, "noiseWidth", d.noiseWidth, 0, 1);
+    s.filterSpread = num(o, "filterSpread", d.filterSpread, -1, 1);
     return s;
 }
 

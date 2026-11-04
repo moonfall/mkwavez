@@ -207,7 +207,7 @@ const PATCH_FIELDS = ['position', 'positionY', 'lfoDepth', 'lfoRate', 'level'] a
 /**
  * Synth params as numbers, in this order (plugin/core/tests/golden.cpp decodes the same):
  * the scalar fields of SYNTH_SCALARS (enums as indices into their lists, booleans 0 / 1),
- * then b (OscSource, 7), 3 LFOs × 8 (shape, rate, sync, div, retrig, phase, fade, depth),
+ * then b (OscSource, 7), 3 LFOs × 9 (shape, rate, sync, div, retrig, phase, fade, depth, stereo),
  * 8 mod slots × 3 (src index or -1, dst index or -1, amount).
  */
 const SYNTH_SCALARS = [
@@ -216,6 +216,7 @@ const SYNTH_SCALARS = [
   'velAmount', 'fAttack', 'fDecay', 'fSustain', 'fRelease', 'pAttack', 'pDecay', 'pAmount', 'pTarget', 'velAmp',
   'glide', 'glideLegato', 'bendRange', 'pan', 'mAttack', 'mDecay', 'mSustain', 'mRelease', 'mMode', 'sync', 'fm',
   'aUnison', 'aDetune', 'aSpread', 'bUnison', 'bDetune', 'bSpread', 'sat', 'width',
+  'aPan', 'bPan', 'aPhaseSpread', 'bPhaseSpread', 'aPosSpread', 'bPosSpread', 'noiseWidth', 'filterSpread',
 ] as const;
 const SYNTH_ENUMS: Partial<Record<(typeof SYNTH_SCALARS)[number], readonly string[]>> = {
   subWave: SUB_WAVES,
@@ -234,7 +235,7 @@ function encodeSynth(sp: SynthParams): number[] {
     out.push(SYNTH_ENUMS[k] ? SYNTH_ENUMS[k]!.indexOf(v as string) : typeof v === 'boolean' ? (v ? 1 : 0) : (v as number));
   }
   for (const k of SOURCE_FIELDS) out.push(sp.b[k]);
-  for (const l of sp.lfos) out.push(LFO_SHAPES.indexOf(l.shape), l.rate, l.sync ? 1 : 0, LFO_DIVS.indexOf(l.div), l.retrig ? 1 : 0, l.phase, l.fade, l.depth);
+  for (const l of sp.lfos) out.push(LFO_SHAPES.indexOf(l.shape), l.rate, l.sync ? 1 : 0, LFO_DIVS.indexOf(l.div), l.retrig ? 1 : 0, l.phase, l.fade, l.depth, l.stereo);
   for (const m of sp.mods) out.push(m.src === 'none' ? -1 : MOD_SOURCES.indexOf(m.src), m.dst === 'none' ? -1 : MOD_DESTS.indexOf(m.dst), m.amt);
   return out;
 }
@@ -252,8 +253,8 @@ function decodeSynth(a: number[]): SynthParams {
   o.b = b;
   const lfos: LfoParams[] = [];
   for (let n = 0; n < 3; n++) {
-    lfos.push({ shape: LFO_SHAPES[a[i]], rate: a[i + 1], sync: a[i + 2] !== 0, div: LFO_DIVS[a[i + 3]], retrig: a[i + 4] !== 0, phase: a[i + 5], fade: a[i + 6], depth: a[i + 7] });
-    i += 8;
+    lfos.push({ shape: LFO_SHAPES[a[i]], rate: a[i + 1], sync: a[i + 2] !== 0, div: LFO_DIVS[a[i + 3]], retrig: a[i + 4] !== 0, phase: a[i + 5], fade: a[i + 6], depth: a[i + 7], stereo: a[i + 8] });
+    i += 9;
   }
   o.lfos = lfos;
   const mods: ModSlot[] = [];
@@ -594,6 +595,82 @@ const SCENARIOS: Scenario[] = [
       ),
       ...[1, 2, 3, 4, 5, 6].map((id): Op => [100 + id * 300, OP.noteOn, id, 40 + id * 3, 100]),
       ...[1, 2, 3, 4].map((id): Op => [4000 + id * 200, OP.noteOff, id, 40 + id * 3]),
+    ],
+  },
+  {
+    // The stereo path: oscillator pans (one modulated), stereo phase, stereo position on a
+    // Blend and a Step wavetable (the right channel's own table mixes, crossfading back when
+    // the spread goes), pink noise width, filter spread (modulated), stereo LFOs on cutoff,
+    // amp, levels and positions (and a random one, which stays shared); then everything back
+    // to centre (the voice returns to mono), and a second voice with only a stereo LFO.
+    name: 'stereo',
+    sampleRate: 48000,
+    frames: 20000,
+    ops: [
+      ...WAVES.slice(0, 6).map((_, i): Op => [0, OP.table, i + 1, i]),
+      wavetableOp(0, 0, '1d', 'blend', [[1, 2, 3, 4, 5, 6]]),
+      wavetableOp(0, 1, '1d', 'step', [[6, 5, 4, 3]]),
+      voiceOp(0, {
+        id: 1,
+        type: 'synth',
+        windowEnd: 5,
+        position: 0.4,
+        sustain: 0.8,
+        synth: synth({
+          b: { wavetableId: 1, windowEnd: 3, position: 0.5 },
+          bLevel: 0.5,
+          bCoarse: 12,
+          aUnison: 2,
+          aSpread: 0.5,
+          aPan: -0.4,
+          bPan: 0.6,
+          aPhaseSpread: 0.25,
+          bPhaseSpread: 0.1,
+          aPosSpread: 0.6,
+          bPosSpread: 0.8,
+          noiseType: 'pink',
+          noiseLevel: 0.15,
+          noiseWidth: 0.8,
+          filterSpread: 0.5,
+          cutoff: 1800,
+          resonance: 0.5,
+          ringLevel: 0.2,
+          fm: 0.15,
+          width: 1.3,
+          lfos: [
+            { shape: 'sine', rate: 2.5, stereo: 0.25 },
+            { shape: 'tri', rate: 1.1, stereo: 0.5 },
+            { shape: 'sh', sync: true, div: '1/16', stereo: 0.3 },
+          ],
+          mods: [
+            { src: 'lfo1', dst: 'cutoff', amt: 0.3 },
+            { src: 'lfo2', dst: 'amp', amt: -0.4 },
+            { src: 'lfo1', dst: 'levelB', amt: -0.3 },
+            { src: 'lfo2', dst: 'posA', amt: 0.3 },
+            { src: 'lfo1', dst: 'posB', amt: 0.2 },
+            { src: 'lfo2', dst: 'panA', amt: 0.4 },
+            { src: 'lfo3', dst: 'fSpread', amt: 0.3 },
+            { src: 'lfo3', dst: 'cutoff', amt: 0.2 },
+          ],
+        }),
+      }),
+      voiceOp(0, {
+        id: 2,
+        type: 'synth',
+        windowEnd: 5,
+        position: 0.7,
+        level: 0.4,
+        synth: synth({ cutoff: 900, filterMode: 'lp24', lfos: [{ shape: 'square', rate: 6, stereo: 0.5 }], mods: [{ src: 'lfo1', dst: 'cutoff', amt: 0.4 }] }),
+      }),
+      [0, OP.transport, 1, 140],
+      [20, OP.noteOn, 1, 50, 100],
+      [3000, OP.noteOn, 2, 62, 90],
+      [6000, OP.noteOn, 1, 57, 80],
+      // Everything back to centre while sounding: the stereo path winds down to mono.
+      voiceOp(9000, { id: 1, type: 'synth', windowEnd: 5, position: 0.4, sustain: 0.8, synth: synth({ b: { wavetableId: 1, windowEnd: 3, position: 0.5 }, bLevel: 0.5, bCoarse: 12, noiseType: 'pink', noiseLevel: 0.15, cutoff: 1800, resonance: 0.5 }) }),
+      [15000, OP.noteOff, 1, 57],
+      [15000, OP.noteOff, 1, 50],
+      [17000, OP.noteOff, 2, 62],
     ],
   },
   {

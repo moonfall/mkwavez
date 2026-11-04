@@ -879,6 +879,23 @@ async function synthVoiceChecks(page) {
   assert(b.wavetableId === 3 && b.windowEnd === 7 && b.windowEndY === 7 && (await v()).wavetableId !== 3, 'osc B on the Grid (whole window); osc A unchanged');
   await page.waitForFunction(() => !!document.querySelector('#syn-pad').dataset.dot, null, { timeout: 2000 });
   assert((await page.isVisible('#syn-pad')) && (await page.isVisible('#syn-px')), 'osc B: X/Y pad and paired sliders');
+  // Stereo controls on the pages: osc B's pan / stereo phase, noise width, filter spread, LFO stereo phase.
+  await page.fill('#syn-osc-pan', '-0.5');
+  await page.fill('#syn-phase-spread', '0.25');
+  await page.click('#syn-tab-mix');
+  await page.fill('#syn-noise-width', '0.6');
+  await page.click('#syn-tab-filter');
+  await page.fill('#syn-filter-spread', '0.75'); // slider position: −1..1 → +0.5
+  await page.click('#syn-tab-mod');
+  await page.fill('#syn-lfo-stereo', '0.5'); // slider position: 0..½ cycle → ¼
+  {
+    const s = (await v()).synth;
+    assert(s.bPan === -0.5 && s.bPhaseSpread === 0.25 && s.noiseWidth === 0.6 && s.filterSpread === 0.5 && s.lfos[0].stereo === 0.25 && s.aPan === 0, `stereo controls: osc B pan / stereo phase, noise width, filter spread, LFO 1 stereo phase (${JSON.stringify([s.bPan, s.bPhaseSpread, s.noiseWidth, s.filterSpread, s.lfos[0].stereo])})`);
+    for (let i = 0; i < 5; i++) await M(() => window.mkwavez.model.undo());
+    const u = (await v()).synth;
+    assert(u.bPan === 0 && u.bPhaseSpread === 0 && u.noiseWidth === 0 && u.filterSpread === 0 && u.lfos[0].stereo === 0, 'stereo edits undo');
+  }
+  await page.click('#syn-tab-osc');
   // Fit: every page at both laptop sizes.
   for (const [w, hh] of [
     [1440, 900],

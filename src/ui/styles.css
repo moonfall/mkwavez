@@ -1655,6 +1655,9 @@ button.syn-tab[aria-selected='true'] {
 .crow.crow2 {
   grid-template-columns: 66px minmax(0, 1fr) minmax(0, 1fr) 62px;
 }
+.crow.crow3 {
+  grid-template-columns: 66px repeat(3, minmax(0, 1fr)) 70px;
+}
 #voice-mute,
 #voice-remove {
   flex: none;
