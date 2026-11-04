@@ -3,7 +3,7 @@
  * room for it (synthPanel.ts decides from the panel's size, not the viewport). Groups of
  * small knobs (knob.ts) flow in columns of `--rows` cells: Osc A · Osc B (each with an
  * inline "now playing" scope or X/Y pad) · Mix · Filter · Amp / Filter / Pitch / Mod
- * envelopes · LFO 1–3 · Output, then a side column with the presets and the mod matrix
+ * envelopes · LFO 1–3 (one frame) · Output, then a side column with the presets and the mod matrix
  * (both moved here from the pages by synthPanel.ts). Every edit goes through the same
  * VoicePatch path as the pages (a drag or key press is one undo step).
  */
@@ -158,8 +158,8 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
     [true, 'On'],
   ] as const;
   /** A titled group of cells; `head` goes next to the title. */
-  const group = (id: string, title: string, cells: HTMLElement[], head: HTMLElement[] = [], cls = '') =>
-    h('section', { class: `synf-group ${cls}`, id, 'aria-label': title }, h('div', { class: 'synf-head' }, h('h3', {}, title), ...head), h('div', { class: 'synf-cells' }, ...cells));
+  const group = (id: string, title: string, cells: HTMLElement[], head: HTMLElement[] = [], cls = 'synf-group') =>
+    h('section', { class: cls, id, 'aria-label': title }, h('div', { class: 'synf-head' }, h('h3', {}, title), ...head), h('div', { class: 'synf-cells' }, ...cells));
   const sel = <T extends string>(id: string, label: string, options: readonly (readonly [T, string])[], get: (v: VoiceParams) => T, put: (x: T) => VoicePatch, cls = '') => {
     const el = h('select', { id, class: cls, 'aria-label': label, title: label }, ...options.map(([value, text]) => h('option', { value }, text)));
     el.addEventListener('change', () => {
@@ -250,7 +250,7 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
       },
     });
     draws.push({ draw: oscDrawer(model, bridge, () => o, pad, scope, tag, vis), canvas: () => (pad.canvas.hidden ? scope : pad.canvas) });
-    return group(`synf-osc-${o}`, `Osc ${O}`, [vis, ...tune.map((c) => c.el), level.el, pan.el, from.el, fromY.el, to.el, toY.el, pos.el, posY.el], [wtSel], 'synf-osc');
+    return group(`synf-osc-${o}`, `Osc ${O}`, [vis, ...tune.map((c) => c.el), level.el, pan.el, from.el, fromY.el, to.el, toY.el, pos.el, posY.el], [wtSel], 'synf-group synf-osc');
   };
 
   // ---- mix ----
@@ -386,9 +386,11 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
         flags,
       ],
       [],
-      'synf-lfo',
+      'synf-sub',
     );
   };
+  // The three LFOs share one frame (a titled sub-column each), like the envelopes.
+  const lfos = h('div', { class: 'synf-group synf-lfos', role: 'group', 'aria-label': 'LFOs 1–3' }, lfo(0), lfo(1), lfo(2));
 
   // ---- stereo controls of the Output group ----
   const oscStereo = (o: 'a' | 'b') => {
@@ -429,7 +431,7 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
   const guard = h('span', { class: 'syn-guard', id: 'synf-guard', hidden: true, title: 'Too many unison copies sound at once: the CPU guard plays fewer' }, 'CPU guard: reduced');
   const sideTop = h('div', { class: 'synf-side-top' });
   const side = h('section', { class: 'synf-side', 'aria-label': 'Presets and mod matrix' }, sideTop, h('div', { class: 'synf-head synf-matrix-head' }, h('h3', {}, 'Mod matrix'), guard));
-  const groups = h('div', { class: 'synf-groups' }, osc('a'), osc('b'), mix, filter, envs, lfo(0), lfo(1), lfo(2), out);
+  const groups = h('div', { class: 'synf-groups' }, osc('a'), osc('b'), mix, filter, envs, lfos, out);
   const el = h('div', { class: 'synf', id: 'synth-full', role: 'group', 'aria-label': 'All Synth voice controls' }, groups, side);
 
   return {

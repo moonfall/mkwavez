@@ -1999,6 +1999,17 @@ button.syn-tab[aria-selected='true'] {
   width: 24px;
   height: 24px;
 }
+/* The LFOs: one frame, a titled sub-column each. */
+.synf-lfos {
+  flex-direction: row;
+  gap: 4px;
+}
+.synf-sub {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 /* The envelopes: one column each, titled in the header. */
 .synf-envs .synf-head,
 .synf-cols {
