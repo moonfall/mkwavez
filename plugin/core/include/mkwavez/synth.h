@@ -19,7 +19,9 @@ enum class WarpMode : uint8_t { none, sync, formant, bend, squeeze, quantize, fo
 /** Sync / formant warp at amount ±1: the cycle is read this many times per period. */
 inline constexpr double WARP_SYNC_MAX = 8;
 
-inline constexpr int MAX_UNISON = 4;
+inline constexpr int MAX_UNISON = 8;
+/** Oscillator phase at a note (order = PHASE_MODES in TS). */
+enum class PhaseMode : uint8_t { free, reset, random };
 /** Most notes one Synth voice plays at once. */
 inline constexpr int MAX_POLY = 8;
 inline constexpr double FM_DEPTH = 1.5;
@@ -96,6 +98,7 @@ struct SynthParams {
     double bWarpAmt = 0;
     /** Macros 0..1 (matrix sources Macro 1–4). */
     double macro1 = 0, macro2 = 0, macro3 = 0, macro4 = 0;
+    PhaseMode phaseMode = PhaseMode::free;
 };
 
 /** Semitone offset of an oscillator's tuning. */

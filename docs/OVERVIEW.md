@@ -76,7 +76,7 @@ play up to 8 notes at once (or 1: monophonic, legato and glide between held note
 - **Simple voice** — window + position (1D) or rectangle + X/Y (2D and Rows) over a
   wavetable, position LFO, ADSR.
 - **Synth voice** — two wavetable oscillators (each with its own wavetable window, tuning
-  and unison 1–4, a warp mode — sync, formant, bend, squeeze, quantize, fold; B can
+  and unison 1–8, a warp mode — sync, formant, bend, squeeze, quantize, fold; B can
   hard-sync and FM A), sub, noise, ring; multimode ZDF filter with drive and key
   tracking; a stereo path (oscillator pan, stereo phase / position, noise width, filter
   spread, stereo LFOs); amp / filter / pitch / mod envelopes; three LFOs (tempo-syncable)

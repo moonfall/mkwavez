@@ -196,11 +196,21 @@ export interface SynthParams {
   readonly macro2: number;
   readonly macro3: number;
   readonly macro4: number;
+  /** Oscillator phase at each note (PhaseMode). */
+  readonly phaseMode: PhaseMode;
 }
 
 export const MACRO_KEYS = ['macro1', 'macro2', 'macro3', 'macro4'] as const;
 
-export const MAX_UNISON = 4;
+export const MAX_UNISON = 8;
+/**
+ * Oscillator phase at a note (both oscillators and the sub): free-running (the default),
+ * reset to the start (unison copies at their fixed offsets), or random per note and copy.
+ * Legato notes keep the phase.
+ */
+export type PhaseMode = 'free' | 'reset' | 'random';
+export const PHASE_MODES: readonly PhaseMode[] = ['free', 'reset', 'random'];
+export const PHASE_MODE_LABELS: Readonly<Record<PhaseMode, string>> = { free: 'Free', reset: 'Reset', random: 'Random' };
 /** Most notes one Synth voice plays at once. */
 export const MAX_POLY = 8;
 /** Phase modulation depth at FM 1, in cycles of osc A. */
@@ -301,6 +311,7 @@ export const DEFAULT_SYNTH: SynthParams = {
   macro2: 0,
   macro3: 0,
   macro4: 0,
+  phaseMode: 'free',
 };
 
 /** Amp ADSR of a new Synth voice (Simple voices keep their own defaults). */
@@ -384,6 +395,7 @@ const ENUMS: Readonly<Partial<Record<keyof SynthParams, readonly string[]>>> = {
   mMode: ['ad', 'adsr'],
   aWarp: WARP_MODES,
   bWarp: WARP_MODES,
+  phaseMode: PHASE_MODES,
 };
 
 /** One LFO from untrusted data. */

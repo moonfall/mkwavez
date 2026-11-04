@@ -10,7 +10,7 @@
 import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
 import { TABLE_SIZE } from '../core/constants';
-import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MACRO_KEYS, MAX_POLY, WARP_LABELS, WARP_MODES, type FilterMode, type OscSource, type SynthParams } from '../core/synth';
+import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MACRO_KEYS, MAX_POLY, MAX_UNISON, PHASE_MODE_LABELS, PHASE_MODES, WARP_LABELS, WARP_MODES, type FilterMode, type OscSource, type PhaseMode, type SynthParams } from '../core/synth';
 import { isOneShot, isPeriodicShape, LFO_DIVS, LFO_RATE_MAX_HZ, LFO_RATE_MIN_HZ, LFO_SHAPE_LABELS, LFO_SHAPES, type LfoDiv, type LfoParams, type LfoShape } from '../core/modulation';
 import type { VoicePatch, VoiceParams } from '../core/voice';
 import { shapeLabel } from '../core/wavetable';
@@ -215,7 +215,7 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
       K(`synf-${o}-oct`, 'Oct', (v) => v.synth[key('Oct')] as number, (x) => ({ synth: { [key('Oct')]: x } }), linear(-3, 3), (x) => signed(x), { int: true, name: N('octave'), reset: 0 }),
       K(`synf-${o}-semi`, 'Semi', (v) => v.synth[key('Coarse')] as number, (x) => ({ synth: { [key('Coarse')]: x } }), linear(-24, 24), (x) => signed(x), { int: true, bipolar: true, name: N('semitones'), reset: 0 }),
       K(`synf-${o}-fine`, 'Fine', (v) => v.synth[key('Fine')] as number, (x) => ({ synth: { [key('Fine')]: x } }), linear(-100, 100), (x) => signed(x, 0, 'ct'), { bipolar: true, snap: Math.round, name: N('fine tune (cents)'), reset: 0 }),
-      K(`synf-${o}-uni`, 'Unison', (v) => v.synth[key('Unison')] as number, (x) => ({ synth: { [key('Unison')]: x } }), linear(1, 4), (x) => `×${x}`, { int: true, name: N('unison copies'), reset: 1 }),
+      K(`synf-${o}-uni`, 'Unison', (v) => v.synth[key('Unison')] as number, (x) => ({ synth: { [key('Unison')]: x } }), linear(1, MAX_UNISON), (x) => `×${x}`, { int: true, name: N('unison copies'), reset: 1 }),
       K(`synf-${o}-detune`, 'Detune', (v) => v.synth[key('Detune')] as number, (x) => ({ synth: { [key('Detune')]: x } }), linear(0, 50), (x) => `${Math.round(x)}ct`, { name: N('unison detune (cents)'), off: (v) => (v.synth[key('Unison')] as number) < 2 }),
       K(`synf-${o}-spread`, 'Spread', (v) => v.synth[key('Spread')] as number, (x) => ({ synth: { [key('Spread')]: x } }), linear(0, 1), pct, { name: N('unison stereo spread'), off: (v) => (v.synth[key('Unison')] as number) < 2 }),
     ];
@@ -284,6 +284,7 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
     C('synf-sync', 'Sync B', OFF_ON, (v) => v.synth.sync, (x) => ({ synth: { sync: x } }), { name: 'Hard sync: each cycle of osc B restarts osc A', pressed: (x) => x }).el,
     warpCell('a'),
     warpCell('b'),
+    selCell<PhaseMode>('synf-phase-mode', 'Phase', 'Oscillator phase at each note (legato notes keep it)', PHASE_MODES.map((m) => [m, PHASE_MODE_LABELS[m]] as const), (v) => v.synth.phaseMode, (x) => ({ synth: { phaseMode: x } })),
   ]);
 
   // ---- filter ----

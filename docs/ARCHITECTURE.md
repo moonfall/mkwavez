@@ -769,7 +769,8 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   (A, B, ring A × B, sub with polyBLEP square, seeded white / pink noise), drive, filter
   (two ZDF SVF cores; LP24 = Butterworth first stage + resonant second), saturation, amp,
   width (mid / side), soft limiter (linear to ±1, < ±2). Unison places are symmetric for every
-  count (1: centre; 2: ±½ detune, hard left / right; 3: centre, ±1; 4: ±⅓, ±1 — detune
+  count (1: centre; 2: ±½ detune, hard left / right; 3: centre, ±1; 4: ±⅓, ±1; 5–8 evenly
+  from −1 to 1, odd counts with a centre copy — detune
   and spread alike); when the count changes, copies glide to their new places (~30 ms) and
   fade in / out over 10 ms (weights towards 1/√n). The pitch reference is a virtual centre
   copy per oscillator (ratio 1, its own phase): its wraps drive Step-mode table switches
@@ -788,6 +789,10 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   ramped across the block (the knob value exactly when unmodulated), A / B detune add up to
   ±`MOD_DETUNE_CENTS` (50) cents per block, LFO 1–3 depth use the previous block's matrix
   (like LFO rate). Ring joins the level smoothing.
+- Oscillator phase at a note (`phaseMode`, both oscillators and the sub): free-running
+  (default), reset (centres and the sub at 0, copies at their fixed golden-ratio offsets) or
+  random (every copy, centre and the sub drawn from a per-voice PRNG, `PHASE_SEED`), on a
+  retriggered note that isn't legato.
 - Oscillator warps (per oscillator; the tables are untouched): every read of a copy (left,
   right, B as FM source) goes through `warpPhase` (the phase the table is read at) and
   `warpOut` (a sample-domain part). Sync reads the cycle 1 + 7·|a| times per period;

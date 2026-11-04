@@ -19,11 +19,15 @@ import {
   FILTER_SPREAD_OCTAVES,
   MACRO_KEYS,
   MAX_POLY,
+  MAX_UNISON,
+  PHASE_MODE_LABELS,
+  PHASE_MODES,
   WARP_LABELS,
   WARP_MODES,
   type FilterMode,
   type OscSource,
   type SynthParams,
+  type PhaseMode,
   type WarpMode,
 } from '../core/synth';
 import {
@@ -369,7 +373,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   );
   const sk = (name: 'Unison' | 'Detune' | 'Spread') => `${osc}${name}` as 'aUnison' | 'aDetune' | 'aSpread';
   // Unison: the copies (a select in the label column) · detune · stereo spread on one row.
-  const unison = select<string>('syn-unison', 'Unison copies', [1, 2, 3, 4].map((n) => [String(n), `Uni ×${n}`] as const), (v) => String(v.synth[sk('Unison')]), (x) => ({ synth: { [sk('Unison')]: Number(x) } }));
+  const unison = select<string>('syn-unison', 'Unison copies', Array.from({ length: MAX_UNISON }, (_, i) => [String(i + 1), `Uni ×${i + 1}`] as const), (v) => String(v.synth[sk('Unison')]), (x) => ({ synth: { [sk('Unison')]: Number(x) } }));
   unison.el.classList.add('crow-head');
   const guardNote = h('span', { class: 'syn-guard', id: 'syn-unison-guard', hidden: true, title: 'Too many unison copies sound at once: the CPU guard plays fewer' }, 'CPU guard: reduced');
   const detuneSpread = pair(
@@ -476,6 +480,8 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const mixRing = row('syn-mix-ring', 'Ring A×B', (v) => v.synth.ringLevel, sw('ringLevel'), linear(0, 1), pct);
   const glide = row('syn-glide', 'Glide', (v) => v.synth.glide, sw('glide'), timeTaper(2), (x) => (x < 0.002 ? 'off' : secs(x)));
   const legato = check('syn-legato', 'Legato only', (v) => v.synth.glideLegato, (x) => ({ synth: { glideLegato: x } }), 'Glide only between overlapping notes');
+  const phaseMode = select<PhaseMode>('syn-phase-mode', 'Oscillator phase at a note', PHASE_MODES.map((m) => [m, PHASE_MODE_LABELS[m]] as const), (v) => v.synth.phaseMode, (x) => ({ synth: { phaseMode: x } }));
+  phaseMode.el.title = 'Oscillator phase at each note: free-running, reset to the start, or random (legato notes keep it)';
   const polyRow = intRow('syn-poly', 'Voices', (v) => v.synth.poly, sw('poly'), () => [1, MAX_POLY], (x) => (x === 1 ? 'mono' : `${x}`));
   polyRow.el.title = 'Notes the voice plays at once (1 = monophonic: legato, glide between held notes)';
   const bend = intRow('syn-bend', 'Bend', (v) => v.synth.bendRange, sw('bendRange'), () => [0, 24], (x) => `±${x} st`);
@@ -489,7 +495,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     'div',
     { class: 'syn-page syn-page-2col', id: 'syn-page-mix', role: 'tabpanel' },
     h('div', { class: 'crows' }, mixA.el, mixB.el, mixSub.el, lineRow('', subWave.el, subOct.el), mixNoise.el, lineRow('', noiseType.el, syncChk.el), mixRing.el, fmRow.el),
-    h('div', { class: 'crows' }, outLevel.el, pan.el, width.el, polyRow.el, oct.el, glide.el, lineRow('', legato.el), bend.el),
+    h('div', { class: 'crows' }, outLevel.el, pan.el, width.el, polyRow.el, oct.el, glide.el, lineRow('', legato.el), lineRow('Phase', phaseMode.el), bend.el),
   );
 
   // ---- Filter page ----
@@ -712,6 +718,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     legato,
     bend,
     polyRow,
+    phaseMode,
     pan,
     outLevel,
     oct,

@@ -15,6 +15,7 @@ namespace mkwavez {
 inline constexpr double CONTROL_SMOOTH_SEC = 0.005;
 inline constexpr uint32_t NOISE_SEED = 0x5eed;
 inline constexpr uint32_t NOISE_R_SEED = 0x5eee;
+inline constexpr uint32_t PHASE_SEED = 0x9a5e;
 inline constexpr uint32_t MOD_SEED = 0x10f0;
 inline constexpr double UNISON_GLIDE_SEC = 0.03;
 inline constexpr double UNISON_FADE_SEC = 0.01;
@@ -83,14 +84,16 @@ private:
     void pitches(const VoiceParams& p, double bendSemis);
     void stepLfos(const SynthParams& s, double bpm, int blockLen, double beat);
     void unison(const SynthParams& s, double scale);
+    void notePhase(bool random);
     int copies(int n, double* w0, double* w1, double* ph, double centre, double* pl, double* pn);
     double place(int count, int n, double cents, double spr, double* pl, double* pn, double* rat, double* gl, double* gr);
 
     double sampleRate;
     int blockLen = 64;
     double phA[MAX_UNISON]{}, phB[MAX_UNISON]{};
-    double ratA[MAX_UNISON]{1, 1, 1, 1}, ratB[MAX_UNISON]{1, 1, 1, 1};
-    double gAL[MAX_UNISON]{1, 1, 1, 1}, gAR[MAX_UNISON]{1, 1, 1, 1}, gBL[MAX_UNISON]{1, 1, 1, 1}, gBR[MAX_UNISON]{1, 1, 1, 1};
+    double ratA[MAX_UNISON]{1, 1, 1, 1, 1, 1, 1, 1}, ratB[MAX_UNISON]{1, 1, 1, 1, 1, 1, 1, 1};
+    double gAL[MAX_UNISON]{1, 1, 1, 1, 1, 1, 1, 1}, gAR[MAX_UNISON]{1, 1, 1, 1, 1, 1, 1, 1}, gBL[MAX_UNISON]{1, 1, 1, 1, 1, 1, 1, 1},
+        gBR[MAX_UNISON]{1, 1, 1, 1, 1, 1, 1, 1};
     double wA0[MAX_UNISON]{}, wA1[MAX_UNISON]{}, wB0[MAX_UNISON]{}, wB1[MAX_UNISON]{};
     int uA = 1, uB = 1;
     double maxRatA = 1, maxRatB = 1;
@@ -118,6 +121,7 @@ private:
     bool nbSnap = false;
     double dFm0 = 0, dFm1 = 0, dSat0 = 0, dSat1 = 0, dW0 = 0, dW1 = 0;
     Prng noiseR;
+    Prng phaseRng;
     double pinkR0 = 0, pinkR1 = 0, pinkR2 = 0;
     double nwC = 1, nwS = 0;
     bool spread = false;

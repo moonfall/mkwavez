@@ -58,6 +58,8 @@ export const CONTROL_SMOOTH_SEC = 0.005;
 export const NOISE_SEED = 0x5eed;
 /** Seed of the right channel's second noise stream (noise width). */
 export const NOISE_R_SEED = 0x5eee;
+/** Seed of the per-voice random note phases (phase mode Random). */
+export const PHASE_SEED = 0x9a5e;
 /** Seed of the per-voice modulation randomness (S&H, smooth random, per-note random). */
 export const MOD_SEED = 0x10f0;
 
@@ -102,8 +104,18 @@ const UNISON_PHASE = 0.381966;
  * switches, hard sync, the FM source) use a virtual centre copy (ratio 1), so they don't
  * depend on the count either.
  */
-const UNISON_PLACES: readonly (readonly number[])[] = [[0], [0], [-0.5, 0.5], [0, -1, 1], [-1, -1 / 3, 1 / 3, 1]];
-const UNISON_PANS: readonly (readonly number[])[] = [[0], [0], [-1, 1], [0, -1, 1], [-1, -1 / 3, 1 / 3, 1]];
+const UNISON_PLACES: readonly (readonly number[])[] = [
+  [0],
+  [0],
+  [-0.5, 0.5],
+  [0, -1, 1],
+  [-1, -1 / 3, 1 / 3, 1],
+  [0, -1, 1, -0.5, 0.5],
+  [-1, -0.6, -0.2, 0.2, 0.6, 1],
+  [0, -1, 1, -2 / 3, 2 / 3, -1 / 3, 1 / 3],
+  [-1, -5 / 7, -3 / 7, -1 / 7, 1 / 7, 3 / 7, 5 / 7, 1],
+];
+const UNISON_PANS: readonly (readonly number[])[] = [[0], [0], [-1, 1], ...UNISON_PLACES.slice(3)];
 /** Copies move to new unison places (a count change) over about this long. */
 export const UNISON_GLIDE_SEC = 0.03;
 /** Unison copies fade in / out over this long (count changes, CPU guard). */
@@ -300,6 +312,8 @@ export class SynthVoice {
   private pink2 = 0;
   /** The right channel's second noise stream (noise width) and its pink filter. */
   private readonly noiseR: Prng;
+  /** Random note phases (phase mode Random). */
+  private readonly phaseRng: Prng;
   private pinkR0 = 0;
   private pinkR1 = 0;
   private pinkR2 = 0;
@@ -416,6 +430,7 @@ export class SynthVoice {
     this.sampleRate = sampleRate;
     this.noise = new Prng(deriveSeed(NOISE_SEED, voiceId));
     this.noiseR = new Prng(deriveSeed(NOISE_R_SEED, voiceId));
+    this.phaseRng = new Prng(deriveSeed(PHASE_SEED, voiceId));
     this.modRng = new Prng(deriveSeed(MOD_SEED, voiceId));
     this.smooth = 1 - Math.exp(-blockLen / (CONTROL_SMOOTH_SEC * sampleRate));
     this.uniStep = blockLen / (UNISON_FADE_SEC * sampleRate);
@@ -477,6 +492,7 @@ export class SynthVoice {
     this.gated = true;
     const glide = s.glide > 0 && sounding && (!s.glideLegato || legato);
     if (!glide) this.pitch = pitch;
+    if (retrigger && !legato && s.phaseMode !== 'free') this.notePhase(s.phaseMode === 'random');
     if (retrigger) {
       this.nbS = 0;
       this.nbSnap = true;
@@ -508,6 +524,24 @@ export class SynthVoice {
   }
 
   private blockLen = 64;
+
+  /**
+   * A note's oscillator phases (phase mode Reset / Random): both oscillators' centres and
+   * copies, and the sub — reset to the start (copies at their fixed offsets) or random.
+   */
+  private notePhase(random: boolean): void {
+    const r = this.phaseRng;
+    const at = (i: number) => (random ? r.next() : (i * UNISON_PHASE) % 1);
+    this.phCA = random ? at(0) : 0;
+    this.phCB = random ? at(0) : 0;
+    for (let i = 0; i < MAX_UNISON; i++) {
+      this.phA[i] = at(i);
+      this.phB[i] = at(i);
+    }
+    this.subPhase = random ? at(0) : 0;
+    if (this.uA === 1) this.phCA = this.phA[0];
+    if (this.uB === 1) this.phCB = this.phB[0];
+  }
 
   /** Jump the block's pitch ramps to the current pitch (a new note without glide). */
   private retune(p: VoiceParams): void {

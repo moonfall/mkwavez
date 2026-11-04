@@ -325,6 +325,8 @@ Open:
   and slide (CC 74) on channels 2–16, channel 1 voice-wide. Matrix: Aftertouch = the higher
   of channel / note pressure, new Slide source. Not yet: MPE upper zone, MCM (RPN 6)
   configuration, a per-voice MPE bend-range setting.
+- Stage 10 (oscillator gaps, part 1): unison up to 8 copies per oscillator; oscillator
+  phase per note — free / reset / random (Mix page "Phase", full view Mix "Phase").
 
 Decisions / deviations:
 - New voices from "+" are offered as Synth (first in the menu) or Simple; both start on

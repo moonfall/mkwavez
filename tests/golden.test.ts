@@ -27,7 +27,7 @@ import { deriveSeed, Prng } from '../src/core/prng';
 import { emptySteps, STEP_LENGTHS, type StepLength } from '../src/core/sequence';
 import { shape } from '../src/core/shape';
 import { DEFAULT_VOICE, modulatedPosition, type VoiceParams } from '../src/core/voice';
-import { DEFAULT_SYNTH, FILTER_MODES, NOISE_TYPES, PITCH_TARGETS, SUB_WAVES, WARP_MODES, type SynthParams } from '../src/core/synth';
+import { DEFAULT_SYNTH, FILTER_MODES, NOISE_TYPES, PITCH_TARGETS, PHASE_MODES, SUB_WAVES, WARP_MODES, type SynthParams } from '../src/core/synth';
 import { LFO_DIVS, LFO_SHAPES, MOD_DESTS, MOD_SOURCES, type LfoParams, type ModSlot } from '../src/core/modulation';
 import { PREVIEW_ID_BASE, type WavetableShape } from '../src/core/wavetable';
 import { TIMELINE_CAP } from '../src/core/constants';
@@ -220,7 +220,7 @@ const SYNTH_SCALARS = [
   'glide', 'glideLegato', 'bendRange', 'pan', 'mAttack', 'mDecay', 'mSustain', 'mRelease', 'mMode', 'sync', 'fm',
   'aUnison', 'aDetune', 'aSpread', 'bUnison', 'bDetune', 'bSpread', 'sat', 'width',
   'aPan', 'bPan', 'aPhaseSpread', 'bPhaseSpread', 'aPosSpread', 'bPosSpread', 'noiseWidth', 'filterSpread',
-  'poly', 'aWarp', 'aWarpAmt', 'bWarp', 'bWarpAmt', 'macro1', 'macro2', 'macro3', 'macro4',
+  'poly', 'aWarp', 'aWarpAmt', 'bWarp', 'bWarpAmt', 'macro1', 'macro2', 'macro3', 'macro4', 'phaseMode',
 ] as const;
 const SYNTH_ENUMS: Partial<Record<(typeof SYNTH_SCALARS)[number], readonly string[]>> = {
   subWave: SUB_WAVES,
@@ -230,6 +230,7 @@ const SYNTH_ENUMS: Partial<Record<(typeof SYNTH_SCALARS)[number], readonly strin
   mMode: ['ad', 'adsr'],
   aWarp: WARP_MODES,
   bWarp: WARP_MODES,
+  phaseMode: PHASE_MODES,
 };
 const SOURCE_FIELDS = ['wavetableId', 'windowStart', 'windowEnd', 'windowStartY', 'windowEndY', 'position', 'positionY'] as const;
 
@@ -904,6 +905,30 @@ const SCENARIOS: Scenario[] = [
       [7200, OP.notePressure, 1, 99, 1],
       [9000, OP.noteOn, 1, 55, 100],
       [11000, OP.allNotesOff, -1],
+    ],
+  },
+  {
+    // Oscillator gaps: unison 6 and 8 copies (A with spread, B as FM source), phase reset
+    // and random per note (legato notes keep the phase), with a sub.
+    name: 'phase',
+    sampleRate: 48000,
+    frames: 14000,
+    ops: [
+      ...WAVES.slice(0, 4).map((_, i): Op => [0, OP.table, i + 1, i]),
+      wavetableOp(0, 0, '1d', 'blend', [[1, 2, 3, 4]]),
+      voiceOp(0, { id: 1, type: 'synth', windowEnd: 3, position: 0.4, release: 0.05, synth: synth({ poly: 1, phaseMode: 'reset', aUnison: 6, aDetune: 25, aSpread: 0.8, bLevel: 0.3, bUnison: 8, fm: 0.1, subLevel: 0.3, subWave: 'square' }) }),
+      voiceOp(0, { id: 2, type: 'synth', windowEnd: 3, position: 0.7, level: 0.5, release: 0.05, synth: synth({ poly: 3, phaseMode: 'random', aUnison: 8, aDetune: 40, aSpread: 1, subLevel: 0.2 }) }),
+      [20, OP.noteOn, 1, 48, 100],
+      [2000, OP.noteOn, 1, 55, 100],
+      [4000, OP.noteOff, 1, 55],
+      [4000, OP.noteOff, 1, 48],
+      [5000, OP.noteOn, 1, 50, 100],
+      [20, OP.noteOn, 2, 60, 90],
+      [3000, OP.noteOn, 2, 64, 90],
+      [6000, OP.noteOff, 2, 60],
+      [7000, OP.noteOn, 2, 60, 90],
+      voiceOp(9000, { id: 1, type: 'synth', windowEnd: 3, position: 0.4, release: 0.05, synth: synth({ poly: 1, phaseMode: 'free', aUnison: 5, aDetune: 25, aSpread: 0.8, bLevel: 0.3, bUnison: 7, fm: 0.1, subLevel: 0.3, subWave: 'square' }) }),
+      [12000, OP.allNotesOff, -1],
     ],
   },
   {

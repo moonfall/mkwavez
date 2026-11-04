@@ -12,8 +12,24 @@ namespace {
 constexpr double TWO_PI = 2 * PI;
 constexpr double UNISON_PHASE = 0.381966;
 /** Unison places (fraction of the detune) and pans for n copies (index n). */
-constexpr double UNISON_PLACES[5][4] = {{0}, {0}, {-0.5, 0.5}, {0, -1, 1}, {-1, -1.0 / 3, 1.0 / 3, 1}};
-constexpr double UNISON_PANS[5][4] = {{0}, {0}, {-1, 1}, {0, -1, 1}, {-1, -1.0 / 3, 1.0 / 3, 1}};
+constexpr double UNISON_PLACES[9][8] = {{0},
+                                        {0},
+                                        {-0.5, 0.5},
+                                        {0, -1, 1},
+                                        {-1, -1.0 / 3, 1.0 / 3, 1},
+                                        {0, -1, 1, -0.5, 0.5},
+                                        {-1, -0.6, -0.2, 0.2, 0.6, 1},
+                                        {0, -1, 1, -2.0 / 3, 2.0 / 3, -1.0 / 3, 1.0 / 3},
+                                        {-1, -5.0 / 7, -3.0 / 7, -1.0 / 7, 1.0 / 7, 3.0 / 7, 5.0 / 7, 1}};
+constexpr double UNISON_PANS[9][8] = {{0},
+                                      {0},
+                                      {-1, 1},
+                                      {0, -1, 1},
+                                      {-1, -1.0 / 3, 1.0 / 3, 1},
+                                      {0, -1, 1, -0.5, 0.5},
+                                      {-1, -0.6, -0.2, 0.2, 0.6, 1},
+                                      {0, -1, 1, -2.0 / 3, 2.0 / 3, -1.0 / 3, 1.0 / 3},
+                                      {-1, -5.0 / 7, -3.0 / 7, -1.0 / 7, 1.0 / 7, 3.0 / 7, 5.0 / 7, 1}};
 
 double clamp01(double x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
 double clamp11(double x) { return x < -1 ? -1 : x > 1 ? 1 : x; }
@@ -113,6 +129,7 @@ SynthVoice::SynthVoice(double sr, int32_t voiceId, int block, const SynthParams&
       uniGlide(1 - std::exp(-block / (UNISON_GLIDE_SEC * sr))),
       noise(deriveSeed(NOISE_SEED, (uint32_t) voiceId)),
       noiseR(deriveSeed(NOISE_R_SEED, (uint32_t) voiceId)),
+      phaseRng(deriveSeed(PHASE_SEED, (uint32_t) voiceId)),
       modRng(deriveSeed(MOD_SEED, (uint32_t) voiceId)),
       smooth(1 - std::exp(-block / (CONTROL_SMOOTH_SEC * sr))) {
     for (double& c : envCfg) c = -1;
@@ -157,6 +174,7 @@ void SynthVoice::noteOn(const VoiceParams& p, double notePitch, double velocity,
     gateHeld = true;
     const bool glide = s.glide > 0 && sounding && (!s.glideLegato || legato);
     if (!glide) pitch = notePitch;
+    if (retrigger && !legato && s.phaseMode != PhaseMode::free) notePhase(s.phaseMode == PhaseMode::random);
     if (retrigger) {
         nbS = 0;
         nbSnap = true;
@@ -179,6 +197,19 @@ void SynthVoice::noteOn(const VoiceParams& p, double notePitch, double velocity,
         }
     }
     if (!glide) retune(p);
+}
+
+void SynthVoice::notePhase(bool random) {
+    const auto at = [&](int i) { return random ? phaseRng.next() : std::fmod(i * UNISON_PHASE, 1.0); };
+    phCA = random ? at(0) : 0;
+    phCB = random ? at(0) : 0;
+    for (int i = 0; i < MAX_UNISON; ++i) {
+        phA[i] = at(i);
+        phB[i] = at(i);
+    }
+    subPhase = random ? at(0) : 0;
+    if (uA == 1) phCA = phA[0];
+    if (uB == 1) phCB = phB[0];
 }
 
 void SynthVoice::gateOff(const VoiceParams& p) {
