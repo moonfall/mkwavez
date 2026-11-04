@@ -445,3 +445,34 @@ viz('blancmange', {
     layers(g, w, h, c, n, (k, x) => tri(Math.pow(2, k) * x), Array.from({ length: n }, (_, k) => Math.pow(a, k)));
   },
 });
+
+// Polygon: the regular (n+3)-gon whose radius vs angle is the waveform.
+viz('polygon', {
+  axis: (i) => ['', `${i.index + 3}-gon: radius vs angle`, ''],
+  draw: (g, w, h, i, c) => {
+    const N = i.index + 3;
+    const R = Math.min(w, h) / 2 - 6;
+    const cx = w / 2;
+    const cy = h / 2;
+    g.strokeStyle = c.grid;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.arc(cx, cy, R, 0, TAU);
+    for (let k = 0; k < N; k++) {
+      g.moveTo(cx, cy);
+      g.lineTo(cx + R * Math.cos((TAU * k) / N), cy - R * Math.sin((TAU * k) / N));
+    }
+    g.stroke();
+    g.strokeStyle = c.accent;
+    g.lineWidth = 1.8;
+    g.beginPath();
+    for (let k = 0; k <= N; k++) {
+      const x = cx + R * Math.cos((TAU * k) / N);
+      const y = cy - R * Math.sin((TAU * k) / N);
+      if (k) g.lineTo(x, y);
+      else g.moveTo(x, y);
+    }
+    g.stroke();
+    dot(g, cx + R, cy, 3, c.line);
+  },
+});
