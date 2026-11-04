@@ -508,8 +508,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     seedLabel,
     h('button', { id: 'seed-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => newSeed() }, 'Reroll'),
   );
-  const addShownBtn = h('button', { id: 'seed-add-shown', onclick: () => addShown() }, 'Add shown');
-  const addBatchBtn = h('button', { id: 'seed-add-batch', class: 'primary', onclick: () => addBatch() }, `Add batch (+${opts.count()})`);
+  const addShownBtn = h('button', { id: 'seed-add-shown', 'aria-keyshortcuts': 'A', onclick: () => addShown() }, 'Add shown');
+  const addBatchBtn = h('button', { id: 'seed-add-batch', 'aria-keyshortcuts': 'N', class: 'primary', onclick: () => addBatch() }, `Add batch (+${opts.count()})`);
   const status = h('div', { class: 'gen-status', id: 'seed-status', role: 'status' });
   const flash = flasher(status);
   const strip = buildStrip('seed-strip', {

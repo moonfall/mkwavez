@@ -2309,6 +2309,14 @@ async function shapeChecks(page, tlCount) {
   await page.keyboard.up('Shift');
   const vert = (await chain()).steps[1].draw;
   assert(vert.pts[0][0] === level.pts[0][0] && vert.pts[1][0] === level.pts[1][0] && vert.pts[0][1] > level.pts[0][1], `Shift-dragging the line moves it only vertically (${JSON.stringify(vert.pts)})`);
+  // A adds the current result, even in the middle of a drag.
+  const nA = await tlCount();
+  await page.mouse.move(box.x + 40, box.y + box.height * 0.9);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 40, box.y + box.height * 0.8, { steps: 4 });
+  await page.keyboard.press('a');
+  await page.mouse.up();
+  assert((await tlCount()) === nA + 1 && (await M(() => window.mkwavez.model.timeline.at(-1).recipe.op)) === 'shape', 'A adds the shown result, also mid-drag');
 
   // Sweep: N cards, Add +N adds N shape waveforms; the source stays selected.
   await page.click('#shape-sweep');
@@ -2560,6 +2568,14 @@ async function shapeChecks(page, tlCount) {
   assert((await M(() => document.documentElement.scrollWidth - innerWidth)) <= 0 && (await page.isVisible('#shape-ed')), '390px: Shape stacks without sideways overflow');
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.click('#tab-seed');
+  // A / N in Seed: Add shown, Add batch.
+  await page.click('#seed-strip .gen-card:nth-child(1)');
+  const nS = await tlCount();
+  await page.keyboard.press('a');
+  const nN = Number(await page.inputValue('#seed-n'));
+  assert((await tlCount()) === nS + 1, 'A adds the shown waveform (Seed)');
+  await page.keyboard.press('n');
+  assert((await tlCount()) === nS + 1 + nN, `N adds the batch (Seed, ${nN})`);
 }
 
 async function breedChecks(page, tlCount, label) {

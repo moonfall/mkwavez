@@ -198,8 +198,8 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     for (const c of strip.cards) c.drawn = null;
     cardsDirty = mainDirty = true;
   });
-  const addShownBtn = h('button', { id: 'mutate-add-shown', onclick: () => addShown() }, 'Add shown');
-  const addBatchBtn = h('button', { id: 'mutate-add-batch', class: 'primary', onclick: () => addBatch() }, `Add +${opts.count()}`);
+  const addShownBtn = h('button', { id: 'mutate-add-shown', 'aria-keyshortcuts': 'A', onclick: () => addShown() }, 'Add shown');
+  const addBatchBtn = h('button', { id: 'mutate-add-batch', 'aria-keyshortcuts': 'N', class: 'primary', onclick: () => addBatch() }, `Add +${opts.count()}`);
   const status = h('div', { class: 'gen-status', id: 'mutate-status', role: 'status' });
   const flash = flasher(status);
   const strip = buildStrip('mutate-strip', {

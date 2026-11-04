@@ -350,8 +350,8 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     for (const c of strip.cards) c.drawn = null;
     cardsDirty = mainDirty = true;
   });
-  const addShownBtn = h('button', { id: 'breed-add-shown', onclick: () => addShown() }, 'Add shown');
-  const addBatchBtn = h('button', { id: 'breed-add-batch', class: 'primary', onclick: () => addBatch() }, `Add +${opts.count()}`);
+  const addShownBtn = h('button', { id: 'breed-add-shown', 'aria-keyshortcuts': 'A', onclick: () => addShown() }, 'Add shown');
+  const addBatchBtn = h('button', { id: 'breed-add-batch', 'aria-keyshortcuts': 'N', class: 'primary', onclick: () => addBatch() }, `Add +${opts.count()}`);
   const status = h('div', { class: 'gen-status', id: 'breed-status', role: 'status' });
   const blockedNote = h('div', { class: 'gen-status warn', id: 'breed-blocked' });
   const flash = flasher(status);

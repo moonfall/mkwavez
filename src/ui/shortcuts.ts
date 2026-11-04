@@ -7,6 +7,8 @@ import type { UiContext } from './context';
  *  - M                mute / unmute the selected voice
  *  - Shift+← / →      move the selected waveform one place earlier / later in the Timeline
  *  - Ctrl/⌘+← / →     scroll the Timeline strip to its beginning / end (selection unchanged)
+ *  - A / N            Add shown / Add batch in the open Generate tab (with Shift too, so it
+ *                     works while a Shift-locked drag is in progress in Shape)
  *
  * Ignored while typing (text inputs, textareas, selects, contenteditable) and when any
  * modifier other than the listed ones is held (AltGr / Option are allowed where the layout
@@ -26,7 +28,21 @@ export const SHORTCUTS = {
   moveRight: 'Shift+ArrowRight',
   timelineStart: 'Control+ArrowLeft Meta+ArrowLeft',
   timelineEnd: 'Control+ArrowRight Meta+ArrowRight',
+  addShown: 'A',
+  addBatch: 'N',
 } as const;
+
+/** Generate tabs whose Add shown / Add batch buttons A / N press (ids `${tab}-add-shown` / `-add-batch`). */
+const ADD_TABS = ['seed', 'mutate', 'breed', 'shape'];
+
+/** Press the open Generate tab's Add shown (or Add batch) button if it shows and is enabled. */
+function pressAdd(tab: string, which: 'shown' | 'batch'): boolean {
+  if (!ADD_TABS.includes(tab)) return false;
+  const btn = document.getElementById(`${tab}-add-${which}`);
+  if (!(btn instanceof HTMLButtonElement) || btn.hidden || btn.disabled || btn.offsetParent === null) return false;
+  btn.click();
+  return true;
+}
 
 /** Input types that don't take typed text (everything else does). */
 const NON_TEXT_INPUTS = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
@@ -82,6 +98,14 @@ export function installShortcuts(ctx: UiContext, actions: ShortcutActions, targe
     // Any Space keydown we don't handle drops the keyup swallow (its keyup may have been lost).
     if (e.key === ' ') spaceDown = false;
     if (e.isComposing || isTextField(e.target)) return false;
+    // A / N (Shift allowed: a Shift-locked drag in Shape may be in progress).
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'KeyA' || e.code === 'KeyN' || /^[an]$/i.test(e.key))) {
+      // By the letter typed, else (non-Latin layouts) by the physical key.
+      const k = /^[an]$/i.test(e.key) ? e.key.toLowerCase() : e.code === 'KeyN' ? 'n' : 'a';
+      const which = k === 'n' ? 'batch' : 'shown';
+      if (!e.repeat) pressAdd(ui.pref('generateTab', 'Seed', (v) => typeof v === 'string').toLowerCase(), which);
+      return true;
+    }
     if (e.key === ' ') {
       if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return false;
       const t = e.target;

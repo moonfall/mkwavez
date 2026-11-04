@@ -1536,8 +1536,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     syncBatch();
   });
   const writeLabel = h('label', { class: 'shape-check', id: 'shape-writeback-label', title: 'Put each result in its source’s slot (one undo step)' }, writeBox, 'Write back');
-  const addShownBtn = h('button', { id: 'shape-add-shown', onclick: () => addShown() }, 'Add shown');
-  const addBatchBtn = h('button', { id: 'shape-add-batch', class: 'primary', onclick: () => addBatch() }, 'Add +N');
+  const addShownBtn = h('button', { id: 'shape-add-shown', 'aria-keyshortcuts': 'A', onclick: () => addShown() }, 'Add shown');
+  const addBatchBtn = h('button', { id: 'shape-add-batch', 'aria-keyshortcuts': 'N', class: 'primary', onclick: () => addBatch() }, 'Add +N');
   const status = h('div', { class: 'gen-status', id: 'shape-status', role: 'status' });
   const flash = flasher(status);
   const strip = buildStrip('shape-strip', {
