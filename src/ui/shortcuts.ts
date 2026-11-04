@@ -32,13 +32,14 @@ export const SHORTCUTS = {
   addBatch: 'N',
 } as const;
 
-/** Generate tabs whose Add shown / Add batch buttons A / N press (ids `${tab}-add-shown` / `-add-batch`). */
-const ADD_TABS = ['seed', 'mutate', 'breed', 'shape'];
+/** Generate tabs whose Add shown / Add batch buttons A / N press (ids `${tab}-add-shown` / `-add-batch`; Grid: `grid-add-batch` for both). */
+const ADD_TABS = ['seed', 'mutate', 'breed', 'shape', 'grid'];
 
 /** Press the open Generate tab's Add shown (or Add batch) button if it shows and is enabled. */
 function pressAdd(tab: string, which: 'shown' | 'batch'): boolean {
   if (!ADD_TABS.includes(tab)) return false;
-  const btn = document.getElementById(`${tab}-add-${which}`);
+  // Grid has one Add (the whole grid): A and N both press it.
+  const btn = document.getElementById(`${tab}-add-${tab === 'grid' ? 'batch' : which}`);
   if (!(btn instanceof HTMLButtonElement) || btn.hidden || btn.disabled || btn.offsetParent === null) return false;
   btn.click();
   return true;

@@ -139,6 +139,8 @@ async function run(label, url, browser) {
   await wordingCheck(page, 'after Breed');
   await shapeChecks(page, tlCount);
   await wordingCheck(page, 'after Shape');
+  await gridChecks(page);
+  await wordingCheck(page, 'after Grid');
   await page.click('#add-voice');
   assert(await page.isVisible('#add-voice-menu'), '+ offers Synth or Simple');
   await page.click('#add-voice-simple');
@@ -2269,6 +2271,68 @@ const waitInk = (page, sel) =>
  */
 /** Screen y of level `v` on the Shape plot (range ±1.25: a normalised source, drawWave's padding). */
 const toLevelPx = (v, box) => box.y + box.height / 2 - (v / 1.25) * (box.height / 2 - Math.min(4, box.height * 0.08));
+
+async function gridChecks(page) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const genFits = () =>
+    M(() => {
+      const b = document.querySelector('#sec-generate-body');
+      return b.scrollHeight <= b.clientHeight + 1 && b.scrollWidth <= b.clientWidth + 1;
+    });
+  const ready = () => page.waitForFunction(() => document.querySelector('#panel-grid').dataset.ready === 'true', null, { timeout: 15000 });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await M(() => window.mkwavez.model.clearUndo());
+  await page.click('#tab-grid');
+  await page.selectOption('#grid-source', 'Seed');
+  await page.click('#grid-rows-shape');
+  await page.fill('#grid-n', '6');
+  await page.press('#grid-n', 'Tab');
+  await page.fill('#grid-rows', '5');
+  await page.press('#grid-rows', 'Tab');
+  await ready();
+  assert(
+    (await page.isVisible('#panel-grid')) && (await page.textContent('#grid-size')) === '6 × 5' && (await page.textContent('#grid-add-batch')) === 'Add grid (30)' && (await genFits()),
+    'Grid tab: Seed columns × Shape rows, 6 × 5 previewed, fits the Generate panel',
+  );
+  // A cell shows what made it.
+  const box = await (await page.$('#grid-canvas')).boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height - 6);
+  await page.waitForTimeout(150);
+  const info = await page.textContent('#grid-cell-info');
+  assert(/^Column \d+: .+ · row 5: .+ at 100%$/.test(info), `clicking a cell describes it (“${info}”)`);
+  // Add grid (A): one batch, one undo step, a new 6 × 5 wavetable the selected voice plays.
+  const before = await M(() => ({ n: window.mkwavez.model.timeline.length, wts: window.mkwavez.model.wavetables.length, v: window.mkwavez.ui.voiceId }));
+  await page.keyboard.press('a');
+  await page.waitForTimeout(150);
+  const after = await M((v) => {
+    const m = window.mkwavez.model;
+    const wt = m.wavetables.at(-1);
+    return { n: m.timeline.length, wts: m.wavetables.length, wt: { id: wt.id, w: wt.rows[0].length, h: wt.rows.length, filled: wt.rows.flat().filter((x) => x !== null).length }, voiceWt: m.voice(v).wavetableId, undo: m.undoDepth };
+  }, before.v);
+  assert(
+    after.n === before.n + 30 && after.wts === before.wts + 1 && after.wt.w === 6 && after.wt.h === 5 && after.wt.filled === 30 && after.voiceWt === after.wt.id && after.undo === 1,
+    `A adds the grid: 30 waveforms, a 6 × 5 wavetable the voice plays, one undo step (${JSON.stringify(after)})`,
+  );
+  await M(() => window.mkwavez.model.undo());
+  assert((await M(() => window.mkwavez.model.timeline.length)) === before.n && (await M(() => window.mkwavez.model.wavetables.length)) === before.wts, 'undo removes the grid and its wavetable');
+  // Into a write window: the grid takes its size (N and rows) and fills exactly its cells.
+  const wid = await M(() => {
+    const m = window.mkwavez.model;
+    const w = m.createWavetable('2d', 8, 6);
+    m.setWavetableWrite(w.id, { window: { x0: 2, y0: 1, x1: 5, y1: 3 } });
+    return w.id;
+  });
+  await page.waitForTimeout(100);
+  await page.selectOption('#grid-into', `win:${wid}`);
+  await ready();
+  assert((await page.inputValue('#grid-n')) === '4' && (await page.inputValue('#grid-rows')) === '3' && (await page.isDisabled('#grid-rows')), 'a write window target sets N = 4 and rows = 3');
+  await page.click('#grid-add-batch');
+  await page.waitForTimeout(150);
+  const cells = await M((id) => window.mkwavez.model.wavetable(id).rows.map((r) => r.map((x) => (x === null ? '.' : '#')).join('')).join('/'), wid);
+  assert(cells === '......../..####../..####../..####../......../........', `grid placed into the write window (${cells})`);
+  await page.selectOption('#grid-into', 'new');
+  await page.click('#tab-seed');
+}
 
 async function shapeChecks(page, tlCount) {
   const M = (fn, arg) => page.evaluate(fn, arg);

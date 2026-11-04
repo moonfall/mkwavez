@@ -1783,6 +1783,17 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         const cur = job && job.key === keyOf(jobSources(), chain()) ? job : null;
         return cur ? previewOf(cur.tables, null, strip.shown()) : null;
       },
+      batch(deadline) {
+        const j = currentJob();
+        if (!j) return { error: 'Shape: select a source waveform in the Timeline' };
+        const tables: GeneratedTable[] = [];
+        for (let i = 0; i < j.n; i++) {
+          if (!j.tables[i] && performance.now() > deadline) return { wait: true };
+          tables.push(computeOne(j, i));
+        }
+        if (tables.some(silent)) return { error: 'Shape: a result is silent' };
+        return { tables };
+      },
       frame(now) {
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;

@@ -968,7 +968,10 @@ button.icon-btn svg {
     margin: 0 0 2px 4px;
   }
   .tabs button {
-    flex: 1 1 0;
+    /* Sized by their names (six tabs share a phone's width). */
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0 4px;
     height: 32px;
   }
 }
@@ -4368,4 +4371,139 @@ button.br-clear:hover {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* ---- grid (Generate → Grid) ---- */
+.gen-tab.grid {
+  grid-template-columns: 200px 220px minmax(0, 1fr);
+}
+@media (min-width: 900px) {
+  #sec-generate .panel-body > .gen-tab.grid {
+    grid-template-columns: clamp(170px, 14vw, 220px) clamp(200px, 16vw, 250px) minmax(0, 1fr);
+  }
+  .gen-tab.grid > * {
+    min-height: 0;
+  }
+}
+@media (max-width: 719px) {
+  .gen-tab.grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.grid-box {
+  gap: 6px;
+  padding: 8px 10px;
+}
+.grid-box select {
+  min-width: 0;
+  max-width: 100%;
+}
+.grid-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.grid-op {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.grid-op .mut-amount {
+  flex: none;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.grid-op .mut-amount input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.grid-info {
+  font-size: 12px;
+  color: var(--text-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grid-info.warn {
+  color: var(--danger);
+  white-space: normal;
+}
+.grid-info:empty {
+  display: none;
+}
+.grid-head {
+  flex-wrap: nowrap;
+}
+.grid-head .gen-h {
+  white-space: nowrap;
+}
+.grid-into {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  margin-left: auto;
+  min-width: 0;
+}
+.grid-into select {
+  min-width: 0;
+  max-width: 340px;
+}
+.grid-cell-box .grid-row {
+  flex-wrap: nowrap;
+}
+.grid-cell-box .grid-info {
+  flex: 1 1 auto;
+}
+@media (min-width: 900px) {
+  .grid-box {
+    overflow-y: auto;
+    max-height: 100%;
+  }
+}
+.grid-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.grid-view {
+  min-height: 0;
+  height: 100%;
+}
+.grid-canvas-box {
+  flex: 1 1 auto;
+  min-height: 140px;
+  position: relative;
+}
+.grid-canvas-box canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.grid-cell-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.grid-cell-box canvas {
+  width: 100%;
+  display: block;
+}
+.grid-box .seg {
+  display: flex;
+}
+.grid-box .seg button {
+  flex: 1 1 0;
+}
+.grid-box > .gen-stepper {
+  align-self: flex-start;
 }

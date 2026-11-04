@@ -41,6 +41,9 @@ src/
     shapeChain.ts       Shape chains: normalizeChain (canonical JSON), per-step seeds and
                         amount sweeps, chainStages / applyChain, 'shape' recipes
     shapeFactory.ts     factory chains, saved chains, the chains export file
+    grid.ts             Grid builder: row operations (Mutate sweep / Shape chain) on
+                        each column, layout (swap), limits (32 × 32, 1,024 cells),
+                        batch-local column references (columnRef) for recipes
     mipmap.ts           per-octave band-limited mip sets, packed in one Float32Array
     table.ts            WaveTable, Recipe, IdAllocator
     timeline.ts         appendWithEviction (oldest-first, pin-aware), index/window remap
@@ -92,9 +95,10 @@ src/
                         stored in localStorage); transport.ts the top bar;
                         generate.ts hosts the tabs: seed.ts (Seed tab; seedViz.ts
                         its basis plot: what each builder is based on), mutate.ts
-                        (Mutate tab), breed.ts (Breed tab) and shapeTab.ts (Shape
+                        (Mutate tab), breed.ts (Breed tab), shapeTab.ts (Shape
                         tab: chain column, step settings, the drawable plot, Apply
-                        to, Write back); shapeOnAdd.ts (the Shape chip in Seed /
+                        to, Write back) and gridTab.ts (Grid tab: columns from
+                        another tab's batch(), rows, preview grid, Into, Add grid); shapeOnAdd.ts (the Shape chip in Seed /
                         Mutate / Breed batch rows); library.ts (the
                         shared library list) and batch.ts (N stepper, card strip)
                         are used by Seed, Mutate and Breed; timeline.ts (strip,
@@ -278,6 +282,14 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   resize1D / resize2D, session decode), so a shrink moves a window off the edge onto the
   last cells. `setHead` clamps the head into the region; a head outside it restarts at the
   window's start corner.
+- **Grid adds** (`AppModel.addGrid`): new columns first, then each column's row tables, in
+  one `addTables` (one undo step); a row table's recipe names its column as parent through
+  a batch-local placeholder (`columnRef(k)` = −1−k), which `addTables` resolves to the id
+  just assigned. Then placement: a new 2D wavetable (the selected voice switched to it,
+  whole window) or the cells of a user 2D wavetable from (x0, y0) — the selected voice's
+  window or a write window — whose own write head skips that add (`skipWrites`). Each
+  Generate tab's `batch(deadline)` gives exactly what its Add +N would add (Shape chip
+  included), computed within the frame budget with stable identities, for the columns.
 - **Adds** (`AppModel.addTables`): write into every live wavetable, then pin, then evict
   from the timeline, then drop evicted ids from the (non-pinning) wavetables, then voice
   windows follow; one undo snapshot covers all of it (timeline, wavetables, windows).

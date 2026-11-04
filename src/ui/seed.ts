@@ -861,6 +861,28 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         const cur = job && job.key === keyOf(request()) && !job.fatal ? job : null;
         return cur ? previewOf(cur.tables, shapeOn, strip.shown()) : null;
       },
+      batch(deadline) {
+        const fexpr = formulaOf(request());
+        const syntax = fexpr !== null ? compile(fexpr).err : undefined;
+        if (syntax) return { error: `Seed: syntax: ${syntax}` };
+        const j = currentJob();
+        if (!j) return { error: 'Seed: nothing to make' };
+        const n = j.req.count;
+        for (let i = 0; i < n; i++) {
+          if (!j.tables[i] && !j.errors[i] && !j.fatal && performance.now() > deadline) return { wait: true };
+          computeOne(j, i);
+          if (j.fatal) return { error: `Seed stopped: ${j.fatal}` };
+        }
+        const failed = failedOf(j);
+        if (failed.length) return { error: `Seed: ${failed.length} of ${n} waveforms fail to evaluate (first #${failed[0] + 1})` };
+        const tables: GeneratedTable[] = [];
+        for (let i = 0; i < n; i++) {
+          const t = shapeOn.applyWithin(j.tables[i]!, { index: i, count: n }, deadline);
+          if (!t) return { wait: true };
+          tables.push(t);
+        }
+        return { tables };
+      },
       frame(now) {
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;

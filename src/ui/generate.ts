@@ -5,6 +5,7 @@ import { buildMutatePanel } from './mutate';
 import { MAX_BATCH } from './batch';
 import { buildSeedPanel } from './seed';
 import { buildShapePanel } from './shapeTab';
+import { buildGridPanel } from './gridTab';
 
 export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const sec = panel('sec-generate', 'Generate', 'gen');
@@ -19,7 +20,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   const onCount = (fn: (n: number) => void) => countListeners.push(fn);
 
   // ---- tabs ----
-  const tabNames = ['Seed', 'Mutate', 'Breed', 'Shape', 'Sample'] as const;
+  const tabNames = ['Seed', 'Mutate', 'Breed', 'Shape', 'Grid', 'Sample'] as const;
   const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Generate methods' });
   const panels = new Map<string, HTMLElement>();
   const tabButtons = new Map<string, HTMLButtonElement>();
@@ -75,6 +76,17 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   });
   panels.set('Shape', shapeTab.el);
 
+  // ---- Grid panel ----
+  const grid = buildGridPanel(ctx, {
+    count: () => count,
+    setCount,
+    onCount,
+    active: () => sec.isOpen() && currentTab === 'Grid',
+    sources: { Seed: seed.view, Mutate: mutate.view, Breed: breed.view, Shape: shapeTab.view },
+    setTab: (name) => setTab(name),
+  });
+  panels.set('Grid', grid.el);
+
   // ---- placeholders ----
   const soon: Record<string, string> = {
     Sample: 'Extract single cycles from the microphone or an audio file.',
@@ -95,6 +107,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   sec.setStatus(() => {
     if (currentTab === 'Breed') return `Breed · ${ctx.model.breedParents.length} parents`;
     if (currentTab === 'Shape') return `Shape · ${ctx.model.shapeChain.name}`;
+    if (currentTab === 'Grid') return 'Grid';
     if (currentTab === 'Mutate') {
       const i = ctx.model.indexOf(ctx.model.selectedId);
       return i >= 0 ? `Mutate · source #${i + 1}` : 'Mutate';
@@ -112,6 +125,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
         mutate.view.frame(now);
         breed.view.frame(now);
         shapeTab.view.frame(now);
+        grid.view.frame(now);
         // The open tab's preview feeds the Preview wavetables (unchanged data is a no-op).
         const views: Record<string, GenerateView> = { Seed: seed.view, Mutate: mutate.view, Breed: breed.view, Shape: shapeTab.view };
         const p = views[currentTab]?.preview();

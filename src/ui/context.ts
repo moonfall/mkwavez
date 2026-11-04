@@ -1,5 +1,6 @@
 import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
+import type { GeneratedTable } from '../core/table';
 
 /**
  * UI-only state shared between sections: the voice whose tab is selected (the Voice and
@@ -86,8 +87,19 @@ export interface GeneratePreview {
 }
 
 /** A Generate tab's view: frames, plus its current preview (null while not complete). */
+/**
+ * What a tab's Add +N would add (for the Grid tab's columns): the tables, shaped and with
+ * their recipes; not ready yet (computing continues on later calls); or why not.
+ */
+export type BatchResult = { readonly tables: readonly GeneratedTable[] } | { readonly wait: true } | { readonly error: string };
+
 export interface GenerateView extends FrameView {
   preview(): GeneratePreview | null;
+  /**
+   * The whole batch Add +N would add, computing what is missing until `deadline`
+   * (performance.now()). Unchanged tables keep their identity between calls.
+   */
+  batch(deadline: number): BatchResult;
 }
 
 const visible = new WeakMap<Element, boolean>();

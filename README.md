@@ -153,6 +153,21 @@ switches (the choice is remembered).
   select the last waveform added (undo restores the selection); Add +N refuses batches of
   copies (a sweep at bias 0; a generation with nothing seeded or one parent holding all
   the weight) and both need two parents.
+- **Generate → Grid**: build a 2D block of waveforms from two batch operations.
+  **Columns**: another tab's batch (Seed, Mutate, Breed or Shape — exactly what its Add +N
+  would add, Shape chip included; N is the shared batch size, “Edit in …” jumps there) or
+  the Last batch already in the Timeline. **Rows**: a Mutate sweep (mutation, amount,
+  Linear / Log / Chain, seed) or a Shape chain (the Shape tab's, a factory or a saved one)
+  applied to each column; it warns when the rows wouldn't differ. **Row 1 = columns** puts
+  the columns themselves in row 1 (on by default, turned off when the chain's first row
+  starts far from the column); **⇄ Swap** runs the columns down Y instead. The preview
+  shows the whole grid; click a cell to see it over its column and what made it. **Into**:
+  a new 2D wavetable (the selected voice then plays it, window over the whole grid), the
+  selected voice's window on its 2D wavetable, or a wavetable's write window — an existing
+  window sets the grid's size (N = its width, rows = its height). **Add grid** (A or N)
+  adds every waveform as one batch, one undo step; a row's waveform keeps a recipe whose
+  parent is its column (without Row 1, the columns are added too, as the parents). Up to
+  32 × 32 and 1,024 waveforms.
 - **Timeline**: every waveform, in order (cap 4096), as one horizontally scrolling strip
   (a vertical mouse wheel scrolls it sideways). Click to select (the header names the
   selection); Shift-click / long-press toggles Breed parents (badged A, B, …). A waveform

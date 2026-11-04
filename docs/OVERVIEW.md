@@ -49,6 +49,10 @@ as a native plugin (VST3 / AU / CLAP / LV2 / Standalone) whose editor is the sam
   replace) or on its harmonics (set, shift, stretch, tilt, limit to a drawn curve), apply
   any mutation, sweep any step across a batch; apply to a selection, batch or whole
   wavetable, or attach a chain to Seed / Mutate / Breed adds.
+- **Grid** — build a 2D wavetable from two batch operations: another tab's batch makes the
+  columns, a Mutate sweep or a Shape chain varies each column down the rows. Previewed as
+  a grid, added in one step into a new 2D wavetable (the voice plays it), a voice's window
+  or a write window.
 
 ## Playing (Voices, Sequences, MIDI)
 

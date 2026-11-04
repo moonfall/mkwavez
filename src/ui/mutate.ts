@@ -485,6 +485,19 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
         const cur = job && job.key === keyOf(source(), request()) ? job : null;
         return cur ? previewOf(cur.tables, shapeOn, strip.shown()) : null;
       },
+      batch(deadline) {
+        const j = currentJob();
+        if (!j) return { error: 'Mutate: select a source waveform in the Timeline' };
+        const n = j.req.count;
+        const tables: GeneratedTable[] = [];
+        for (let i = 0; i < n; i++) {
+          if (!j.tables[i] && performance.now() > deadline) return { wait: true };
+          const t = shapeOn.applyWithin(computeOne(j, i), { index: i, count: n }, deadline);
+          if (!t) return { wait: true };
+          tables.push(t);
+        }
+        return { tables };
+      },
       frame(now) {
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;

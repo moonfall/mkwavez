@@ -58,7 +58,9 @@ import {
   type WavetableId,
   type WavetableShape,
   type WriteSettings,
+  wavetableDims,
 } from '../core/wavetable';
+import { gridDims, gridXY } from '../core/grid';
 import { windowIds } from '../core/wavetablePlayback';
 
 /**
@@ -312,16 +314,20 @@ export class AppModel {
    * oldest unpinned tables, which drop out of the wavetables that mirror it. Voice windows
    * follow (see followEdit). One undo step reverts all of it.
    */
-  addTables(gen: readonly GeneratedTable[], selectNew = true): WaveTable[] {
+  addTables(gen: readonly GeneratedTable[], selectNew = true, opts: { skipWrites?: WavetableId } = {}): WaveTable[] {
     if (!gen.length) return [];
     if (!this.roomFor(gen.length)) {
       this.setNotice(this.fullMessage());
       return [];
     }
     this.snapshot();
-    const added = gen.map((g) => makeTable(this.tableIds.take(), g));
+    const ids = gen.map(() => this.tableIds.take());
+    // A negative parent is a batch-local reference to table k of this add (core/grid columnRef).
+    const link = (g: GeneratedTable): GeneratedTable =>
+      g.recipe.parents.some((p) => p < 0) ? { ...g, recipe: { ...g.recipe, parents: g.recipe.parents.map((p) => (p < 0 ? (ids[-1 - p] ?? p) : p)) } } : g;
+    const added = gen.map((g, i) => makeTable(ids[i], link(g)));
     const before = this.wavetables;
-    const { written, r } = this.planAdd(added);
+    const { written, r } = this.planAdd(added, opts.skipWrites);
     const gone = new Set(r.evicted.map((t) => t.id));
     let voices = this.voices;
     this.wavetables = written.map((e, i) => {
@@ -344,9 +350,9 @@ export class AppModel {
    * batch; overwritten Grid cells are not). `ok` = it fits the cap without evicting any of
    * the new waveforms themselves.
    */
-  private planAdd<T extends { readonly id: TableId }>(added: readonly T[]) {
+  private planAdd<T extends { readonly id: TableId }>(added: readonly T[], skipWrites?: WavetableId) {
     const ids = added.map((t) => t.id);
-    const written = this.wavetables.map((w) => writeTables(w, ids));
+    const written = this.wavetables.map((w) => (w.id === skipWrites ? { wt: w, map: null, reset: false } : writeTables(w, ids)));
     const pinned = pinnedIds(written.map((e) => e.wt));
     const r = appendWithEviction<{ readonly id: TableId }>(this.timeline, added, this.cap, (id) => pinned.has(id));
     const fresh = new Set(ids);
@@ -822,6 +828,62 @@ export class AppModel {
       this.emit('wavetables', 'voices');
     }
     return added;
+  }
+
+  /**
+   * Add a grid (Generate → Grid) and place it, in one undo step. `columns`: new tables
+   * (added first; row tables may name column k as parent columnRef(k)) or waveforms already
+   * in the Timeline. rows[c] = column c's row tables. With `row1`, row 0 of the grid is the
+   * column itself. Placed into `into`: a new 2D wavetable (the voice `voiceId`, if any, then
+   * plays it over the whole grid), or the cells of a user 2D wavetable from (x0, y0) (its
+   * write head skips this add). Returns the wavetable written, or null if refused.
+   */
+  addGrid(spec: {
+    columns: { kind: 'new'; tables: readonly GeneratedTable[] } | { kind: 'existing'; ids: readonly TableId[] };
+    rows: readonly (readonly GeneratedTable[])[];
+    row1: boolean;
+    swap: boolean;
+    into: { kind: 'new'; voiceId: number | null } | { kind: 'cells'; wtId: WavetableId; x0: number; y0: number };
+  }): Wavetable | null {
+    const nCols = spec.columns.kind === 'new' ? spec.columns.tables.length : spec.columns.ids.length;
+    const nOp = spec.rows[0]?.length ?? 0;
+    const nRows = nOp + (spec.row1 ? 1 : 0);
+    if (!nCols || !nRows || spec.rows.length !== nCols || spec.rows.some((r) => r.length !== nOp)) return null;
+    const { w, h } = gridDims(nCols, nRows, spec.swap);
+    const into = spec.into;
+    if (into.kind === 'cells') {
+      const t = this.userWavetable(into.wtId);
+      const d = t && wavetableDims(t);
+      if (!t || t.shape !== '2d' || !d || into.x0 < 0 || into.y0 < 0 || into.x0 + w > d.w || into.y0 + h > d.h) return null;
+    }
+    const newCols = spec.columns.kind === 'new' ? spec.columns.tables : [];
+    const added = this.addTables([...newCols, ...spec.rows.flat()], false, into.kind === 'cells' ? { skipWrites: into.wtId } : {});
+    if (!added.length) return null;
+    const colIds = spec.columns.kind === 'new' ? added.slice(0, nCols).map((t) => t.id) : spec.columns.ids;
+    const off = newCols.length;
+    const idAt = (c: number, r: number) => (spec.row1 ? (r === 0 ? colIds[c] : added[off + c * nOp + r - 1].id) : added[off + c * nOp + r].id);
+    let target: Wavetable;
+    let x0 = 0;
+    let y0 = 0;
+    if (into.kind === 'new') {
+      target = newWavetable(this.newWavetableId(), this.uniqueName('Grid', true), '2d', w, h);
+      this.wavetables = [...this.wavetables, target];
+    } else {
+      target = this.userWavetable(into.wtId)!;
+      x0 = into.x0;
+      y0 = into.y0;
+    }
+    for (let c = 0; c < nCols; c++)
+      for (let r = 0; r < nRows; r++) {
+        const { x, y } = gridXY(c, r, spec.swap);
+        target = placeTable(target, { kind: 'slot', x: x0 + x, y: y0 + y }, idAt(c, r)).wt;
+      }
+    const done = target;
+    this.wavetables = this.wavetables.map((t) => (t.id === done.id ? done : t));
+    if (into.kind === 'new' && into.voiceId !== null && this.voice(into.voiceId))
+      this.voices = this.voices.map((v) => (v.id === into.voiceId ? { ...v, wavetableId: done.id, ...fullWindow(done) } : v));
+    this.emit('wavetables', 'voices');
+    return done;
   }
 
   /** A fresh user wavetable id (never reused, not even after undo / delete). */
