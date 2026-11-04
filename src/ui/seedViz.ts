@@ -25,12 +25,16 @@ import {
   polygonAt,
   polygonOutline,
   polygonShape,
+  SHAPERS,
+  shaperAt,
+  shaperCurve,
   StepCache,
   supersawLevel,
   supersawPhases,
   type Board,
   type LifeParams,
   type PolygonParams,
+  type ShaperParams,
   type RdParams,
   type RdState,
   type SequenceParams,
@@ -158,15 +162,17 @@ export function dot(g: CanvasRenderingContext2D, x: number, y: number, r: number
 
 /**
  * A waveshaper's transfer curve y = f(x) over x ∈ [−1, 1] (y clipped to ±1.1), with the
- * input range ±inMax shaded and the identity dashed.
+ * input range inMin…inMax (default ±inMax) shaded and the identity dashed.
  */
-export function transfer(g: CanvasRenderingContext2D, w: number, h: number, c: VizColors, f: (x: number) => number, inMax = 1): void {
+export function transfer(g: CanvasRenderingContext2D, w: number, h: number, c: VizColors, f: (x: number) => number, inMax = 1, inMin = -inMax): void {
   const side = Math.min(w, h);
   const s = scale(side, side, -1.1, 1.1, -1.1, 1.1);
   g.save();
   g.translate((w - side) / 2, (h - side) / 2);
   g.fillStyle = c.grid;
-  g.fillRect(s.x(-inMax), 0, s.x(inMax) - s.x(-inMax), side);
+  const lo = clamp(inMin, -1.1, 1.1);
+  const hi = clamp(inMax, -1.1, 1.1);
+  g.fillRect(s.x(lo), 0, s.x(hi) - s.x(lo), side);
   rules(g, s, side, side, [0], [0], c.axis);
   plot(g, s, (x) => x, -1, 1, c.muted, 1, 2, [3, 3]);
   plot(g, s, (x) => clamp(f(x), -1.1, 1.1), -1, 1, c.accent, 1.8, 300);
@@ -367,43 +373,18 @@ viz('supersaw', {
   },
 });
 
-// Chebyshev: T_k(x) = cos(k·acos x), k = n + 2, applied to 0.95·sin p.
-viz('chebyshev', {
-  axis: (i) => ['−1', `T${sub(i.index + 2)}(x) on 0.95·sin p`, '1'],
-  draw: (g, w, h, i, c) => transfer(g, w, h, c, (x) => Math.cos((i.index + 2) * Math.acos(clamp(x, -1, 1))), 0.95),
-});
-
-// Soft clip: tanh(d·x) / tanh(d), d = 1 + 5u.
-viz('soft-clip', {
-  axis: (i) => ['−1', `tanh(${(1 + 5 * i.u).toFixed(1)}·x) / tanh(${(1 + 5 * i.u).toFixed(1)})`, '1'],
-  draw: (g, w, h, i, c) => {
-    const d = 1 + 5 * i.u;
-    transfer(g, w, h, c, (x) => Math.tanh(d * x) / Math.tanh(d));
-  },
-});
-
-// Superellipse: sign(x)·|x|^e, e = 0.05 + 0.95u.
-viz('superellipse', {
-  axis: (i) => ['−1', `sign(x)·|x|^${f2(0.05 + 0.95 * i.u)}`, '1'],
-  draw: (g, w, h, i, c) => {
-    const e = 0.05 + 0.95 * i.u;
-    transfer(g, w, h, c, (x) => Math.sign(x) * Math.pow(Math.abs(x), e));
-  },
-});
-
-// Shaped PWM: tanh(a·(x − θ)), a = 3 + 20u, θ = 0.8 − 1.6u.
-viz('shaped-pwm', {
+// Waveshaper (Soft clip, Chebyshev, Superellipse, Shaped PWM, …): the transfer curve at the shown
+// waveform's amount, the input's range (level around the bias) shaded.
+viz('mode:shaper', {
   axis: (i) => {
-    const th = 0.8 - 1.6 * i.u;
-    return ['−1', `tanh(${(3 + 20 * i.u).toFixed(0)}·(x ${th < 0 ? '+' : '−'} ${f2(Math.abs(th))}))`, '1'];
+    const a = shaperAt(i.params as unknown as ShaperParams, i.index, i.count);
+    const b = a.bias ? ` · bias ${a.bias < 0 ? '−' : '+'}${f2(Math.abs(a.bias))}` : '';
+    return ['−1', `${SHAPERS[Math.round(i.params.shaper)] ?? ''} · amount ${f2(a.amount)}${b}`, '1'];
   },
   draw: (g, w, h, i, c) => {
-    const a = 3 + 20 * i.u;
-    const th = 0.8 - 1.6 * i.u;
-    transfer(g, w, h, c, (x) => Math.tanh(a * (x - th)));
-    const side = Math.min(w, h);
-    const s = scale(side, side, -1.1, 1.1, -1.1, 1.1);
-    dot(g, (w - side) / 2 + s.x(th), (h - side) / 2 + s.y(0), 3, c.line);
+    const a = shaperAt(i.params as unknown as ShaperParams, i.index, i.count);
+    const f = shaperCurve(i.params.shaper, a.amount);
+    transfer(g, w, h, c, f, a.bias + i.params.level, a.bias - i.params.level);
   },
 });
 

@@ -284,7 +284,8 @@ async function run(label, url, browser) {
 /**
  * Generate → Seed at phone width (and a desktop layout check): compact library row,
  * search, ▲/▼ and arrow-key stepping, formula edit / error / revert, the basis plot (shown
- * for Chebyshev, hidden once edited and for entries without one), a parameter mode,
+ * for Chebyshev, a Waveshaper variant; for a formula preset hidden once edited; none for
+ * entries without one), a parameter mode,
  * the batch strip (arrow keys, scroll into view), Add shown and Add batch recipes.
  * Leaves 20 tables: 5 + 1 (shown) + 8 (batch) + 6 (CA batch); Saw is selected.
  */
@@ -309,13 +310,10 @@ async function seedChecks(page, tlCount) {
     const c = document.querySelector('#seed-basis');
     return !document.querySelector('#seed-basis-plot').hidden && c.width > 1 && c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 === 3 && v);
   }, null, { timeout: 5000 });
-  assert((await page.textContent('#seed-basis-plot .gen-axis')).includes('T₂(x)'), 'basis plot: Chebyshev shows T₂ for the first waveform');
-  await page.fill('#seed-expr', 'sin(p)');
-  await page.waitForFunction(() => document.querySelector('#seed-basis-plot').hidden, null, { timeout: 3000 });
-  assert(true, 'basis plot hidden once the preset formula is edited');
-  await page.click('#seed-revert');
-  await page.waitForFunction(() => !document.querySelector('#seed-basis-plot').hidden, null, { timeout: 3000 });
-  assert(true, 'and back on Revert');
+  assert(
+    (await page.textContent('#seed-kind')) === 'Waveshaper' && (await page.textContent('#seed-basis-plot .gen-axis')).includes('Chebyshev Tₖ · amount 2.00'),
+    'Chebyshev is a Waveshaper starting point; its basis plot shows T₂ for the first waveform',
+  );
 
   // ▲ / ▼.
   await page.click('#seed-down');
@@ -374,6 +372,16 @@ async function seedChecks(page, tlCount) {
     return b.offsetTop >= l.scrollTop && b.offsetTop + b.offsetHeight <= l.scrollTop + l.clientHeight;
   });
   assert(scrolled, 'selected entry scrolled into view');
+  // A formula preset's basis plot hides once its formula is edited (Bytebeat).
+  await page.click('#seed-list .gen-entry[data-id="bytebeat"]');
+  await page.waitForFunction(() => !document.querySelector('#seed-basis-plot').hidden, null, { timeout: 3000 });
+  await page.fill('#seed-expr', 'sin(p)');
+  await page.waitForFunction(() => document.querySelector('#seed-basis-plot').hidden, null, { timeout: 3000 });
+  assert(true, 'basis plot hidden once the preset formula is edited');
+  await page.click('#seed-revert');
+  await page.waitForFunction(() => !document.querySelector('#seed-basis-plot').hidden, null, { timeout: 3000 });
+  assert(true, 'and back on Revert');
+  await page.click('#seed-current');
   await page.click('#seed-list .gen-entry[data-id="sine-saw"]');
   assert((await title()) === 'Math › Sine→saw' && !(await page.isVisible('#seed-list')), 'picking an entry selects it and closes the list');
   await page.waitForFunction(() => document.querySelector('#seed-basis-plot').hidden, null, { timeout: 3000 });

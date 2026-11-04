@@ -37,6 +37,10 @@ export interface SeedEntry {
   readonly asFormula?: string;
   /** The basic wave's waveform function call (its "Built-in function" source), e.g. `saw(p)`. */
   readonly fn?: string;
+  /** Variants: the parameter mode's name (e.g. "Waveshaper"). */
+  readonly family?: string;
+  /** Variants: the formula preset the entry started as (searchable; its defaults reproduce it). */
+  readonly formula?: string;
 }
 
 const slug = (s: string) =>
@@ -60,6 +64,26 @@ const MODES: readonly ParamModeDef[] = PARAM_MODES;
 function modeEntry(m: ParamModeDef): SeedEntry {
   return { id: m.id, cat: m.cat, name: m.name, mode: m.mode as ParamModeId, params: m.params, about: m.about };
 }
+
+/** Formula presets re-made as parameter-mode variants, by preset id. */
+const VARIANTS = new Map<string, SeedEntry>();
+for (const m of MODES)
+  for (const v of m.variants ?? []) {
+    const preset = FORMULA_PRESETS.find((p) => slug(p.name) === v.id);
+    if (!preset) throw new Error(`PARAM_MODES: ${m.mode} variant '${v.id}' names no formula preset`);
+    for (const k of Object.keys(v.values))
+      if (!m.params.some((q) => q.key === k)) throw new Error(`PARAM_MODES: ${m.mode} variant '${v.id}' sets unknown param '${k}'`);
+    VARIANTS.set(v.id, {
+      id: v.id,
+      cat: preset.group,
+      name: preset.name,
+      mode: m.mode as ParamModeId,
+      params: m.params.map((q) => (v.values[q.key] === undefined ? q : { ...q, value: v.values[q.key] })),
+      about: m.about,
+      family: m.name,
+      formula: preset.expr,
+    });
+  }
 
 const BASE_LIBRARY: readonly SeedEntry[] = [
   basic('Sine', 'sine', 'sine(p)', 'The fundamental alone.', 'sin(p)'),
@@ -89,7 +113,7 @@ const BASE_LIBRARY: readonly SeedEntry[] = [
     ],
   },
   ...FORMULA_PRESETS.map(
-    (p): SeedEntry => ({ id: slug(p.name), cat: p.group, name: p.name, mode: 'formula', expr: p.expr }),
+    (p): SeedEntry => VARIANTS.get(slug(p.name)) ?? { id: slug(p.name), cat: p.group, name: p.name, mode: 'formula', expr: p.expr },
   ),
   {
     id: 'perlin-noise',
@@ -123,7 +147,7 @@ const BASE_LIBRARY: readonly SeedEntry[] = [
       { key: 'start', label: 'Start generation', min: 0, max: 64, step: 1, value: 0 },
     ],
   },
-  ...MODES.filter((m) => !m.after).map(modeEntry),
+  ...MODES.filter((m) => !m.after && !m.variants).map(modeEntry),
   { id: 'blank-formula', cat: 'Custom', name: 'Blank formula', mode: 'formula', expr: 'sin(p) + 0.5*sin(2*p)*u' },
 ];
 

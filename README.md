@@ -86,7 +86,10 @@ switches (the choice is remembered).
 
 - **Generate → Seed**: pick from the library (basic waves; Supersaw, a detuned stack of
   1–15 saws, squares or triangles whose voices drift apart across the batch so the
-  wavetable beats like the stack; formula presets by category; Polygon, a regular or star
+  wavetable beats like the stack; formula presets by category — several are starting
+  points in a parameter space instead of fixed formulas (the Shapers are Waveshaper
+  variants: curve, input, level, amount and bias, with batch sweeps), each reproducing
+  its original preset at its defaults; Polygon, a regular or star
   polygon read as its radius or traced at constant speed, with rounded corners; Perlin
   noise, cellular automaton, simulations — dynamical systems, Karplus-Strong,
   reaction-diffusion, Life-like automata — and builders — additive designer, number
@@ -339,6 +342,7 @@ Seed tab, **ƒ Functions** in the legend opens this list.
 | `pulse(x, width)` | pulse, +1 for the first `width` (0 … 1) of the cycle, else −1; band-limited by the pipeline like the Pulse preset |
 | `supersaw(x, voices, drift, outer, wave, phases, seed?)` | detuned stack of 1–15 voices (wave 0 saw · 1 square · 2 triangle), the outermost `drift` cycles off the centre and at level `outer`; phases 0 random · 1 spread · 2 aligned (Supersaw: drift = detune·u) |
 | `polygon(x, sides, star, roundness, rotation, read)` | polygon or star {sides/star} (a shared factor draws a compound); read 0 radius vs angle / 1 the x of the outline traced at constant speed; roundness 0 … 1 rounds the corners; rotation in turns (Polygon) |
+| `shaper(x, curve, amount, bias, level, input)` | waveshaper: curve 0 tanh · 1 Chebyshev Tₖ (amount = order) · 2 power (amount = exponent) · 3 hard clip · 4 wavefold, applied to level·input + bias; input 0 sine · 1 triangle · 2 saw (Waveshaper: Soft clip, Chebyshev, Superellipse, Shaped PWM) |
 | `perlin(x, freq, z, oct, pers, seed?)` | loop-seamless Perlin noise (Perlin noise: z = start + drift·u) |
 | `ca(x, rule, cells, gen, seed?)` | generation `gen` of an elementary cellular automaton as ±1 steps (Cellular automaton: gen = start + n) |
 | `dyn(x, map, control, iters, spread, output)` | chaotic map 0 logistic · 1 sine · 2 circle · 3 Hénon · 4 tent; control 0 … 1; output 0 linear / 1 soft clip (Dynamical systems) |

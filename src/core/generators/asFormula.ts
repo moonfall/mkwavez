@@ -86,6 +86,8 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
       const rot = b === 2 ? lerpExpr(p.rotation, p.rotationEnd) : lit(p.rotation);
       return `polygon(p, ${sides}, ${lit(p.star)}, ${round}, ${rot}, ${lit(p.read)})`;
     }
+    case 'shaper':
+      return `shaper(p, ${lit(p.shaper)}, ${lerpExpr(p.amount, p.amountEnd)}, ${lerpExpr(p.bias, p.biasEnd)}, ${lit(p.level)}, ${lit(p.input)})`;
     case 'perlin': {
       const z = p.zDrift === 0 ? lit(p.z) : p.z === 0 ? `${lit(p.zDrift)}*u` : `${lit(p.z)}+${lit(p.zDrift)}*u`;
       return `perlin(p, ${lit(p.freq)}, ${z}, ${lit(p.octaves)}, ${lit(p.persistence)})`;

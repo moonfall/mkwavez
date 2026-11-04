@@ -14,6 +14,7 @@ import { DEFAULT_LIFE as LF, LIFE_READS, LIFE_RULES, lifeTable, type LifeParams 
 import { DEFAULT_RD as RD, RD_CUSTOM, RD_PRESETS, rdTable, type RdParams } from './reactionDiffusion';
 import { DEFAULT_SPLINE as SP, splineTable, type SplineParams } from './spline';
 import { DEFAULT_POLYGON as PG, POLYGON_BATCHES, POLYGON_READS, polygonTable, type PolygonParams } from './polygon';
+import { DEFAULT_SHAPER as SH, SHAPER_INPUTS, SHAPERS, shaperTable, type ShaperParams } from './shaper';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
@@ -31,6 +32,19 @@ export interface SeedParam {
 
 export type ModeParams = Readonly<Record<string, ParamValue>>;
 
+/**
+ * A formula preset re-made as a starting point in a mode's parameter space: the library
+ * entry keeps the preset's id, name, group and place, renders with the mode at these
+ * values, and its defaults reproduce the preset's batch (at N = 8 where the preset steps
+ * by n).
+ */
+export interface ModeVariant {
+  /** The formula preset it replaces (its library id). */
+  readonly id: string;
+  /** Param values that differ from the mode's defaults. */
+  readonly values: Readonly<Record<string, number>>;
+}
+
 export interface ParamModeDef {
   /** Recipe op and SeedEntry mode. */
   readonly mode: string;
@@ -42,6 +56,8 @@ export interface ParamModeDef {
   readonly about: string;
   /** Library placement: the id of the entry this one follows (default: with the other modes). */
   readonly after?: string;
+  /** Formula presets re-made in this mode; a mode with variants is listed only through them. */
+  readonly variants?: readonly ModeVariant[];
   readonly params: readonly SeedParam[];
   /** True when the seed changes the result for these params. */
   seeded(p: ModeParams): boolean;
@@ -61,6 +77,32 @@ function nums<T extends object>(p: ModeParams, defaults: T): T {
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
 export const PARAM_MODES = [
+  {
+    mode: 'shaper',
+    id: 'waveshaper',
+    cat: 'Shapers',
+    name: 'Waveshaper',
+    about:
+      'An input wave (at a level, plus a bias) through a transfer curve; Amount is the curve’s drive, Chebyshev order, power ' +
+      'exponent, clip gain or fold depth. The batch sweeps the amount and the bias.',
+    params: [
+      { key: 'shaper', label: 'Curve', min: 0, max: SHAPERS.length - 1, step: 1, value: SH.shaper, options: opts(SHAPERS) },
+      { key: 'input', label: 'Input', min: 0, max: SHAPER_INPUTS.length - 1, step: 1, value: SH.input, options: opts(SHAPER_INPUTS) },
+      { key: 'level', label: 'Input level', min: 0.05, max: 1, step: 0.01, value: SH.level },
+      { key: 'amount', label: 'Amount', min: 0.05, max: 24, step: 0.05, value: SH.amount },
+      { key: 'amountEnd', label: 'Batch → amount', min: 0.05, max: 24, step: 0.05, value: SH.amountEnd },
+      { key: 'bias', label: 'Bias', min: -1, max: 1, step: 0.01, value: SH.bias },
+      { key: 'biasEnd', label: 'Batch → bias', min: -1, max: 1, step: 0.01, value: SH.biasEnd },
+    ],
+    variants: [
+      { id: 'soft-clip', values: { shaper: 0, amount: 1, amountEnd: 6 } },
+      { id: 'chebyshev', values: { shaper: 1, level: 0.95, amount: 2, amountEnd: 9 } },
+      { id: 'superellipse', values: { shaper: 2, amount: 0.05, amountEnd: 1 } },
+      { id: 'shaped-pwm', values: { shaper: 0, amount: 3, amountEnd: 23, bias: -0.8, biasEnd: 0.8 } },
+    ],
+    seeded: () => false,
+    render: (p, _seed, index, count) => shaperTable(nums<ShaperParams>(p, SH), index, count),
+  },
   {
     mode: 'supersaw',
     id: 'supersaw',

@@ -168,7 +168,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     idPrefix: 'seed',
     title: 'Library',
     placeholder: 'Search name, category, formula',
-    items: SEED_LIBRARY.map((e) => ({ id: e.id, group: e.cat, name: e.name, tag: tagOf(e), search: `${e.name}\n${e.cat}\n${e.expr ?? ''}` })),
+    items: SEED_LIBRARY.map((e) => ({ id: e.id, group: e.cat, name: e.name, tag: tagOf(e), search: `${e.name}\n${e.cat}\n${e.expr ?? e.formula ?? ''}\n${e.family ?? ''}` })),
     initial: sel,
     onChange: (i, from) => {
       thumbDrawn[from] = thumbDrawn[i] = '';
@@ -402,7 +402,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
 
   const renderEditor = () => {
     const e = entry();
-    edKind.textContent = e.mode === 'formula' ? 'Formula' : e.mode === 'basic' ? 'Basic wave' : 'Parameters';
+    edKind.textContent = e.mode === 'formula' ? 'Formula' : e.mode === 'basic' ? 'Basic wave' : (e.family ?? 'Parameters');
     edPath.textContent = `${e.cat} › ${e.name}`;
     revertBtn.textContent = e.mode === 'formula' || e.mode === 'basic' ? 'Revert to preset' : 'Revert to defaults';
     showEdited(isEdited(e));
@@ -720,7 +720,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
    */
   const drawBasis = (cur: Job | null, i: number, failed: boolean) => {
     const e = entry();
-    const v = e.mode === 'formula' && edits.has(e.id) ? undefined : seedViz(e.id);
+    const v = e.mode === 'formula' && edits.has(e.id) ? undefined : (seedViz(e.id) ?? seedViz(`mode:${e.mode}`));
     // Toggled before any canvas is sized: hiding / showing it resizes the others.
     if (basisPlot.hidden !== !v) {
       basisPlot.hidden = !v;

@@ -256,6 +256,16 @@ describe('parameter modes as functions (Part 2)', () => {
     expect(exact).toEqual(expect.arrayContaining(['pulse', 'supersaw', 'polygon', 'perlin-noise', 'cellular-automaton', 'dynamical-systems', 'karplus-strong', 'additive-designer', 'number-sequences', 'reaction-diffusion', 'life-like-ca', 'spline', 'glyph-contour']));
   });
 
+  it('every variant at its defaults renders like the formula preset it replaced (N = 8, within 1e-6)', () => {
+    const variants = SEED_LIBRARY.filter((e) => e.formula);
+    expect(variants.map((e) => e.id)).toEqual(expect.arrayContaining(['soft-clip', 'chebyshev', 'superellipse', 'shaped-pwm']));
+    for (const e of variants)
+      for (const seed of [1, 0xdeadbeef]) {
+        const gen = seedBatch(req(e, { seed, count: 8 }));
+        formulaBatch(e.formula!, seed, 8).forEach((d, i) => expect(maxDiff(d, gen[i].data), `${e.id} seed ${seed} #${i}`).toBeLessThan(1e-6));
+      }
+  });
+
   it('Polygon at its defaults renders like the formula preset it replaced', () => {
     const old = 'cos(PI/(n+3))/cos((p%(2*PI/(n+3)))-PI/(n+3))';
     const gen = seedBatch(req(seedEntry('polygon')!, { count: 8 }));
@@ -430,7 +440,7 @@ describe('formula recipes', () => {
   });
 
   it('documents every function', () => {
-    expect(WAVE_FUNCTION_NAMES.length).toBe(17);
+    expect(WAVE_FUNCTION_NAMES.length).toBe(18);
     for (const d of WAVE_FUNCTION_DOCS) expect(d.sig.startsWith(`${d.name}(x`)).toBe(true);
     const fx = waveFunctions(1) as unknown as Record<string, unknown>;
     for (const n of WAVE_FUNCTION_NAMES) expect(typeof fx[n]).toBe('function');

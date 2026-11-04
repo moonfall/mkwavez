@@ -33,7 +33,9 @@ describe('Seed library', () => {
   it('has unique ids, every formula preset, and the parameter modes', () => {
     const ids = SEED_LIBRARY.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const p of FORMULA_PRESETS) expect(SEED_LIBRARY.some((e) => e.mode === 'formula' && e.expr === p.expr)).toBe(true);
+    // Every formula preset is in the library: as a formula, or re-made as a parameter-mode variant (same id).
+    for (const p of FORMULA_PRESETS)
+      expect(SEED_LIBRARY.some((e) => (e.mode === 'formula' && e.expr === p.expr) || (e.formula === p.expr && e.name === p.name && e.cat === p.group)), p.name).toBe(true);
     for (const m of ['basic', 'pulse', 'perlin', 'ca'] as const) expect(SEED_LIBRARY.some((e) => e.mode === m)).toBe(true);
     expect(SEED_LIBRARY.at(-1)!.cat).toBe('Custom');
   });
@@ -57,10 +59,10 @@ describe('Seed library', () => {
   });
 
   it('edited formulas and changed params are recorded and re-render', () => {
-    const cheb = seedEntry('chebyshev')!;
-    const r = req(cheb, { expr: 'cos((n+3)*acos(0.9*sin(p)))', count: 4 });
+    const harm = seedEntry('harmonics')!;
+    const r = req(harm, { expr: 'sin((n+2)*p)*0.9', count: 4 });
     const t = seedBatch(r, fnFor(r));
-    expect(t[2].recipe.params).toMatchObject({ expr: r.expr, edited: true, name: 'Chebyshev' });
+    expect(t[2].recipe.params).toMatchObject({ expr: r.expr, edited: true, name: 'Harmonics' });
     t.forEach((x) => expect(same(x.data, renderRecipe(x.recipe, { compileFormula }))).toBe(true));
 
     const cases: [string, Record<string, number>][] = [

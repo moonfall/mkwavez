@@ -25,6 +25,7 @@ export * from './reactionDiffusion';
 export * from './resample';
 export * from './seed';
 export * from './sequences';
+export * from './shaper';
 export * from './simCache';
 export * from './spline';
 export * from './supersaw';

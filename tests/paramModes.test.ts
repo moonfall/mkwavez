@@ -27,6 +27,7 @@ import {
   DEFAULT_SPLINE,
   type SequenceParams,
   PARAM_MODES,
+  type ParamModeDef,
   RESERVED_OPS,
   renderRecipe,
   seedBatch,
@@ -56,19 +57,20 @@ const SQUARE = '0.2,0.2 0.8,0.2 0.8,0.8 0.2,0.8';
 
 describe('parameter modes', () => {
   it('every mode is in the library, re-renders exactly and varies across a batch', () => {
-    for (const m of PARAM_MODES) {
-      const e = seedEntry(m.id);
+    for (const m of PARAM_MODES as readonly ParamModeDef[]) {
+      // A mode with variants is listed through them (its first one stands in).
+      const e = seedEntry(m.variants?.[0].id ?? m.id);
       expect(e, m.id).toBeDefined();
       expect(e!.mode).toBe(m.mode);
       // Glyph contours come from the host (browser tracer): two shapes stand in.
       const inputs = m.mode === 'glyph' ? [{ contour: SQUARE }, { contour: DEFAULT_CONTOUR }, { contour: '0.5,0.9 0.1,0.1 0.9,0.1' }] : undefined;
-      const b = seedBatch({ ...req(m.id, {}, 5), inputs });
+      const b = seedBatch({ ...req(e!.id, {}, 5), inputs });
       b.forEach((t) => {
         expect(t.data.length).toBe(TABLE_SIZE);
         expect(t.data.every(Number.isFinite), m.id).toBe(true);
         expect(t.recipe.op).toBe(m.mode);
         expect(same(t.data, renderRecipe(t.recipe)), m.id).toBe(true);
-        expect(describeRecipe(t.recipe)).toContain(m.name);
+        expect(describeRecipe(t.recipe)).toContain(e!.name);
       });
       expect(maxDiff(b[0].data, b[4].data), `${m.id}: +N varies`).toBeGreaterThan(1e-3);
       // Every param is recorded, so the recipe is complete.
