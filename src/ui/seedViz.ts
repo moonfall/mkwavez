@@ -325,3 +325,19 @@ viz('superellipse', {
     transfer(g, w, h, c, (x) => Math.sign(x) * Math.pow(Math.abs(x), e));
   },
 });
+
+// Shaped PWM: tanh(a·(x − θ)), a = 3 + 20u, θ = 0.8 − 1.6u.
+viz('shaped-pwm', {
+  axis: (i) => {
+    const th = 0.8 - 1.6 * i.u;
+    return ['−1', `tanh(${(3 + 20 * i.u).toFixed(0)}·(x ${th < 0 ? '+' : '−'} ${f2(Math.abs(th))}))`, '1'];
+  },
+  draw: (g, w, h, i, c) => {
+    const a = 3 + 20 * i.u;
+    const th = 0.8 - 1.6 * i.u;
+    transfer(g, w, h, c, (x) => Math.tanh(a * (x - th)));
+    const side = Math.min(w, h);
+    const s = scale(side, side, -1.1, 1.1, -1.1, 1.1);
+    dot(g, (w - side) / 2 + s.x(th), (h - side) / 2 + s.y(0), 3, c.line);
+  },
+});
