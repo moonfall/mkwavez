@@ -367,3 +367,15 @@ viz('cz-phase-dist', {
     dot(g, s.x(d), s.y(0.5), 3, c.line);
   },
 });
+
+// Phase modulation presets: the modulator φ(p) added to the carrier's phase.
+const modulator = (g: CanvasRenderingContext2D, w: number, h: number, c: VizColors, f: (p: number) => number, max: number) => {
+  const s = scale(w, h, 0, TAU, -max, max);
+  rules(g, s, w, h, [Math.PI / 2, Math.PI, 1.5 * Math.PI], [], c.grid);
+  rules(g, s, w, h, [], [0], c.axis);
+  plot(g, s, f, 0, TAU, c.accent, 1.8, 400);
+};
+viz('nested-fm', {
+  axis: (i) => ['0', `φ = ${f2(0.5 + 2 * i.u)}·sin(2p + 2 sin 3p)`, '2π'],
+  draw: (g, w, h, i, c) => modulator(g, w, h, c, (p) => (0.5 + 2 * i.u) * Math.sin(2 * p + 2 * Math.sin(3 * p)), 2.6),
+});
