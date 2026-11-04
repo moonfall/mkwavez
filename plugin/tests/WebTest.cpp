@@ -14,6 +14,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 
 namespace {
@@ -42,7 +43,7 @@ bool waitFor(const std::function<bool()>& done, int timeoutMs, const juce::Strin
     while (!(ok = done()) && juce::Time::getMillisecondCounter() < deadline) {
         if (!juce::detail::dispatchNextMessageOnSystemQueue(true)) juce::Thread::sleep(2);
     }
-    check(ok, what);
+    if (what.isNotEmpty() || !ok) check(ok, what.isNotEmpty() ? what : juce::String("(wait)"));
     return ok;
 }
 
@@ -123,6 +124,8 @@ extern "C" int juce_gtkWebkitMain(int argc, const char* const* argv);
 #endif
 
 int main(int argc, const char* argv[]) {
+    // Native save dialogs write straight into a folder in this test (see WebEditor::saveFile).
+    ::setenv("MKWAVEZ_TEST_SAVE_DIR", juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("mkwavez-webtest-save").getFullPathName().toRawUTF8(), 1);
 #if JUCE_LINUX
     if (argc >= 2 && juce::String(argv[1]) == "--juce-gtkwebkitfork-child") return juce_gtkWebkitMain(argc, argv);
     // Mark this as an app so JUCE starts that child by re-running this executable.
@@ -199,6 +202,54 @@ int main(int argc, const char* argv[]) {
             if (b == 0) m.addEvent(juce::MidiMessage::allNotesOff(1), 0);
         });
         waitFor([&] { a.render(1); return metaOf(*a.proc).contains("\"type\":\"synth\""); }, 10000, "the Synth voice is in the saved session");
+
+        // 7. Browser features the plugin replaces: in-page confirm / prompt (embedded web views
+        //    don't all have them), native save (session export) and open (session import).
+        juce::String evalResult;
+        const auto evalInto = [&](const juce::String& js) {
+            evalResult = "<pending>";
+            a.web()->evaluate(js, [&](juce::WebBrowserComponent::EvaluationResult r) {
+                evalResult = r.getResult() ? r.getResult()->toString() : juce::String("<error>");
+            });
+            waitFor([&] { return evalResult != "<pending>"; }, 5000, {});
+        };
+        a.web()->evaluate("window.__dlg = 'waiting'; mkwavez.ask.prompt('Chain name', 'abc').then((v) => { window.__dlg = v; })");
+        waitFor([&] {
+            evalInto("document.getElementById('app-dialog-input') ? document.getElementById('app-dialog-input').value : ''");
+            return evalResult == "abc";
+        }, 5000, "prompt() shows an in-page dialog with the default value");
+        a.web()->evaluate("document.getElementById('app-dialog-input').value = 'My chain'; document.getElementById('app-dialog-ok').click()");
+        waitFor([&] { evalInto("String(window.__dlg)"); return evalResult == "My chain"; }, 5000, "the dialog returns the typed name");
+        a.web()->evaluate("window.__dlg = 'waiting'; mkwavez.ask.confirm('Delete?').then((v) => { window.__dlg = String(v); }); "
+                          "setTimeout(() => document.getElementById('app-dialog-cancel').click(), 50)");
+        waitFor([&] { evalInto("String(window.__dlg)"); return evalResult == "false"; }, 5000, "confirm() cancel answers false");
+
+        const auto saveDir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("mkwavez-webtest-save");
+        saveDir.deleteRecursively();
+        saveDir.createDirectory();
+        a.web()->evaluate("document.getElementById('session-export').click()");
+        juce::File exported;
+        waitFor([&] {
+            pump(20);
+            const auto files = saveDir.findChildFiles(juce::File::findFiles, false, "*.mkwz");
+            if (!files.isEmpty()) exported = files[0];
+            return exported.existsAsFile() && exported.getSize() > 1000;
+        }, 10000, "Session → Export writes a .mkwz through the native save path");
+
+        // Import it back (after a change, so the import is observable): the same 13 tables + 1.
+        a.web()->evaluate("document.getElementById('seed-add-shown').click()");
+        waitFor([&] { a.render(1); return a.doc([](const auto& d) { return (int) d.tables.size(); }) == afterBatch + 1; }, 10000, "one more table");
+        ::setenv("MKWAVEZ_TEST_OPEN_FILE", exported.getFullPathName().toRawUTF8(), 1);
+        a.web()->evaluate("document.getElementById('session-import').click()");
+        // The import asks first (in-page confirm): accept it.
+        waitFor([&] {
+            evalInto("document.getElementById('app-dialog-ok') ? (document.getElementById('app-dialog-ok').click(), 'ok') : 'no'");
+            return evalResult == "ok";
+        }, 10000, "Session → Import opens the file natively and asks (in-page) before replacing");
+        waitFor([&] { a.render(1); return a.doc([](const auto& d) { return (int) d.tables.size(); }) == afterBatch; }, 10000,
+                "the imported session replaces the current one");
+        ::unsetenv("MKWAVEZ_TEST_OPEN_FILE");
+        saveDir.deleteRecursively();
 
         a.proc->getStateInformation(saved);
         savedProject = metaOf(*a.proc);

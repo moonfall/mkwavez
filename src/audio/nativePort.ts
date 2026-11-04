@@ -34,6 +34,10 @@ export type ToNative =
   | { type: 'session/clear' }
   /** Plugin-only settings (MIDI routing), JSON object of strings. */
   | { type: 'settings'; json: string }
+  /** Save a file through a native dialog (exports: session, presets, shape chains). */
+  | { type: 'file/save'; name: string; data: string }
+  /** Open a file through a native dialog; answered by file/opened (data null = cancelled). */
+  | { type: 'file/open'; id: number; accept: string }
   /** Page errors / warnings, for the native log (MKWAVEZ_WEB_DEBUG=1). */
   | { type: 'log'; level: 'error' | 'warn'; message: string };
 

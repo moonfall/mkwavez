@@ -22,6 +22,10 @@ public:
     /** Periodic (≈30 Hz): status, host transport / automation changes, controller moves. */
     void poll(const Emit& emit);
 
+    /** Native file dialogs (set by the editor): save `data` as `name`; open a file for request `id`. */
+    std::function<void(const juce::String& name, const juce::MemoryBlock& data)> onSaveFile;
+    std::function<void(int id, const juce::String& accept)> onOpenFile;
+
     /** Messages handled / session commits received (diagnostics / tests). */
     int handled() const { return handledCount; }
     int commitsReceived() const { return commitCount; }

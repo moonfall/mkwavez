@@ -4070,3 +4070,38 @@ button.br-clear:hover {
     display: none;
   }
 }
+
+/* ---- in-page confirm / prompt (ui/dialogs.ts; used inside the plugin) ---- */
+.app-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 0.45);
+}
+.app-dialog {
+  width: min(420px, 100%);
+  padding: 14px 16px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.35);
+}
+.app-dialog-text {
+  margin: 0 0 10px;
+  white-space: pre-line;
+  line-height: 1.4;
+}
+.app-dialog-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+}
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

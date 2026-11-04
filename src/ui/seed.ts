@@ -23,6 +23,7 @@ import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from '
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { h, selectField, slider } from './dom';
+import { ask } from './dialogs';
 import { buildLibrary } from './library';
 import { buildShapeOnAdd, SHAPE_CARDS_MS } from './shapeOnAdd';
 
@@ -319,10 +320,10 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   };
 
   /** "Edit as formula": write `expr` into the Blank formula entry (asking before replacing its edits). */
-  const editAsFormula = (e: SeedEntry, expr: string) => {
+  const editAsFormula = async (e: SeedEntry, expr: string) => {
     const ci = SEED_LIBRARY.findIndex((x) => x.id === CUSTOM_ENTRY);
     const prev = edits.get(CUSTOM_ENTRY);
-    if (prev !== undefined && prev !== expr && !confirm(`Replace your Blank formula edits with the ${e.name} formula?`)) return;
+    if (prev !== undefined && prev !== expr && !(await ask.confirm(`Replace your Blank formula edits with the ${e.name} formula?`))) return;
     edits.set(CUSTOM_ENTRY, expr);
     lib.select(ci);
     onEdit();

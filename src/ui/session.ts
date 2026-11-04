@@ -16,6 +16,7 @@ import {
 } from '../core/session';
 import type { UiContext } from './context';
 import { h, icon } from './dom';
+import { ask } from './dialogs';
 
 const hasPopover = typeof HTMLElement !== 'undefined' && 'popover' in HTMLElement.prototype;
 /** A floppy-disk-ish "session" icon. */
@@ -112,7 +113,7 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver, hooks: Sessio
         const { meta, records } = unpackSessionFile(new Uint8Array(await f.arrayBuffer()));
         const { state, warnings } = decodeSession(meta, records);
         const n = state.model.timeline.length;
-        const ok = window.confirm(
+        const ok = await ask.confirm(
           `Replace the current session with “${f.name}” (${n} waveform${n === 1 ? '' : 's'})?\n\n` +
             'The current waveforms, wavetables, voices and sequences are replaced (export them first to keep them). Undo history is cleared.',
         );
@@ -125,7 +126,7 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver, hooks: Sessio
       }
     },
     async newSession() {
-      const ok = window.confirm(
+      const ok = await ask.confirm(
         'Start a new session?\n\nThis clears the current waveforms, wavetables, voices and sequences, and the autosaved copy (export first to keep them).',
       );
       if (!ok) return;
@@ -136,7 +137,7 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver, hooks: Sessio
 
   const newBtn = h('button', { id: 'session-new', class: 'small', onclick: () => void menu.newSession() }, 'New session…');
   const exportBtn = h('button', { id: 'session-export', class: 'small', onclick: () => menu.exportFile() }, 'Export…');
-  const importBtn = h('button', { id: 'session-import', class: 'small', onclick: () => file.click() }, 'Import…');
+  const importBtn = h('button', { id: 'session-import', class: 'small', onclick: () => pickFile(file) }, 'Import…');
   file.addEventListener('change', () => {
     const f = file.files?.[0];
     file.value = '';
@@ -226,8 +227,39 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver, hooks: Sessio
   return menu;
 }
 
-/** Offer bytes as a file download. */
+/** Where files go and come from: the browser's download / file picker, or the plugin's native dialogs. */
+export interface FileHost {
+  save(bytes: Uint8Array, name: string): void;
+  /** Open a file (native dialog); resolves null if cancelled. `accept` as on <input type=file>. */
+  open(accept: string): Promise<File | null>;
+}
+
+let fileHost: FileHost | null = null;
+
+/** Inside the plugin: native save / open dialogs (embedded web views don't all do downloads). */
+export function setFileHost(h: FileHost): void {
+  fileHost = h;
+}
+
+/**
+ * Let the user pick a file for `input` (a hidden <input type=file> whose change handler
+ * reads input.files): the browser's picker, or inside the plugin the native one, whose
+ * result is handed to the same handler.
+ */
+export function pickFile(input: HTMLInputElement): void {
+  if (!fileHost) return input.click();
+  void fileHost.open(input.accept).then((f) => {
+    if (!f) return;
+    const dt = new DataTransfer();
+    dt.items.add(f);
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change'));
+  });
+}
+
+/** Offer bytes as a file download (inside the plugin: a native save dialog). */
 export function downloadBytes(bytes: Uint8Array, name: string): void {
+  if (fileHost) return fileHost.save(bytes, name);
   const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/octet-stream' }));
   const a = h('a', { href: url, download: name });
   document.body.append(a);

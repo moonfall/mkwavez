@@ -62,7 +62,8 @@ import { cssColor, drawWave, fit, fitFixed, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h } from './dom';
 import { popupMenu } from './presets';
-import { downloadBytes } from './session';
+import { downloadBytes, pickFile } from './session';
+import { ask } from './dialogs';
 
 /** Minimum interval between preview restarts while something is dragged. */
 const PREVIEW_MS = 50;
@@ -283,30 +284,30 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       const t = selected();
       return t ? recipeChain(t.recipe) : null;
     })();
-    const saveAs = () => {
-      const name = prompt('Save the chain as', isFactory ? `${c.name} (mine)` : c.name);
+    const saveAs = async () => {
+      const name = await ask.prompt('Save the chain as', isFactory ? `${c.name} (mine)` : c.name);
       if (name === null) return;
       const nm = name.trim().slice(0, MAX_CHAIN_NAME);
-      if (model.savedChainNamed(nm) && !confirm(`Replace your saved chain “${nm}”?`)) return;
+      if (model.savedChainNamed(nm) && !(await ask.confirm(`Replace your saved chain “${nm}”?`))) return;
       const r = model.saveShapeChain(name);
       flash(r ? `Saved “${r.chain.name}”` : 'Not saved: the name is empty or your list is full', !r);
     };
     return [
       menuItem('shape-chain-save', saved ? `Save “${c.name}”` : 'Save…', () => {
-        if (!saved || isFactory) return saveAs();
+        if (!saved || isFactory) return void saveAs();
         model.saveShapeChain(c.name);
         flash(`Saved “${c.name}”`);
       }),
-      menuItem('shape-chain-saveas', 'Save as…', saveAs),
-      menuItem('shape-chain-rename', 'Rename…', () => {
-        const name = prompt('Chain name', c.name);
+      menuItem('shape-chain-saveas', 'Save as…', () => void saveAs()),
+      menuItem('shape-chain-rename', 'Rename…', async () => {
+        const name = await ask.prompt('Chain name', c.name);
         if (name !== null && name.trim()) setChain((x) => ({ ...x, name: name.trim() }));
       }),
       menuItem(
         'shape-chain-delete',
         saved ? `Delete “${saved.chain.name}”` : 'Delete saved chain',
-        () => {
-          if (saved && confirm(`Delete your saved chain “${saved.chain.name}”? (The chain being edited stays.)`)) model.deleteShapeChain(saved.id);
+        async () => {
+          if (saved && (await ask.confirm(`Delete your saved chain “${saved.chain.name}”? (The chain being edited stays.)`))) model.deleteShapeChain(saved.id);
         },
         !saved,
       ),
@@ -319,7 +320,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         srcChain ? srcChain.name : 'the selection wasn’t shaped',
       ),
       menuItem('shape-chain-export', 'Export chains…', () => downloadBytes(new TextEncoder().encode(chainsFile([c, ...model.shapeChains.map((x) => x.chain).filter((x) => x.name !== c.name)])), 'mkwavez-shapes.json'), false, 'this one + yours'),
-      menuItem('shape-chain-import', 'Import chains…', () => chainFile.click()),
+      menuItem('shape-chain-import', 'Import chains…', () => pickFile(chainFile)),
       menuItem('shape-chain-realign', `${c.realign ? '✓ ' : ''}Realign phase`, () => setChain((x) => ({ ...x, realign: !x.realign })), false, c.realign ? 'results in sine phase, like other waveforms' : 'results keep the drawn phase'),
     ];
   });

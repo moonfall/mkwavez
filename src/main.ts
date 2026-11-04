@@ -13,11 +13,12 @@ import { TabLock } from './browser/tabLock';
 import { setTheme, storedTheme, throttle } from './ui/canvas';
 import { UiState, type FrameView, type UiContext } from './ui/context';
 import { h } from './ui/dom';
+import { ask, pageDialogs, setDialogHost } from './ui/dialogs';
 import { buildGenerate } from './ui/generate';
 import { layout } from './ui/layout';
 import { buildMidi } from './ui/midi';
 import { buildSequences } from './ui/sequences';
-import { buildSessionMenu, downloadBytes, showNotice, stamp, type SessionHooks } from './ui/session';
+import { buildSessionMenu, downloadBytes, setFileHost, showNotice, stamp, type SessionHooks } from './ui/session';
 import { installShortcuts } from './ui/shortcuts';
 import { buildTimeline } from './ui/timeline';
 import { buildTransport, togglePlay } from './ui/transport';
@@ -34,6 +35,11 @@ const ctx: UiContext = { model, bridge, ui: new UiState(model) };
 if (plugin) {
   document.documentElement.dataset.host = 'plugin';
   plugin.forwardLogs();
+  // Embedded web views don't all provide confirm / prompt or downloads: in-page dialogs,
+  // native save / open dialogs.
+  setDialogHost(pageDialogs());
+  setFileHost(plugin.files);
+  plugin.onFileMessage = (text) => showNotice(text);
 }
 // Dark by default; an explicit choice (theme toggle) is remembered.
 setTheme(storedTheme() ?? 'dark', false);
@@ -73,7 +79,7 @@ lock.onLost = () => {
 /** Take autosave over from the other tab: this tab's session replaces the saved one. */
 async function takeOver(): Promise<void> {
   if (!boot.store || saver.isActive) return;
-  const ok = window.confirm(
+  const ok = await ask.confirm(
     'Use autosave in this tab?\n\nThis tab’s session replaces the one saved by the other tab, and the other tab stops saving.',
   );
   if (!ok || !(await lock.takeOver())) return;
@@ -135,7 +141,7 @@ const hooks: SessionHooks = {
     }
   },
   async discardKept() {
-    if (!window.confirm('Discard the most recent session that couldn’t be restored? It can’t be recovered afterwards.')) return;
+    if (!(await ask.confirm('Discard the most recent session that couldn’t be restored? It can’t be recovered afterwards.'))) return;
     try {
       const latest = (await boot.store?.keptList())?.at(-1);
       if (latest) await boot.store?.clearKept(latest.key);
@@ -194,7 +200,7 @@ bridge.onStatus = (s) => {
 };
 
 // Debug handle for the console and smoke tests.
-(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, layout, setTheme, midi, webMidi, saver, session, plugin };
+(window as unknown as { mkwavez: unknown }).mkwavez = { model, bridge, ui: ctx.ui, layout, setTheme, midi, webMidi, saver, session, plugin, ask };
 
 for (const n of boot.notices) {
   showNotice(

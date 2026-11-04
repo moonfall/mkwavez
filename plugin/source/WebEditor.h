@@ -21,16 +21,21 @@ public:
     /** For tests: the protocol end (handled message count, connected). */
     const WebLink& link() const { return webLink; }
     /** For tests: run a script in the page. */
-    void evaluate(const juce::String& script) { browser->evaluateJavascript(script); }
+    void evaluate(const juce::String& script, juce::WebBrowserComponent::EvaluationCallback cb = nullptr) {
+        browser->evaluateJavascript(script, std::move(cb));
+    }
 
 private:
     void timerCallback() override;
     void load();
     void emit(const juce::var& message);
+    void saveFile(const juce::String& name, const juce::MemoryBlock& data);
+    void openFile(int id, const juce::String& accept);
 
     MkwavezProcessor& proc;
     WebLink webLink;
     std::unique_ptr<juce::WebBrowserComponent> browser;
+    std::unique_ptr<juce::FileChooser> chooser;
     int generation;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WebEditor)

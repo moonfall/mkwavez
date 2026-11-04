@@ -33,6 +33,7 @@ import { Mix } from '../core/wavetablePlayback';
 import { cssColor, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, voiceColorVar } from './dom';
+import { ask } from './dialogs';
 import { playingMix, voicePositions } from './playing';
 import { addDropZone, beginDrag, consumeDragClick, DRAG_SLOP, isDragging, type DragPoint, type DragSource } from './waveDrag';
 
@@ -252,11 +253,11 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
   });
   const lenInput = h('input', { type: 'number', class: 'wte-num', id: 'wte-len', min: 1, max: MAX_USER_SLOTS, 'aria-label': 'Slots' });
   const lenBox = h('span', { class: 'wte-dim' }, lenInput, h('span', {}, 'slots'));
-  lenInput.addEventListener('change', () => {
+  lenInput.addEventListener('change', async () => {
     const wt = cur();
     const n = Math.max(1, Math.min(MAX_USER_SLOTS, Math.round(Number(lenInput.value) || 1)));
     const lost = droppedBy1DResize(wt, n);
-    if (lost && !confirm(`Shrinking to ${n} slots drops ${lost} waveform${lost === 1 ? '' : 's'} from the end. Continue?`)) {
+    if (lost && !(await ask.confirm(`Shrinking to ${n} slots drops ${lost} waveform${lost === 1 ? '' : 's'} from the end. Continue?`))) {
       syncHeader();
       return;
     }
@@ -266,13 +267,13 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
   const wInput = h('input', { type: 'number', class: 'wte-num', id: 'wte-w', min: 1, max: MAX_GRID, 'aria-label': 'Columns (X)' });
   const hInput = h('input', { type: 'number', class: 'wte-num', id: 'wte-h', min: 1, max: MAX_GRID, 'aria-label': 'Rows (Y)' });
   const gridBox = h('span', { class: 'wte-dim' }, wInput, h('span', {}, '×'), hInput, h('span', { class: 'wte-dim-hint' }, '(X × Y)'));
-  const resizeGrid = () => {
+  const resizeGrid = async () => {
     const wt = cur();
     const clamp = (v: string) => Math.max(1, Math.min(MAX_GRID, Math.round(Number(v) || 1)));
     const W = clamp(wInput.value);
     const H = clamp(hInput.value);
     const lost = droppedBy2DResize(wt, W, H);
-    if (lost && !confirm(`Resizing to ${W} × ${H} drops ${lost} waveform${lost === 1 ? '' : 's'} outside the new grid. Continue?`)) {
+    if (lost && !(await ask.confirm(`Resizing to ${W} × ${H} drops ${lost} waveform${lost === 1 ? '' : 's'} outside the new grid. Continue?`))) {
       syncHeader();
       return;
     }
@@ -315,12 +316,12 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     {
       class: 'small danger',
       id: 'wte-delete',
-      onclick: () => {
+      onclick: async () => {
         const wt = cur();
         if (wt.builtin) return;
         const vs = model.voicesOn(wt.id);
         const msg = `Delete the wavetable “${wt.name}”?${vs.length ? ` ${vs.map((v) => v.name).join(', ')} will switch to the Timeline.` : ''} (Undo brings it back.)`;
-        if (!confirm(msg)) return;
+        if (!(await ask.confirm(msg))) return;
         model.deleteWavetable(wt.id);
       },
     },

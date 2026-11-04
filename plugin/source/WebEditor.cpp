@@ -29,6 +29,25 @@ juce::ZipFile& webZip() {
 
 juce::String devUrl() { return juce::SystemStats::getEnvironmentVariable("MKWAVEZ_WEB_DEV_URL", {}); }
 
+/** An <input accept> list (".mkwz,application/octet-stream") → a FileChooser pattern ("*.mkwz"). */
+juce::String patternFor(const juce::String& accept) {
+    juce::StringArray out;
+    for (auto a : juce::StringArray::fromTokens(accept, ",", "")) {
+        a = a.trim();
+        if (a.startsWithChar('.')) out.add("*" + a);
+    }
+    return out.isEmpty() ? juce::String("*") : out.joinIntoString(";");
+}
+
+juce::var obj(std::initializer_list<std::pair<const char*, juce::var>> props) {
+    auto* o = new juce::DynamicObject();
+    for (const auto& [k, v] : props) o->setProperty(k, v);
+    return juce::var(o);
+}
+
+/** Largest file an import reads (as the session file format's limit). */
+constexpr juce::int64 MAX_OPEN_BYTES = 256 * 1024 * 1024;
+
 } // namespace
 
 std::optional<juce::WebBrowserComponent::Resource> webResource(const juce::String& rawPath) {
@@ -59,6 +78,8 @@ WebEditor::WebEditor(MkwavezProcessor& p) : AudioProcessorEditor(&p), proc(p), w
                        .withEventListener(EVENT, [this](const juce::var& m) { webLink.handle(m, [this](const juce::var& r) { emit(r); }); })
                        .withResourceProvider([](const juce::String& path) { return webResource(path); });
     browser = std::make_unique<juce::WebBrowserComponent>(options);
+    webLink.onSaveFile = [this](const juce::String& name, const juce::MemoryBlock& data) { saveFile(name, data); };
+    webLink.onOpenFile = [this](int id, const juce::String& accept) { openFile(id, accept); };
     addAndMakeVisible(*browser);
     load();
 
@@ -90,6 +111,47 @@ void WebEditor::timerCallback() {
         return;
     }
     if (webLink.connected()) webLink.poll([this](const juce::var& m) { emit(m); });
+}
+
+void WebEditor::saveFile(const juce::String& name, const juce::MemoryBlock& data) {
+    const auto write = [this, name, data](const juce::File& f) {
+        if (f == juce::File()) return; // cancelled
+        const bool ok = f.replaceWithData(data.getData(), data.getSize());
+        emit(obj({{"type", "file/saved"}, {"name", name}, {"path", f.getFullPathName()}, {"error", ok ? juce::var() : juce::var("the file couldn’t be written")}}));
+    };
+    // Tests: save straight into a folder, no dialog.
+    if (const auto dir = juce::SystemStats::getEnvironmentVariable("MKWAVEZ_TEST_SAVE_DIR", {}); dir.isNotEmpty())
+        return write(juce::File(dir).getChildFile(name));
+    const auto start = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(name);
+    chooser = std::make_unique<juce::FileChooser>("Save " + name, start, "*" + start.getFileExtension());
+    chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
+                             juce::FileBrowserComponent::warnAboutOverwriting,
+                         [write](const juce::FileChooser& fc) { write(fc.getResult()); });
+}
+
+void WebEditor::openFile(int id, const juce::String& accept) {
+    const auto read = [this, id](const juce::File& f) {
+        if (f == juce::File()) return emit(obj({{"type", "file/opened"}, {"id", id}, {"data", juce::var()}}));
+        juce::MemoryBlock data;
+        juce::String error;
+        if (!f.existsAsFile())
+            error = "it doesn’t exist";
+        else if (f.getSize() > MAX_OPEN_BYTES)
+            error = "it is too large";
+        else if (!f.loadFileAsData(data))
+            error = "it couldn’t be read";
+        emit(obj({{"type", "file/opened"},
+                  {"id", id},
+                  {"name", f.getFileName()},
+                  {"data", error.isEmpty() ? juce::var(juce::Base64::toBase64(data.getData(), data.getSize())) : juce::var()},
+                  {"error", error.isEmpty() ? juce::var() : juce::var(error)}}));
+    };
+    // Tests: open this file, no dialog.
+    if (const auto path = juce::SystemStats::getEnvironmentVariable("MKWAVEZ_TEST_OPEN_FILE", {}); path.isNotEmpty())
+        return read(juce::File(path));
+    chooser = std::make_unique<juce::FileChooser>("Open", juce::File::getSpecialLocation(juce::File::userDocumentsDirectory), patternFor(accept));
+    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                         [read](const juce::FileChooser& fc) { read(fc.getResult()); });
 }
 
 void WebEditor::paint(juce::Graphics& g) { g.fillAll(theme::bg); }

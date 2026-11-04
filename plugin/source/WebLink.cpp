@@ -112,6 +112,13 @@ void WebLink::handle(const juce::var& m, const Emit& emit) {
             s.meta = {};
             s.records.clear();
         });
+    } else if (type == "file/save") {
+        juce::MemoryOutputStream bytes;
+        const auto name = juce::File::createLegalFileName(m.getProperty("name", "mkwavez").toString());
+        if (juce::Base64::convertFromBase64(bytes, m.getProperty("data", {}).toString()) && onSaveFile)
+            onSaveFile(name.isEmpty() ? juce::String("mkwavez") : name, bytes.getMemoryBlock());
+    } else if (type == "file/open") {
+        if (onOpenFile) onOpenFile((int) m.getProperty("id", 0), m.getProperty("accept", "").toString());
     } else if (type == "settings")
         proc.withSession([&](MkwavezProcessor::Session& s) { s.settings = m.getProperty("json", {}).toString(); });
     else if (type == "batch")

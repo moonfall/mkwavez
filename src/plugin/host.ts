@@ -14,7 +14,7 @@ import type { AudioBridge } from '../audio/bridge';
 import type { NativePort } from '../audio/nativePort';
 import type { FromNative } from '../audio/protocol';
 import type { MidiInputs, WebMidiState } from '../browser/webMidi';
-import { base64ToF32, f32ToBase64 } from '../app/base64';
+import { base64ToBytes, base64ToF32, bytesToBase64, f32ToBase64 } from '../app/base64';
 import { MIDI_STORAGE_KEY, type MidiController, type MidiOutput, type SettingsStore } from '../app/midi';
 import type { AppModel } from '../app/model';
 import type { RestoreStore } from '../app/restore';
@@ -166,6 +166,10 @@ export class PluginHost {
   };
   readonly midiInputs = new HostMidi();
   readonly session: PluginSessionStore;
+  /** Messages for the user about native file saves (the UI shows them as notices). */
+  onFileMessage?: (text: string) => void;
+  private openRequests = new Map<number, (f: File | null) => void>();
+  private nextOpenId = 1;
   private init: InitMessage | null = null;
   private midi: MidiController | null = null;
   private selectedVoice: () => number | null = () => null;
@@ -232,6 +236,22 @@ export class PluginHost {
     await this.bridge.start();
   }
 
+  /**
+   * Native file dialogs (FileHost for ui/session.ts): embedded web views don't all offer
+   * downloads, so exports go to a native save dialog; imports come from a native open dialog.
+   */
+  readonly files = {
+    save: (bytes: Uint8Array, name: string): void => {
+      this.port.send({ type: 'file/save', name, data: bytesToBase64(bytes) });
+    },
+    open: (accept: string): Promise<File | null> =>
+      new Promise((resolve) => {
+        const id = this.nextOpenId++;
+        this.openRequests.set(id, resolve);
+        this.port.send({ type: 'file/open', id, accept });
+      }),
+  };
+
   /** Wire the MIDI controller (after the UI made it): routing to native, CC moves from native. */
   attachMidi(midi: MidiController, selectedVoice: () => number | null, onVoiceTab: (fn: () => void) => void): void {
     this.midi = midi;
@@ -263,7 +283,20 @@ export class PluginHost {
         for (const bytes of m.messages) this.midi?.handle(bytes);
         return;
       default:
+        this.onFileReply(m as unknown as FileReply);
         return;
+    }
+  }
+
+  private onFileReply(m: FileReply): void {
+    if (m.type === 'file/saved') {
+      this.onFileMessage?.(m.error ? `Couldn’t save “${m.name}”: ${m.error}` : `Saved ${m.path ?? m.name}`);
+    } else if (m.type === 'file/opened') {
+      const resolve = this.openRequests.get(m.id);
+      if (!resolve) return;
+      this.openRequests.delete(m.id);
+      if (m.error) this.onFileMessage?.(`Couldn’t open the file: ${m.error}`);
+      resolve(typeof m.data === 'string' && m.name ? new File([base64ToBytes(m.data) as BlobPart], m.name) : null);
     }
   }
 
@@ -326,6 +359,11 @@ export class PluginHost {
     });
   }
 }
+
+/** Native answers to file/save and file/open. */
+type FileReply =
+  | { type: 'file/saved'; name: string; path?: string; error?: string }
+  | { type: 'file/opened'; id: number; name?: string; data?: string | null; error?: string };
 
 /** Voice fields the plugin exposes as host parameters (window / wavetable stay in the UI). */
 const AUTOMATED = new Set<string>([

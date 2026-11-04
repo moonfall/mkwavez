@@ -8,7 +8,8 @@ import type { AppModel } from '../app/model';
 import { FACTORY_PRESETS, parsePresetsFile, presetsFile, type VoicePreset } from '../core/presets';
 import type { VoiceParams } from '../core/voice';
 import { h } from './dom';
-import { downloadBytes } from './session';
+import { downloadBytes, pickFile } from './session';
+import { ask } from './dialogs';
 
 /** The copied voice (shared by every voice tab; per page load). */
 let clip: VoiceParams | null = null;
@@ -123,9 +124,9 @@ export function buildPresetControls(model: AppModel, voice: () => VoiceParams | 
     const v = voice();
     const user = model.voicePresets.find((p) => p.id === chosen);
     return [
-      item('syn-preset-save', 'Save as preset…', () => {
+      item('syn-preset-save', 'Save as preset…', async () => {
         if (!v) return;
-        const name = prompt('Preset name', user?.name ?? `${v.name} sound`);
+        const name = await ask.prompt('Preset name', user?.name ?? `${v.name} sound`);
         if (name === null) return;
         const p = model.savePreset(v.id, name);
         if (p) {
@@ -136,8 +137,8 @@ export function buildPresetControls(model: AppModel, voice: () => VoiceParams | 
       item(
         'syn-preset-delete',
         user ? `Delete “${user.name}”` : 'Delete preset',
-        () => {
-          if (user && confirm(`Delete the preset “${user.name}”?`)) {
+        async () => {
+          if (user && (await ask.confirm(`Delete the preset “${user.name}”?`))) {
             model.deletePreset(user.id);
             chosen = '';
           }
@@ -159,7 +160,7 @@ export function buildPresetControls(model: AppModel, voice: () => VoiceParams | 
         () => downloadBytes(new TextEncoder().encode(presetsFile(model.voicePresets)), 'mkwavez-presets.json'),
         !model.voicePresets.length,
       ),
-      item('syn-preset-import', 'Import presets…', () => file.click()),
+      item('syn-preset-import', 'Import presets…', () => pickFile(file)),
     ];
   });
   model.on('presets', fill);

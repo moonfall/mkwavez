@@ -139,6 +139,8 @@ src/plugin/host.ts          plugin mode: PluginSessionStore (the session backend
 | BPM / Play | host tempo / play state (Host sync) or the Play / BPM parameters |
 | localStorage MIDI settings | saved with the plugin state |
 | IndexedDB autosave (one tab owns it) | the same autosave into the plugin state (one page per instance) |
+| `confirm()` / `prompt()` | an in-page dialog (`ui/dialogs.ts`): macOS WKWebView under JUCE answers them with false / null |
+| downloads / `<input type=file>` (Session, preset and shape-chain export / import) | native save / open dialogs (`FileHost` in `ui/session.ts`, `WebEditor::saveFile` / `openFile`) |
 
 Audio-thread rules carried over: no allocation, no locks, no FFT in `processBlock`; the
 engine uses fixed pools (16 voices, 32 sequences, 64 wavetables, a 16384-slot open-
@@ -175,7 +177,10 @@ addressing table map) instead of Maps.
   parameter reaches the page's model and saved project; the saved state restores in a new
   instance (same timeline, voice parameters, no tables re-sent) and an add there is saved
   again; a MIDI note sounds; a voice switched to Synth in the page plays in stereo in the
-  native engine, is saved, and plays after a restore before the editor opens.
+  native engine, is saved, and plays after a restore before the editor opens; the in-page
+  prompt / confirm answer correctly; Session → Export writes a `.mkwz` through the native
+  save path and Session → Import reads it back through the native open path (the test
+  bypasses the dialogs with `MKWAVEZ_TEST_SAVE_DIR` / `MKWAVEZ_TEST_OPEN_FILE`).
 - **Page side** (`tests/pluginHost.test.ts`, vitest with a fake JUCE backend, running
   main.ts's plugin boot): fresh / restored / unrestorable / silent native side, record
   wire format, autosave to native, transport echo suppression, automation, init values.
@@ -217,8 +222,9 @@ for the plugin; `plugin/core` stays the audio engine (and a base for hardware la
   samples twice (the engine document and the session records); fine for typical sessions,
   ~75 MB at the 4096 cap. A session that can't be restored (e.g. saved by a newer
   version) is set aside in memory only while the editor is open.
-- Session → Export / Import use the browser's download / file picker, which embedded web
-  views may not offer; native file dialogs are a P2 item.
+- The theme and the Timeline thumbnail view are remembered through the web view's
+  localStorage, which (depending on the platform's web view) may not persist between
+  plugin sessions.
 - Not yet tested: real DAWs, pluginval, the macOS / Windows web views (CI builds them;
   the end-to-end web view test runs on Linux only).
 - The browser smoke test's "the strip follows the newest table" check fails in this
