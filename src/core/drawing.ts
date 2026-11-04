@@ -95,6 +95,94 @@ export function lerpDrawing(a: Drawing, b: Drawing, u: number): Drawing {
   return { tool: 'free', pts };
 }
 
+/** Resolution of a StrokeBuffer (bins over x ∈ [0, 1]). */
+const STROKE_BINS = 512;
+
+/**
+ * A freehand stroke as it is drawn: a value per x bin, where each new pointer position fills
+ * the bins between it and the previous one (linear in between) and overwrites what was there.
+ * Going back over the stroke therefore replaces it rather than averaging old and new samples
+ * (which jitters). `seed()` starts from an existing drawing, so a stroke can extend or
+ * overwrite part of it (with a jump where they meet).
+ */
+export class StrokeBuffer {
+  private y = new Float64Array(STROKE_BINS);
+  private set = new Uint8Array(STROKE_BINS);
+  private last: Pt | null = null;
+  private lo = STROKE_BINS;
+  private hi = -1;
+
+  private bin(x: number): number {
+    return Math.max(0, Math.min(STROKE_BINS - 1, Math.round(x * (STROKE_BINS - 1))));
+  }
+
+  private put(i: number, v: number): void {
+    this.y[i] = v;
+    this.set[i] = 1;
+    if (i < this.lo) this.lo = i;
+    if (i > this.hi) this.hi = i;
+  }
+
+  /** Start from an existing drawing over its span (the next point begins a new stroke, unjoined). */
+  seed(d: Drawing): void {
+    const span = drawingSpan(d);
+    if (!span) return;
+    for (let i = this.bin(span[0]); i <= this.bin(span[1]); i++) {
+      const v = drawingValue(d, i / (STROKE_BINS - 1));
+      if (v !== null) this.put(i, v);
+    }
+    this.last = null;
+  }
+
+  /** The pointer moved to p: fill (and overwrite) the bins from the previous point to p. */
+  add(p: Pt): void {
+    const b = this.bin(p[0]);
+    if (!this.last) this.put(b, p[1]);
+    else {
+      const a = this.bin(this.last[0]);
+      const ya = this.last[1];
+      const n = Math.abs(b - a);
+      for (let k = 0; k <= n; k++) {
+        const i = a + Math.sign(b - a) * k;
+        this.put(i, n === 0 ? p[1] : ya + ((p[1] - ya) * k) / n);
+      }
+    }
+    this.last = [p[0], p[1]];
+  }
+
+  /**
+   * The stroke as at most `max` points over its span (bins in between that were never drawn —
+   * a gap between a seeded drawing and a new stroke — are bridged linearly), each the mean of
+   * its share of the bins. Fewer than 2 points = no stroke yet.
+   */
+  points(max = MAX_DRAW_POINTS): Pt[] {
+    if (this.hi < this.lo) return [];
+    if (this.hi === this.lo) return [[this.lo / (STROKE_BINS - 1), this.y[this.lo]]];
+    const vals: number[] = [];
+    let prev = this.lo;
+    for (let i = this.lo; i <= this.hi; i++) {
+      if (this.set[i]) {
+        for (let j = prev + 1; j < i; j++) vals.push(this.y[prev] + ((this.y[i] - this.y[prev]) * (j - prev)) / (i - prev));
+        vals.push(this.y[i]);
+        prev = i;
+      }
+    }
+    const n = vals.length;
+    const m = Math.min(max, n);
+    const out: Pt[] = [];
+    for (let k = 0; k < m; k++) {
+      // Bucket k of m over the bins; the end buckets sit exactly on the span's ends.
+      const a = Math.floor((k * n) / m);
+      const b = Math.max(a + 1, Math.floor(((k + 1) * n) / m));
+      let sum = 0;
+      for (let j = a; j < b; j++) sum += vals[j];
+      const x = k === 0 ? this.lo : k === m - 1 ? this.hi : this.lo + (a + b - 1) / 2;
+      out.push([x / (STROKE_BINS - 1), k === 0 ? vals[0] : k === m - 1 ? vals[n - 1] : sum / (b - a)]);
+    }
+    return out;
+  }
+}
+
 /** A freehand stroke (any order, any length) as at most `max` points: binned along x and averaged. */
 export function resampleStroke(raw: readonly Pt[], max = MAX_DRAW_POINTS): Pt[] {
   const pts = raw.filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1])).sort((a, b) => a[0] - b[0]);

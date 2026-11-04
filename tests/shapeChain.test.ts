@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { KMAX, TABLE_SIZE } from '../src/core/constants';
-import { drawingSpan, drawingValue, drawingWeight, lerpDrawing, MAX_DRAW_POINTS, normalizeDrawing, resampleStroke, type Drawing } from '../src/core/drawing';
+import { drawingSpan, drawingValue, drawingWeight, lerpDrawing, MAX_DRAW_POINTS, normalizeDrawing, resampleStroke, StrokeBuffer, type Drawing } from '../src/core/drawing';
 import { basicWave, generateBasic, renderRecipe } from '../src/core/generators';
 import { mutate } from '../src/core/mutations';
 import { shape } from '../src/core/shape';
@@ -299,5 +299,39 @@ describe('drawing sweeps (start → end drawing)', () => {
     // Limit to curve too.
     const lim = chain([{ ...newStep('harmLimit', 'l'), draw: { tool: 'line', pts: [[0, -6], [1, -6]] }, drawEnd: { tool: 'line', pts: [[0, -40], [1, -40]] } }]);
     expect(maxDiff(applyChain(saw, lim, { index: 0, count: 3 }), applyChain(saw, lim, { index: 2, count: 3 }))).toBeGreaterThan(1e-3);
+  });
+});
+
+describe('StrokeBuffer (freehand strokes)', () => {
+  it('going back over a stroke replaces it cleanly (no averaging jitter)', () => {
+    const sb = new StrokeBuffer();
+    for (let i = 0; i <= 100; i++) sb.add([i / 100, 0]); // forward at 0
+    for (let i = 100; i >= 50; i--) sb.add([i / 100, 1]); // back over the right half at 1
+    const pts = sb.points();
+    expect(pts.length).toBeLessThanOrEqual(MAX_DRAW_POINTS);
+    expect(pts[0]).toEqual([0, 0]);
+    expect(pts.at(-1)).toEqual([1, 1]);
+    const d: Drawing = { tool: 'free', pts };
+    for (let x = 0; x <= 0.45; x += 0.01) expect(drawingValue(d, x)).toBeCloseTo(0, 9);
+    for (let x = 0.55; x <= 1; x += 0.01) expect(drawingValue(d, x)).toBeCloseTo(1, 9);
+    // Monotone across the join: no wiggle.
+    for (let x = 0; x < 0.99; x += 0.005) expect(drawingValue(d, x + 0.005)! - drawingValue(d, x)!).toBeGreaterThanOrEqual(-1e-12);
+  });
+
+  it('a fast jump fills the bins in between; seed() keeps an existing drawing outside the new stroke', () => {
+    const sb = new StrokeBuffer();
+    sb.add([0.1, 0]);
+    sb.add([0.9, 0.8]);
+    const d: Drawing = { tool: 'free', pts: sb.points() };
+    expect(drawingValue(d, 0.5)).toBeCloseTo(0.4, 2);
+    const seeded = new StrokeBuffer();
+    seeded.seed({ tool: 'line', pts: [[0, 0.5], [1, 0.5]] });
+    seeded.add([0.4, -0.5]);
+    seeded.add([0.6, -0.5]);
+    const m: Drawing = { tool: 'free', pts: seeded.points() };
+    expect(drawingSpan(m)).toEqual([0, 1]);
+    expect(drawingValue(m, 0.1)).toBeCloseTo(0.5, 6);
+    expect(drawingValue(m, 0.5)).toBeCloseTo(-0.5, 6);
+    expect(drawingValue(m, 0.9)).toBeCloseTo(0.5, 6);
   });
 });

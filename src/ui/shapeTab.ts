@@ -12,7 +12,7 @@
  */
 import { KMAX } from '../core/constants';
 import { harmonicMagnitudes } from '../core/fft';
-import { drawingSpan, drawingValue, resampleStroke, type Drawing, type DrawTool, type Pt } from '../core/drawing';
+import { drawingSpan, drawingValue, StrokeBuffer, type Drawing, type DrawTool, type Pt } from '../core/drawing';
 import { MUTATION_CHOICES } from '../core/mutations';
 import { randomSeed } from '../core/prng';
 import {
@@ -1284,7 +1284,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   }
   let drawing: {
     pt: [number, number] | null;
-    raw: Pt[] | null;
+    /** A freehand stroke being drawn (later samples overwrite earlier ones at the same x). */
+    raw: StrokeBuffer | null;
     move?: Move;
     drag?: PointDrag;
     stepId: string;
@@ -1406,7 +1407,9 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       commitDraw(drawing.draw);
     } else {
       // Committed once the stroke has length (a tap changes nothing).
-      drawing = { pt: null, raw: [p], stepId: s.id, stroke: strokeNo, draw: d };
+      const sb = new StrokeBuffer();
+      sb.add(p);
+      drawing = { pt: null, raw: sb, stepId: s.id, stroke: strokeNo, draw: d };
     }
   });
   edCanvas.addEventListener('pointermove', (e) => {
@@ -1445,8 +1448,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       const pts = (drawing.draw.pts as [number, number][]).slice().sort((a, b) => a[0] - b[0]);
       drawing.draw = { tool: drawing.draw.tool, pts };
     } else if (drawing.raw) {
-      drawing.raw.push(p);
-      const pts = resampleStroke(drawing.raw);
+      drawing.raw.add(p);
+      const pts = drawing.raw.points();
       if (pts.length < 2) return;
       drawing.draw = { tool: 'free', pts };
     }

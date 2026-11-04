@@ -2317,6 +2317,20 @@ async function shapeChecks(page, tlCount) {
   await page.keyboard.press('a');
   await page.mouse.up();
   assert((await tlCount()) === nA + 1 && (await M(() => window.mkwavez.model.timeline.at(-1).recipe.op)) === 'shape', 'A adds the shown result, also mid-drag');
+  // Freehand: going back over the stroke replaces it (no jitter from averaging old and new).
+  await page.click('#shape-tool-free');
+  // (Away from the current line and its mirrored copy: pressing on them would move the drawing.)
+  await page.mouse.move(box.x + box.width * 0.1, box.y + box.height * 0.6);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.9, box.y + box.height * 0.6, { steps: 25 });
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.45, { steps: 4 });
+  await page.mouse.move(box.x + box.width * 0.5 - 1, box.y + box.height * 0.45, { steps: 1 });
+  await page.mouse.up();
+  const fr = (await chain()).steps[1].draw;
+  const left = fr.pts.filter((q) => q[0] < 0.4).map((q) => q[1]);
+  const right = fr.pts.filter((q) => q[0] > 0.6 && q[0] < 0.88).map((q) => q[1]);
+  const spread = (v) => Math.max(...v) - Math.min(...v);
+  assert(fr.tool === 'free' && left.length > 3 && right.length > 3 && spread(left) < 0.01 && Math.min(...right) > Math.max(...left), `retraced freehand: flat where untouched, replaced where retraced (${spread(left).toFixed(4)}; ${JSON.stringify(fr.pts.filter((q, i) => i % 6 === 0))})`);
 
   // Sweep: N cards, Add +N adds N shape waveforms; the source stays selected.
   await page.click('#shape-sweep');
