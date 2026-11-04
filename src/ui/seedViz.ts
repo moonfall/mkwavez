@@ -7,6 +7,7 @@
  */
 import type { ParamValue } from '../core/table';
 import { parseColor } from './canvas';
+import { fbm, noiseField } from '../core/perlin';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -608,4 +609,40 @@ const PI16 = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3];
 viz('digits-of', {
   axis: (i) => ['', `π digits from #${(i.index % 16) + 1}`, ''],
   draw: (g, w, h, i, c) => valueCells(g, w, h, c, PI16.map((_, j) => PI16[(j + i.index) % 16])),
+});
+
+// Perlin: loop-seamless noise is fBm read around a circle (radius = frequency) in a slice of the field.
+let planeCache: { key: string; rows: Float64Array[] } | null = null;
+const noisePlane = (g: CanvasRenderingContext2D, w: number, h: number, c: VizColors, seed: number, freq: number, z: number, octaves: number, persistence: number) => {
+  const ext = Math.max(2.5, freq * 1.3);
+  const nx = 56;
+  const ny = Math.max(8, Math.round((nx * h) / w));
+  const key = `${seed}|${freq}|${z}|${octaves}|${persistence}|${nx}|${ny}`;
+  if (planeCache?.key !== key) {
+    const f = noiseField(seed);
+    const ey = (ext * ny) / nx;
+    const rows = Array.from({ length: ny }, (_, r) => {
+      const y = ey - (2 * ey * (r + 0.5)) / ny;
+      return Float64Array.from({ length: nx }, (_, k) => fbm(-ext + (2 * ext * (k + 0.5)) / nx + f.ox, y + f.oy, z + f.oz, octaves, persistence));
+    });
+    // Normalise to the slice's own range (fBm's amplitude depends on octaves / persistence).
+    const m = Math.max(1e-9, ...rows.map((r) => Math.max(...r.map(Math.abs))));
+    planeCache = { key, rows: rows.map((r) => r.map((v) => v / m)) };
+  }
+  const heat = heatScale(c);
+  cells(g, 0, 0, w, h, planeCache.rows, (v) => heat(v));
+  const R = (freq / ext) * (w / 2);
+  g.strokeStyle = c.bg;
+  g.lineWidth = 3.5;
+  g.beginPath();
+  g.arc(w / 2, h / 2, R, 0, TAU);
+  g.stroke();
+  g.strokeStyle = c.line;
+  g.lineWidth = 1.5;
+  g.stroke();
+  dot(g, w / 2 + R, h / 2, 3, c.line);
+};
+viz('perlin-noise', {
+  axis: (i) => ['', `circle r ${f2(i.params.freq)} · z ${f2(i.params.z + i.params.zDrift * i.u)}`, ''],
+  draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, i.params.freq, i.params.z + i.params.zDrift * i.u, i.params.octaves, i.params.persistence),
 });
