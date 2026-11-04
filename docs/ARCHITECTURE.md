@@ -732,8 +732,9 @@ the C++ tests compare against, so a change here that alters those numbers fails
   shape() (measured ≤ 4e-9; tested for every mode, random params, seeds and batch sizes).
   Unedited library entries keep rendering through their generators, so defaults and stored
   recipes stay bit-identical (tests/libraryDefaults.test.ts: defaults and random params,
-  generated on main). Whole-cycle generators are memoised per render (`CycleMemo`, LRU 32,
-  plus a last-arguments fast path). Every argument is validated (finite number, glyph's
+  pinned to main's output; it hashes samples rounded to 2^-20 so other Node versions'
+  last-bit Math differences still match). Whole-cycle generators are memoised per render
+  (`CycleMemo`, LRU 32, plus a last-arguments fast path). Every argument is validated (finite number, glyph's
   contour a string: else a RangeError naming function and argument); cost-setting ones are
   bounded (`WAVE_FUNCTION_LIMITS`: what the library entries can ask for at N = 64), and
   `check` — the render's abort deadline — runs before each cycle is generated and between
