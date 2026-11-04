@@ -10,7 +10,7 @@ import type { MidiVoiceEvent } from '../core/midi';
 import { buildMipSet } from '../core/mipmap';
 import type { TableId, WaveTable } from '../core/table';
 import type { VoicePatch } from '../core/voice';
-import type { Wavetable } from '../core/wavetable';
+import { PREVIEW_WAVETABLE_IDS, type Wavetable } from '../core/wavetable';
 import { packWavetable } from '../core/wavetablePlayback';
 import { WorkletPort, type EnginePort } from './port';
 import type { FromWorklet, ToWorklet } from './protocol';
@@ -59,7 +59,15 @@ export class AudioBridge {
     this.port = port;
     model.on('timeline', () => this.syncTables());
     model.on('wavetables', () => this.syncWavetables());
-    model.on('voices', () => this.syncVoices());
+    model.on('voices', () => {
+      // A voice switching to (or off) a preview wavetable changes which preview tables ship.
+      if (this.previewPlayed() !== this.previewShipped) this.syncTables();
+      this.syncVoices();
+    });
+    model.on('preview', () => {
+      this.syncTables();
+      this.syncWavetables();
+    });
     model.on('sequences', () => this.syncSequences());
     model.on('transport', () => this.syncTransport());
   }
@@ -166,9 +174,25 @@ export class AudioBridge {
     this.syncTransport();
   }
 
+  /** Whether a voice (osc A or B) plays a wavetable of preview tables. */
+  private previewPlayed(): boolean {
+    return this.model.voices.some((v) => PREVIEW_WAVETABLE_IDS.includes(v.wavetableId) || PREVIEW_WAVETABLE_IDS.includes(v.synth.b.wavetableId));
+  }
+  private previewShipped = false;
+
+  /**
+   * The tables the engine should hold: the timeline, plus Generate's preview tables while a
+   * voice plays a preview wavetable (they change often while editing: no mips built otherwise).
+   */
+  private engineTables(): readonly WaveTable[] {
+    this.previewShipped = this.previewPlayed();
+    return this.previewShipped ? [...this.model.timeline, ...this.model.previewTables] : this.model.timeline;
+  }
+
   private syncTables(): void {
     if (!this.open) return;
-    const live = new Map<TableId, Float32Array>(this.model.timeline.map((t) => [t.id, t.data]));
+    const tables = this.engineTables();
+    const live = new Map<TableId, Float32Array>(tables.map((t) => [t.id, t.data]));
     const removed = [...this.sentTables].filter(([id, data]) => live.get(id) !== data).map(([id]) => id);
     if (removed.length) {
       for (const id of removed) this.sentTables.delete(id);
@@ -178,8 +202,8 @@ export class AudioBridge {
     const queued = new Set(this.pending.map((t) => t.id));
     // Newest first (and ahead of any backlog) so fresh tables become audible immediately.
     const fresh: WaveTable[] = [];
-    for (let i = this.model.timeline.length - 1; i >= 0; i--) {
-      const t = this.model.timeline[i];
+    for (let i = tables.length - 1; i >= 0; i--) {
+      const t = tables[i];
       if (!this.sentTables.has(t.id) && !queued.has(t.id)) fresh.push(t);
     }
     this.pending = fresh.concat(this.pending);

@@ -9,6 +9,7 @@ import type { ModelState } from '../core/session';
 import { DEFAULT_STEP_LENGTH, emptySteps, isStepLength, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
+import { PREVIEW_ID_BASE } from '../core/wavetable';
 import { chainJson, MAX_CHAIN_NAME, normalizeChain, type ShapeChain } from '../core/shapeChain';
 import { DEFAULT_CHAIN, MAX_SAVED_CHAINS, uniqueName, type SavedChain } from '../core/shapeFactory';
 import { MAX_USER_PRESETS, presetPatch, resolvePresetWavetable, soundOf as presetSoundOf, type PresetSound, type VoicePreset } from '../core/presets';
@@ -67,7 +68,9 @@ import { windowIds } from '../core/wavetablePlayback';
  * 'parents' = the Breed parent list changed (including tables dropping out of the timeline);
  * 'notice' = a non-blocking message for the user (`notice`), e.g. an add refused because
  * the Timeline is full of waveforms that wavetables use;
- * 'shape' = the Shape tab's chain changed (an edit, undo, load).
+ * 'shape' = the Shape tab's chain changed (an edit, undo, load);
+ * 'preview' = the preview tables (Generate's unadded waveforms) and the Preview wavetable
+ * changed (not saved, not undoable; frequent while editing).
  */
 export type Topic =
   | 'timeline'
@@ -80,7 +83,8 @@ export type Topic =
   | 'parents'
   | 'notice'
   | 'presets'
-  | 'shape';
+  | 'shape'
+  | 'preview';
 
 export const MAX_VOICES = 8;
 
@@ -140,6 +144,11 @@ export class AppModel {
   private room: { tl: unknown; wts: unknown; n: number; ok: boolean } | null = null;
 
   private byId = new Map<TableId, WaveTable>();
+  /** Generate's unadded waveforms (ids from PREVIEW_ID_BASE; never saved or undone) and the shown one. */
+  previewTables: readonly WaveTable[] = [];
+  previewShownId: TableId | null = null;
+  private previewById = new Map<TableId, WaveTable>();
+  private nextPreviewId = PREVIEW_ID_BASE;
   private tableIds = new IdAllocator(1);
   private nextVoiceId = 1;
   private nextSeqId = 1;
@@ -171,23 +180,47 @@ export class AppModel {
     for (const t of new Set(topics)) for (const fn of this.listeners.get(t) ?? []) fn();
   }
 
-  /** Keep the Selection wavetable's one slot on the selection; true if it changed. */
+  /**
+   * Keep the derived built-ins on the state they follow (Selection: the selection; Preview:
+   * the shown preview table); true if one changed. Undo and loads restore stale copies, which
+   * this corrects on their emit.
+   */
   private syncDerived(): boolean {
     let changed = false;
-    this.wavetables = this.wavetables.map((w) => {
-      if (w.builtin !== 'selection') return w;
-      const id = this.selectedId !== null && this.byId.has(this.selectedId) ? this.selectedId : null;
+    const one = (id: TableId | null) => (w: Wavetable): Wavetable => {
       if (w.rows.length === 1 && w.rows[0].length === 1 && w.rows[0][0] === id) return w;
       changed = true;
       return { ...w, rows: [[id]] };
-    });
+    };
+    const sel = this.selectedId !== null && this.byId.has(this.selectedId) ? this.selectedId : null;
+    const shown = this.previewShownId !== null && this.previewById.has(this.previewShownId) ? this.previewShownId : null;
+    this.wavetables = this.wavetables.map((w) => (w.builtin === 'selection' ? one(sel)(w) : w.builtin === 'preview' ? one(shown)(w) : w));
     return changed;
+  }
+
+  /**
+   * Generate's current preview: the batch it would add (data per waveform) and the shown one.
+   * Unchanged data keeps its preview table (and id), so the engine only receives new ones.
+   * Not undoable, not saved; emits 'preview'.
+   */
+  setPreview(batch: readonly Float32Array[], shown: number): void {
+    const old = new Map(this.previewTables.map((t) => [t.data, t]));
+    const tables = batch.map((data) => old.get(data) ?? makeTable(this.nextPreviewId++, { data, recipe: { op: 'preview', params: {}, seed: 0, parents: [] } }));
+    const shownId = tables[Math.max(0, Math.min(tables.length - 1, shown))]?.id ?? null;
+    if (shownId === this.previewShownId && tables.length === this.previewTables.length && tables.every((t, i) => t === this.previewTables[i])) return;
+    this.previewTables = tables;
+    this.previewById = new Map(tables.map((t) => [t.id, t]));
+    this.previewShownId = shownId;
+    this.syncDerived();
+    this.emits++;
+    for (const fn of this.listeners.get('preview') ?? []) fn();
   }
 
   // ---- queries ----
 
+  /** A timeline table, or a preview table (Generate's unadded waveforms). */
   table(id: TableId | null): WaveTable | undefined {
-    return id === null ? undefined : this.byId.get(id);
+    return id === null ? undefined : (this.byId.get(id) ?? this.previewById.get(id));
   }
 
   indexOf(id: TableId | null): number {
@@ -204,7 +237,7 @@ export class AppModel {
     const wt = this.wavetable(wtId);
     if (!wt) return undefined;
     const id = cellAt(wt, x, y);
-    return id === null ? undefined : this.byId.get(id);
+    return this.table(id);
   }
 
   /** Tables inside a voice's window (slot order, each once). */
@@ -212,7 +245,7 @@ export class AppModel {
     const wt = this.wavetable(v.wavetableId);
     if (!wt) return [];
     return windowIds(wt, voiceWindow(v))
-      .map((id) => this.byId.get(id))
+      .map((id) => this.table(id))
       .filter((t): t is WaveTable => !!t);
   }
 

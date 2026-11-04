@@ -8,7 +8,7 @@
 import { applyChain, chainJson, type BatchPos, type ShapeChain } from '../core/shapeChain';
 import { FACTORY_CHAINS } from '../core/shapeFactory';
 import type { GeneratedTable } from '../core/table';
-import type { UiContext } from './context';
+import type { GeneratePreview, UiContext } from './context';
 import { h } from './dom';
 import { popupMenu } from './presets';
 
@@ -20,6 +20,24 @@ export interface ShapeOnAdd {
   apply(t: GeneratedTable, b: BatchPos): GeneratedTable;
   /** Like apply(), but undefined if it isn't memoised and `deadline` (performance.now()) has passed: try again next frame. */
   applyWithin(t: GeneratedTable, b: BatchPos, deadline: number): GeneratedTable | undefined;
+}
+
+/**
+ * A Generate tab's preview from its job's tables (null until every one is computed and, with a
+ * Shape chain on, shaped within `budgetMs` this frame; the rest on later frames).
+ */
+export function previewOf(tables: readonly (GeneratedTable | undefined)[], shapeOn: ShapeOnAdd | null, shown: number, budgetMs = 2): GeneratePreview | null {
+  if (!tables.length) return null;
+  const deadline = performance.now() + budgetMs;
+  const batch: Float32Array[] = [];
+  for (let i = 0; i < tables.length; i++) {
+    const raw = tables[i];
+    if (!raw) return null;
+    const t = shapeOn ? shapeOn.applyWithin(raw, { index: i, count: tables.length }, deadline) : raw;
+    if (!t) return null;
+    batch.push(t.data);
+  }
+  return { batch, shown: Math.max(0, Math.min(batch.length - 1, shown)) };
 }
 
 /** Main-thread time a tab's card drawing may spend shaping per frame. */

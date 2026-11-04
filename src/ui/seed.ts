@@ -20,12 +20,12 @@ import {
 import { randomSeed } from '../core/prng';
 import type { GeneratedTable } from '../core/table';
 import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
-import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
+import { isOnScreen, watchVisibility, type GenerateView, type UiContext } from './context';
 import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { h, selectField, slider } from './dom';
 import { ask } from './dialogs';
 import { buildLibrary } from './library';
-import { buildShapeOnAdd, SHAPE_CARDS_MS } from './shapeOnAdd';
+import { buildShapeOnAdd, previewOf, SHAPE_CARDS_MS } from './shapeOnAdd';
 
 /** Minimum interval between preview restarts while typing / dragging. */
 const PREVIEW_MS = 50;
@@ -86,7 +86,7 @@ interface Job {
  * tab is visible, restarted at most every PREVIEW_MS, BUDGET_MS per frame) through the
  * same seedTable() as Add, with the same seed / N, so Add appends exactly what is shown.
  */
-export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLElement; view: FrameView } {
+export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLElement; view: GenerateView } {
   const { model } = ctx;
   // ---- state ----
   let sel = Math.max(
@@ -789,6 +789,10 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   return {
     el,
     view: {
+      preview() {
+        const cur = job && job.key === keyOf(request()) && !job.fatal ? job : null;
+        return cur ? previewOf(cur.tables, shapeOn, strip.shown()) : null;
+      },
       frame(now) {
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;

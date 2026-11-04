@@ -46,7 +46,7 @@ export interface WriteHead {
   readonly y: number;
 }
 
-export type BuiltinKind = 'timeline' | 'lastBatch' | 'batches' | 'grid' | 'selection';
+export type BuiltinKind = 'timeline' | 'lastBatch' | 'batches' | 'grid' | 'selection' | 'preview';
 
 export interface Wavetable {
   readonly id: WavetableId;
@@ -73,6 +73,14 @@ export const BATCHES_WAVETABLE_ID: WavetableId = 2;
 export const GRID_WAVETABLE_ID: WavetableId = 3;
 /** One slot: the Timeline selection (kept in step by the model; not written by adds). */
 export const SELECTION_WAVETABLE_ID: WavetableId = 4;
+/** One slot: the waveform the open Generate tab shows, before it is added (a preview table). */
+export const PREVIEW_WAVETABLE_ID: WavetableId = 5;
+/**
+ * Ids of preview tables (waveforms shown in Generate but not added): a separate range far
+ * above any timeline id, never saved (a restore drops slots whose waveform is missing).
+ */
+export const PREVIEW_ID_BASE = 1 << 30;
+export const isPreviewId = (id: TableId) => id >= PREVIEW_ID_BASE;
 /** First id for user wavetables. */
 export const FIRST_USER_WAVETABLE_ID: WavetableId = 16;
 export const GRID_SIZE = 8;
@@ -86,7 +94,9 @@ export const DEFAULT_WRITE: WriteSettings = { dir: '+x', edge: 'grow', onWrap: '
  *  - Batches: Rows, one row per batch / single add;
  *  - Grid: 2D 8×8, filled in order, wrapping to the next row and overwriting.
  *  - Selection: 1D, one slot holding the Timeline selection (the model keeps it in step;
- *    adds never write it, so it isn't Live).
+ *    adds never write it, so it isn't Live);
+ *  - Preview: 1D, one slot holding the waveform the open Generate tab shows (a preview
+ *    table, not in the timeline; kept in step by the model).
  * Timeline and Batches mirror the timeline and don't pin; Last batch and Grid pin;
  * Selection doesn't pin.
  */
@@ -128,15 +138,19 @@ export function builtinWavetables(): Wavetable[] {
       write: { dir: '+x', edge: 'wrap', onWrap: 'next', mode: 'replace', batch: 'continue' },
     },
     { ...base, id: SELECTION_WAVETABLE_ID, name: 'Selection', shape: '1d', builtin: 'selection', rows: [[null]], fixed: true, pins: false, live: false, write: DEFAULT_WRITE },
+    { ...base, id: PREVIEW_WAVETABLE_ID, name: 'Preview', shape: '1d', builtin: 'preview', rows: [[null]], fixed: true, pins: false, live: false, write: DEFAULT_WRITE },
   ];
 }
 
 /** Built-ins whose contents the model derives from its state (never written by adds, not Live). */
-export const isDerivedBuiltin = (wt: Wavetable) => wt.builtin === 'selection';
+export const isDerivedBuiltin = (wt: Wavetable) => wt.builtin === 'selection' || wt.builtin === 'preview';
+/** Built-ins that hold preview tables (the bridge ships those only while a voice plays one of these). */
+export const PREVIEW_WAVETABLE_IDS: readonly WavetableId[] = [PREVIEW_WAVETABLE_ID];
 
 /** How a wavetable gets its contents, for labels: Live, Frozen, or what a derived built-in follows. */
 export function wavetableMode(wt: Wavetable): string {
   if (wt.builtin === 'selection') return 'Follows the selection';
+  if (wt.builtin === 'preview') return 'Follows Generate (the shown waveform)';
   return wt.live ? 'Live' : 'Frozen';
 }
 /** Whether its contents change by themselves (Live, or derived): the green dot. */

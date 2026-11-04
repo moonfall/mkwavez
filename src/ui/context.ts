@@ -79,6 +79,17 @@ export interface FrameView {
   frame(now: number): void;
 }
 
+/** What a Generate tab would add now: each waveform's data (every one computed) and the shown one. */
+export interface GeneratePreview {
+  batch: readonly Float32Array[];
+  shown: number;
+}
+
+/** A Generate tab's view: frames, plus its current preview (null while not complete). */
+export interface GenerateView extends FrameView {
+  preview(): GeneratePreview | null;
+}
+
 const visible = new WeakMap<Element, boolean>();
 const io =
   typeof IntersectionObserver !== 'undefined'

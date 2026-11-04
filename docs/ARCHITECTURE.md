@@ -209,11 +209,17 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   blend|step, live, write (head settings), head {x, y}, builtin?, pins }`. Slots
   reference timeline table ids (a table may sit in many wavetables / slots); `null` = empty.
   1D = one row (fixed or variable size); 2D = a fixed X×Y grid; Rows = rows of differing
-  lengths. Plain, serializable data (persistence is M5). Built-ins (ids 0–4): Timeline
+  lengths. Plain, serializable data (persistence is M5). Built-ins (ids 0–5): Timeline
   (1D, mirrors the timeline, doesn't pin), Last batch (1D, pins), Batches (Rows, one row
   per batch, doesn't pin), Grid (2D 8×8, pins), Selection (1D, one slot: the Timeline
   selection, kept in step by `AppModel` whenever 'selection' / 'timeline' is emitted; not
-  Live, so adds never write it; doesn't pin); user wavetables get ids from
+  Live, so adds never write it; doesn't pin), Preview (1D, one slot: the waveform the open
+  Generate tab shows, before it is added). Preview waveforms are `AppModel.previewTables`
+  (`setPreview(batch, shown)`, called each frame by generate.ts from the open tab's
+  `preview()`; unchanged data keeps its table), ids from `PREVIEW_ID_BASE` (2^30), topic
+  'preview', never saved or undone (a restore drops their slots); `model.table(id)` resolves
+  them too. The bridge ships them to the engine only while a voice (osc A or B) plays a
+  preview wavetable; user wavetables get ids from
   `AppModel.nextWavetableId` (from 16, monotonic, never reused — not even after an undone
   create or a delete; plain data to persist alongside the wavetables), pin, and start Frozen (`newWavetable`; `duplicateWavetable` copies slots, settings and head of any
   wavetable). Growing writes / inserts stop at `MAX_USER_SLOTS` (1024) slots per user

@@ -15,10 +15,10 @@ import { randomSeed } from '../core/prng';
 import { describeRecipe, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
-import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
+import { isOnScreen, watchVisibility, type GenerateView, type UiContext } from './context';
 import { h, icon, ICONS } from './dom';
 import { buildLibrary } from './library';
-import { buildShapeOnAdd, SHAPE_CARDS_MS } from './shapeOnAdd';
+import { buildShapeOnAdd, previewOf, SHAPE_CARDS_MS } from './shapeOnAdd';
 
 /** Minimum interval between preview restarts while a control is dragged. */
 const PREVIEW_MS = 50;
@@ -108,7 +108,7 @@ interface Job {
  * seed / bias / walk / mode / N, so Add appends exactly what is shown. Add shown / Add +N
  * select the last waveform added.
  */
-export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTMLElement; view: FrameView } {
+export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTMLElement; view: GenerateView } {
   const { model } = ctx;
 
   // ---- state ----
@@ -856,6 +856,10 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   return {
     el,
     view: {
+      preview() {
+        const cur = ready() && job?.key === keyOf(model.breedParents, request()) ? job : null;
+        return cur ? previewOf(cur.tables, shapeOn, strip.shown()) : null;
+      },
       frame(now) {
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;

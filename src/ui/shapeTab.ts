@@ -59,9 +59,10 @@ import { describeRecipe, type GeneratedTable, type WaveTable } from '../core/tab
 import { LAST_BATCH_WAVETABLE_ID, type Cell } from '../core/wavetable';
 import { buildStepper, buildStrip, drawCard, flasher } from './batch';
 import { cssColor, drawWave, fit, fitFixed, onThemeChange } from './canvas';
-import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
+import { isOnScreen, watchVisibility, type GenerateView, type UiContext } from './context';
 import { h } from './dom';
 import { popupMenu } from './presets';
+import { previewOf } from './shapeOnAdd';
 import { downloadBytes, pickFile } from './session';
 import { ask } from './dialogs';
 
@@ -149,7 +150,7 @@ interface Job {
   next: number;
 }
 
-export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTMLElement; view: FrameView } {
+export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTMLElement; view: GenerateView } {
   const { model } = ctx;
   const chain = () => model.shapeChain;
   let selId: string | null = chain().steps[0]?.id ?? null;
@@ -1534,6 +1535,10 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   return {
     el,
     view: {
+      preview() {
+        const cur = job && job.key === keyOf(jobSources(), chain()) ? job : null;
+        return cur ? previewOf(cur.tables, null, strip.shown()) : null;
+      },
       frame(now) {
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;

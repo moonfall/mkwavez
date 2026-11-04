@@ -4,10 +4,10 @@ import { randomSeed } from '../core/prng';
 import { describeRecipe, type GeneratedTable, type WaveTable } from '../core/table';
 import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
-import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
+import { isOnScreen, watchVisibility, type GenerateView, type UiContext } from './context';
 import { h } from './dom';
 import { buildLibrary } from './library';
-import { buildShapeOnAdd, SHAPE_CARDS_MS } from './shapeOnAdd';
+import { buildShapeOnAdd, previewOf, SHAPE_CARDS_MS } from './shapeOnAdd';
 
 /** Minimum interval between preview restarts while a control is dragged. */
 const PREVIEW_MS = 50;
@@ -65,7 +65,7 @@ interface Job {
  * per frame) through the same mutateBatchTable() as Add, with the same seed / amount /
  * mode / N, so Add appends exactly what is shown.
  */
-export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: HTMLElement; view: FrameView } {
+export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: HTMLElement; view: GenerateView } {
   const { model } = ctx;
 
   // ---- state ----
@@ -481,6 +481,10 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   return {
     el,
     view: {
+      preview() {
+        const cur = job && job.key === keyOf(source(), request()) ? job : null;
+        return cur ? previewOf(cur.tables, shapeOn, strip.shown()) : null;
+      },
       frame(now) {
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;

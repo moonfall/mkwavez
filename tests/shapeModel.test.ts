@@ -6,7 +6,7 @@ import { decodeSession, encodeMeta, encodeWaveforms, type SessionMeta } from '..
 import { applyChain, normalizeChain, chainJson } from '../src/core/shapeChain';
 import { chainsFile, DEFAULT_CHAIN, FACTORY_CHAINS, MAX_SAVED_CHAINS, normalizeSavedChains, parseChainsFile } from '../src/core/shapeFactory';
 import { newStep } from '../src/core/shapeSteps';
-import { SELECTION_WAVETABLE_ID } from '../src/core/wavetable';
+import { PREVIEW_ID_BASE, PREVIEW_WAVETABLE_ID, SELECTION_WAVETABLE_ID } from '../src/core/wavetable';
 
 const model = () => {
   const m = new AppModel();
@@ -156,5 +156,38 @@ describe('Selection wavetable', () => {
     const v = m.voices[0];
     m.updateVoice(v.id, { wavetableId: SELECTION_WAVETABLE_ID });
     expect(m.windowTables(m.voice(v.id)!).map((x) => x.id)).toEqual([m.selectedId]);
+  });
+});
+
+describe('Preview wavetable', () => {
+  it('holds the shown preview waveform; unchanged data keeps its id; survives undo; a voice can play it', () => {
+    const m = model();
+    const a = new Float32Array(2048).fill(0.1);
+    const b = new Float32Array(2048).fill(0.2);
+    let n = 0;
+    m.on('preview', () => n++);
+    m.setPreview([a, b], 1);
+    const ids = m.previewTables.map((t) => t.id);
+    expect(ids.every((id) => id >= PREVIEW_ID_BASE)).toBe(true);
+    expect(m.wavetable(PREVIEW_WAVETABLE_ID)!.rows).toEqual([[ids[1]]]);
+    expect(m.table(ids[1])!.data).toBe(b);
+    m.setPreview([a, b], 1); // same: no event
+    expect(n).toBe(1);
+    const c = new Float32Array(2048).fill(0.3);
+    m.setPreview([a, c], 0);
+    expect(m.previewTables[0].id).toBe(ids[0]); // unchanged data, same table
+    expect(m.previewTables[1].id).not.toBe(ids[1]);
+    expect(m.wavetable(PREVIEW_WAVETABLE_ID)!.rows).toEqual([[ids[0]]]);
+    // Undo restores a stale wavetable list; the derived built-in follows the preview again.
+    m.addTables([{ data: m.timeline[0].data, recipe: m.timeline[0].recipe }]);
+    m.setPreview([c], 0);
+    m.undo();
+    expect(m.wavetable(PREVIEW_WAVETABLE_ID)!.rows).toEqual([[m.previewTables[0].id]]);
+    const v = m.voices[0];
+    m.updateVoice(v.id, { wavetableId: PREVIEW_WAVETABLE_ID });
+    expect(m.windowTables(m.voice(v.id)!).map((t) => t.data)).toEqual([c]);
+    // Never saved: a restore drops the preview slot.
+    const st = m.exportState();
+    expect(st.timeline.some((t) => t.id >= PREVIEW_ID_BASE)).toBe(false);
   });
 });

@@ -14,7 +14,7 @@
 // search / stepping / thumbnails, parent chips: Timeline Shift-click / long-press, Add
 // selected, Use window of Vn, reorder by keyboard and drag, remove; bias / walk / custom
 // weights / seed; Sweep / Generation strip, Add shown / Add +N recipes and selection, guards;
-// fits the Generate panel) while playing; evicted parents drop out. Wavetables: the built-ins (Timeline, Last batch, Batches, Grid, Selection) exist, update on
+// fits the Generate panel) while playing; evicted parents drop out. Wavetables: the built-ins (Timeline, Last batch, Batches, Grid, Selection, Preview) exist, update on
 // Seed Add shown / Add batch and show their views; no "Sets window of" checkboxes; V1 on the
 // Grid shows the X/Y pad (sliders move the dot, live dot while playing), the worklet plays it,
 // Step on the wavetable plays one cell; the Voice panel fits at 1440×900 / 1180×820 and 390px
@@ -1987,7 +1987,32 @@ async function wavetableChecks(page) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.waitForTimeout(150);
   const chips = await page.$$eval('#wt-chips [role="option"]', (bs) => bs.map((b) => b.textContent.trim()));
-  assert(chips.join() === 'Timeline,Last batch,Batches,Grid,Selection', `built-in wavetables (${chips.join(', ')})`);
+  assert(chips.join() === 'Timeline,Last batch,Batches,Grid,Selection,Preview', `built-in wavetables (${chips.join(', ')})`);
+  // Preview: Generate's shown, unadded waveform; the engine gets preview tables only while a voice plays it.
+  {
+    await page.click('#tab-seed');
+    await page.waitForFunction(() => {
+      const m = window.mkwavez.model;
+      return m.previewTables.length > 1 && m.wavetable(5).rows[0][0] === m.previewShownId && m.previewShownId !== null;
+    }, null, { timeout: 5000 });
+    assert(true, 'Seed publishes its batch; the Preview wavetable holds the shown waveform');
+    await page.click('#seed-strip .gen-card:nth-child(2)');
+    await page.waitForFunction(() => {
+      const m = window.mkwavez.model;
+      return m.wavetable(5).rows[0][0] === m.previewTables[1].id;
+    }, null, { timeout: 3000 });
+    assert(true, 'showing another card moves the Preview slot');
+    const tlLen = await M(() => window.mkwavez.model.timeline.length);
+    const before = await M(() => window.mkwavez.bridge.workletTableCount);
+    assert(before === tlLen, 'no preview tables in the engine while no voice plays them');
+    const v1 = await M(() => window.mkwavez.model.voices[0].wavetableId);
+    await M(() => window.mkwavez.model.updateVoice(window.mkwavez.model.voices[0].id, { wavetableId: 5 }));
+    await page.waitForFunction((n) => window.mkwavez.bridge.workletTableCount > n, tlLen, { timeout: 5000 });
+    assert(true, 'a voice on Preview: the preview tables reach the engine');
+    await M((id) => window.mkwavez.model.updateVoice(window.mkwavez.model.voices[0].id, { wavetableId: id }), v1);
+    await page.waitForFunction((n) => window.mkwavez.bridge.workletTableCount === n, tlLen, { timeout: 5000 });
+    assert(true, 'and leave it when no voice plays them');
+  }
   // Selection: one slot, the Timeline selection; a voice can play it.
   {
     const r = await M(() => {
@@ -3137,7 +3162,8 @@ async function sessionChecks(label, url, browser) {
         selectedId: m.selectedId,
         bpm: m.bpm,
         voices: m.voices,
-        wavetables: m.wavetables,
+        // The Preview wavetable follows Generate's unadded waveforms: not session state.
+        wavetables: m.wavetables.map((w) => (w.builtin === 'preview' ? { ...w, rows: null } : w)),
         nextWavetableId: m.nextWavetableId,
         sequences: m.sequences,
         voiceTab: ui.voiceId,

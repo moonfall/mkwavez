@@ -1,4 +1,4 @@
-import type { FrameView, UiContext } from './context';
+import type { FrameView, GenerateView, UiContext } from './context';
 import { h, panel } from './dom';
 import { buildBreedPanel } from './breed';
 import { buildMutatePanel } from './mutate';
@@ -112,6 +112,10 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
         mutate.view.frame(now);
         breed.view.frame(now);
         shapeTab.view.frame(now);
+        // The open tab's preview feeds the Preview wavetables (unchanged data is a no-op).
+        const views: Record<string, GenerateView> = { Seed: seed.view, Mutate: mutate.view, Breed: breed.view, Shape: shapeTab.view };
+        const p = views[currentTab]?.preview();
+        if (p) ctx.model.setPreview(p.batch, p.shown);
       },
     },
   };
