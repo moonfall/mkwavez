@@ -434,3 +434,14 @@ viz('weierstrass', {
     layers(g, w, h, c, n, (k, x) => Math.cos(Math.pow(2, k) * TAU * x), Array.from({ length: n }, (_, k) => Math.pow(a, k)));
   },
 });
+
+// Blancmange: terms a^k·tri(2^k·t), k = 0…5, one row each.
+viz('blancmange', {
+  axis: (i) => ['0', `a^k·tri(2^k·t) · a = ${f2(0.4 + 0.4 * i.u)}`, '1'],
+  draw: (g, w, h, i, c) => {
+    const a = 0.4 + 0.4 * i.u;
+    const n = 6;
+    const tri = (v: number) => 4 * Math.abs(((v + 0.5) % 1) - 0.5) - 1;
+    layers(g, w, h, c, n, (k, x) => tri(Math.pow(2, k) * x), Array.from({ length: n }, (_, k) => Math.pow(a, k)));
+  },
+});
