@@ -602,3 +602,10 @@ viz('euclidean-pulses', {
     rhythmCircle(g, w, h, c, Array.from({ length: 16 }, (_, j) => Math.floor((j * k) / 16) - Math.floor(((j - 1) * k) / 16)));
   },
 });
+
+// Digits of π: the 16 digits in playing order from digit n % 16.
+const PI16 = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3];
+viz('digits-of', {
+  axis: (i) => ['', `π digits from #${(i.index % 16) + 1}`, ''],
+  draw: (g, w, h, i, c) => valueCells(g, w, h, c, PI16.map((_, j) => PI16[(j + i.index) % 16])),
+});
