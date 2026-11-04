@@ -233,6 +233,17 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
     const cLine = cssColor('--muted');
     const cNew = cssColor('--new');
     const head = lastWritten(wt);
+    // Play positions: the shown line nearest each voice's position (the caret's line).
+    const carets: { i: number; v: VoiceParams }[] = [];
+    for (const v of voices) {
+      const m = playingMix(model, bridge, v, mix);
+      if (!m.n) continue;
+      let best = 0;
+      slots.forEach((x, i) => {
+        if (Math.abs(x - m.x) < Math.abs(slots[best] - m.x)) best = i;
+      });
+      carets.push({ i: best, v });
+    }
     slots.forEach((x, i) => {
       const id = row[x];
       const x0 = 6 + i * dx;
@@ -257,20 +268,19 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
       g.closePath();
       g.fillStyle = cBg;
       g.fill();
+      // The line a caret points at is drawn full strength (in its voice's colour); the rest
+      // of a voice's window is dimmed so the active wave stands out.
+      const active = carets.find((c) => c.i === i)?.v;
       wave(g, t.data, x0, mid, lw, amp);
-      g.strokeStyle = isHead ? cNew : vs.length ? cssColor(voiceColorVar(vs[0].id - 1)) : cLine;
-      g.lineWidth = isHead || vs.length ? 1.5 : 0.9;
+      g.strokeStyle = isHead ? cNew : active ? cssColor(voiceColorVar(active.id - 1)) : vs.length ? cssColor(voiceColorVar(vs[0].id - 1)) : cLine;
+      g.lineWidth = active ? 2.5 : isHead || vs.length ? 1.5 : 0.9;
+      g.globalAlpha = active || isHead || !vs.length ? 1 : 0.55;
       g.stroke();
+      g.globalAlpha = 1;
       hits.push({ x: x0, y: mid - amp, w: lw, h: Math.max(dy, 4), id });
     });
-    // Play positions: a caret at the left of the line nearest each voice's position.
-    for (const v of voices) {
-      const m = playingMix(model, bridge, v, mix);
-      if (!m.n) continue;
-      let best = 0;
-      slots.forEach((x, i) => {
-        if (Math.abs(x - m.x) < Math.abs(slots[best] - m.x)) best = i;
-      });
+    // A caret at the left of each voice's active line.
+    for (const { i: best, v } of carets) {
       const y = top + best * dy;
       const x0 = 6 + best * dx;
       g.fillStyle = cssColor(voiceColorVar(v.id - 1));
