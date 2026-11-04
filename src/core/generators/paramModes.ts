@@ -17,6 +17,7 @@ import { DEFAULT_POLYGON as PG, POLYGON_BATCHES, POLYGON_READS, polygonTable, ty
 import { DEFAULT_SHAPER as SH, SHAPER_INPUTS, SHAPERS, shaperTable, type ShaperParams } from './shaper';
 import { DEFAULT_FM as FMD, FM_ROUTINGS, fmTable, type FmParams } from './fm';
 import { DEFAULT_PD as PDD, PD_SHAPES, pdTable, type PdParams } from './phaseDistortion';
+import { DEFAULT_RESONANCE as RSD, RESONANCE_WINDOWS, resonanceTable, type ResonanceParams } from './resonance';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
@@ -79,6 +80,26 @@ function nums<T extends object>(p: ModeParams, defaults: T): T {
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
 export const PARAM_MODES = [
+  {
+    mode: 'resonance',
+    id: 'resonance',
+    cat: 'Voice',
+    name: 'Resonance',
+    about:
+      'A sine at Ratio times the cycle’s frequency under a window that restarts every cycle (the CZ’s resonant waves); ' +
+      'a non-integer ratio leaves a step at the restart. The batch sweeps the ratio.',
+    params: [
+      { key: 'window', label: 'Window', min: 0, max: RESONANCE_WINDOWS.length - 1, step: 1, value: RSD.window, options: opts(RESONANCE_WINDOWS) },
+      { key: 'ratio', label: 'Ratio', min: 1, max: 24, step: 0.05, value: RSD.ratio },
+      { key: 'ratioEnd', label: 'Batch → ratio', min: 1, max: 24, step: 0.05, value: RSD.ratioEnd },
+    ],
+    variants: [
+      { id: 'cz-resonance-sine-window', values: {} },
+      { id: 'cz-resonance-saw-window', values: { window: 1 } },
+    ],
+    seeded: () => false,
+    render: (p, _seed, index, count) => resonanceTable(nums<ResonanceParams>(p, RSD), index, count),
+  },
   {
     mode: 'pd',
     id: 'phase-distortion',

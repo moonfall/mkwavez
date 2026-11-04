@@ -92,6 +92,8 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
       return `fm(p, ${lit(p.carrier)}, ${lit(p.ratio)}, ${lerpExpr(p.index, p.indexEnd)}, ${lit(p.ratio2)}, ${lit(p.amount2)}, ${lit(p.routing)})`;
     case 'pd':
       return `pd(p, ${lit(p.shape)}, ${lerpExpr(p.amount, p.amountEnd)})`;
+    case 'resonance':
+      return `resonance(p, ${lit(p.window)}, ${lerpExpr(p.ratio, p.ratioEnd)})`;
     case 'perlin': {
       const z = p.zDrift === 0 ? lit(p.z) : p.z === 0 ? `${lit(p.zDrift)}*u` : `${lit(p.z)}+${lit(p.zDrift)}*u`;
       return `perlin(p, ${lit(p.freq)}, ${z}, ${lit(p.octaves)}, ${lit(p.persistence)})`;
