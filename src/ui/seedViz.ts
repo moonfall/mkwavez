@@ -389,3 +389,16 @@ viz('fm-sweep', {
   axis: (i) => ['0', `φ = ${f2(4 * i.u)}·sin 2p`, '2π'],
   draw: (g, w, h, i, c) => modulator(g, w, h, c, (p) => 4 * i.u * Math.sin(2 * p), 4.2),
 });
+
+// Hard sync: a slave at ratio r = 1 + 3u restarted every master cycle (two cycles shown).
+viz('sync-sweep', {
+  axis: (i) => ['0', `slave ×${f2(1 + 3 * i.u)}, reset each cycle`, '4π'],
+  draw: (g, w, h, i, c) => {
+    const r = 1 + 3 * i.u;
+    const s = scale(w, h, 0, 2 * TAU, -1.1, 1.1);
+    rules(g, s, w, h, [TAU], [], c.axis);
+    rules(g, s, w, h, [], [0], c.grid);
+    plot(g, s, (p) => Math.sin(r * p), 0, 2 * TAU, c.muted, 1, 400, [3, 3]);
+    plot(g, s, (p) => (p % TAU < 1e-9 && p > 0 ? NaN : Math.sin(r * (p % TAU))), 0, 2 * TAU, c.accent, 1.8, 800);
+  },
+});
