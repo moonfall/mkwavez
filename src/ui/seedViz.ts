@@ -527,3 +527,32 @@ viz('logistic-map', {
     rules(g, s, w, h, [3.5 + 0.5 * i.u], [], c.accent);
   },
 });
+
+// Iterated sine map: f(x) = sin(π(1+u)x) with the identity and a cobweb of 3 + n steps from x₀ = 0.6.
+viz('iterated-sine-map', {
+  axis: (i) => ['−1', `x → sin(${f2(1 + i.u)}π·x) · ${3 + i.index} steps`, '1'],
+  draw: (g, w, h, i, c) => {
+    const a = Math.PI * (1 + i.u);
+    const side = Math.min(w, h);
+    const s = scale(side, side, -1.1, 1.1, -1.1, 1.1);
+    g.save();
+    g.translate((w - side) / 2, (h - side) / 2);
+    rules(g, s, side, side, [0], [0], c.axis);
+    plot(g, s, (x) => x, -1.1, 1.1, c.muted, 1, 2, [3, 3]);
+    plot(g, s, (x) => Math.sin(a * x), -1.1, 1.1, c.line, 1.4, 300);
+    g.strokeStyle = c.accent;
+    g.lineWidth = 1.2;
+    g.beginPath();
+    let x = 0.6;
+    g.moveTo(s.x(x), s.y(0));
+    for (let k = 0; k < 3 + i.index; k++) {
+      const y = Math.sin(a * x);
+      g.lineTo(s.x(x), s.y(y));
+      g.lineTo(s.x(y), s.y(y));
+      x = y;
+    }
+    g.stroke();
+    dot(g, s.x(x), s.y(x), 3, c.accent);
+    g.restore();
+  },
+});
