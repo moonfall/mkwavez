@@ -9,6 +9,7 @@ import type { ParamValue } from '../core/table';
 import { parseColor } from './canvas';
 import { fbm, noiseField } from '../core/perlin';
 import { caRows } from '../core/generators';
+import { DYN_MAP_LABELS, dynControl, dynIterate } from '../core/generators';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -683,5 +684,41 @@ viz('cellular-automaton', {
     const top = (h - rh * rows.length) / 2;
     cells(g, 0, top, w, rh * rows.length, rows, (v, r) => (v ? (r === shown ? c.accent : c.line) : null));
     if (shown >= 0) rowMark(g, 0, top, w, rh * rows.length, rows.length, shown, c.accent);
+  },
+});
+
+// Dynamical systems: the map's bifurcation diagram over control 0…1 (normalised), batch range shaded.
+let dynCache: { key: string; img: ImageData } | null = null;
+viz('dynamical-systems', {
+  axis: (i) => {
+    const cv = i.params.control + (i.params.controlEnd - i.params.control) * i.u;
+    return ['0', `${DYN_MAP_LABELS[Math.round(i.params.map)] ?? ''} · control ${f2(cv)}`, '1'];
+  },
+  draw: (g, w, h, i, c) => {
+    const map = Math.round(i.params.map);
+    const lim = map === 3 ? 1.6 : 1.05;
+    const s = scale(w, h, 0, 1, -lim, lim);
+    const d = window.devicePixelRatio || 1;
+    const key = `${map}|${i.params.spread}|${w}|${h}|${d}|${c.line}`;
+    if (dynCache?.key !== key) {
+      g.fillStyle = c.line;
+      g.globalAlpha = 0.45;
+      for (let px = 0; px < w; px += 1) {
+        const k = dynControl(map, px / w);
+        for (let n = 40; n < 104; n += 2) for (const ph of [0.7, 2.3]) {
+          const v = dynIterate(map, k, n, i.params.spread, ph);
+          if (Number.isFinite(v)) g.fillRect(px, s.y(v), 1, 1);
+        }
+      }
+      g.globalAlpha = 1;
+      dynCache = { key, img: g.getImageData(0, 0, Math.round(w * d), Math.round(h * d)) };
+    } else g.putImageData(dynCache.img, 0, 0);
+    const a = Math.min(i.params.control, i.params.controlEnd);
+    const b = Math.max(i.params.control, i.params.controlEnd);
+    g.fillStyle = c.accent;
+    g.globalAlpha = 0.12;
+    g.fillRect(s.x(a), 0, Math.max(1, s.x(b) - s.x(a)), h);
+    g.globalAlpha = 1;
+    rules(g, s, w, h, [i.params.control + (i.params.controlEnd - i.params.control) * i.u], [], c.accent);
   },
 });

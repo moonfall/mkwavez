@@ -98,6 +98,14 @@ function iterate(map: DynMap, k: number, iters: number, spread: number, ph: numb
 }
 
 /**
+ * One orbit sample for display (Seed's bifurcation diagram): map index `map`, the map's own
+ * control `k` (dynControl), `iters` steps from the initial value at phase `ph`.
+ */
+export function dynIterate(map: number, k: number, iters: number, spread: number, ph: number): number {
+  return iterate(DYN_MAPS[Math.round(map)] ?? 'logistic', k, iters, clamp(spread, 0.01, 1), ph);
+}
+
+/**
  * Table `index` of a batch: the control sweeps control → controlEnd across it. Where the
  * map settles on a fixed point (e.g. low r with many iterations) the cycle would be a
  * constant, i.e. silence after shaping: the iterations are halved until the transient
