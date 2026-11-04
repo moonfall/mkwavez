@@ -36,6 +36,7 @@ import {
   seriesAt,
   seriesHarmonics,
   sequenceValues,
+  sequenceValuesAt,
   splinePoints,
   splineRaw,
   polygonAt,
@@ -733,11 +734,10 @@ viz('euclidean-pulses', {
   },
 });
 
-// Digits of π: the 16 digits in playing order from digit n % 16.
-const PI16 = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3];
+// Digits of π: waveform n plays digits 16n + 1 … 16n + 16 (seq(p, 0, 16, 0, 16*n)).
 viz('digits-of', {
-  axis: (i) => ['', `π digits from #${(i.index % 16) + 1}`, ''],
-  draw: (g, w, h, i, c) => valueCells(g, w, h, c, PI16.map((_, j) => PI16[(j + i.index) % 16])),
+  axis: (i) => ['', `π digits ${16 * i.index + 1}–${16 * i.index + 16}`, ''],
+  draw: (g, w, h, i, c) => valueCells(g, w, h, c, sequenceValuesAt(0, 16, 16 * i.index, 5)),
 });
 
 // Perlin: loop-seamless noise is fBm read around a circle (radius = frequency) in a slice of the field.

@@ -6,7 +6,7 @@
  * Chebyshev sweeps odd orders (even Tₖ of a sine has even harmonics only: an octave up),
  * Superformula reads the shape off-centre (its 6-fold symmetry otherwise sounds 31
  * semitones up) and sweeps n2 = n3 from 3 (at 2 the shape is a circle: silent from the
- * centre), Logistic map starts asymmetrically (its symmetry about ½ otherwise
+ * centre), Digits of π reads a new 16-digit window per waveform (n only rotated one), Logistic map starts asymmetrically (its symmetry about ½ otherwise
  * leaves even harmonics only).
  */
 export interface FormulaPreset {
@@ -107,5 +107,7 @@ export const FORMULA_PRESETS: readonly FormulaPreset[] = [
     name: 'Euclidean pulses',
     expr: '(floor(floor(t*16)*(1+(4+n)%15)/16)-floor((floor(t*16)-1)*(1+(4+n)%15)/16))*2-1',
   },
-  { group: 'Sequence', name: 'Digits of π', expr: '[3,1,4,1,5,9,2,6,5,3,5,8,9,7,9,3][(floor(t*16)+n)%16]/4.5-1' },
+  // 16 digits per waveform, the next 16 for the next one (shifting one window by n only
+  // rotated it, which shape()'s phase alignment undoes: 8 identical waveforms).
+  { group: 'Sequence', name: 'Digits of π', expr: 'seq(p, 0, 16, 0, 16*n)' },
 ];

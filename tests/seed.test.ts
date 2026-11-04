@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileFormula } from '../src/browser/formulaEval';
-import { TABLE_SIZE } from '../src/core/constants';
+import { KMAX, TABLE_SIZE } from '../src/core/constants';
+import { harmonicMagnitudes } from '../src/core/fft';
 import {
   FormulaAborted,
   FormulaError,
@@ -66,6 +67,37 @@ describe('Seed library', () => {
         const r = req(entry, { seed, count: 8 });
         seedBatch(r, fnFor(r)).forEach((t, i) => expect(Math.max(...Array.from(t.data, Math.abs)), `${entry.id} seed ${seed} #${i}`).toBeGreaterThan(0.5));
       }
+  });
+
+  it('every default batch moves: no two consecutive waveforms share a magnitude spectrum (basic waves excepted)', () => {
+    // dB re the strongest harmonic, floored at −40 (rotations and phase changes don't count).
+    const db = (x: Float32Array) => {
+      const m = harmonicMagnitudes(x, KMAX);
+      const mx = Math.max(...m);
+      return Array.from(m.slice(1), (v) => Math.max(-40, 20 * Math.log10(v / mx + 1e-12)));
+    };
+    for (const entry of SEED_LIBRARY) {
+      if (entry.mode === 'basic' || entry.mode === 'glyph') continue; // single waveform by design; glyphs need the host's contours
+      const r = req(entry, { seed: 24301, count: 8 });
+      const spectra = seedBatch(r, fnFor(r)).map((t) => db(t.data));
+      for (let i = 1; i < spectra.length; i++) {
+        const d = Math.max(...spectra[i].map((v, k) => Math.abs(v - spectra[i - 1][k])));
+        expect(d, `${entry.id} #${i} vs #${i - 1}`).toBeGreaterThan(0.5);
+      }
+    }
+  });
+
+  it('Digits of π: each waveform reads the next 16 digits', () => {
+    const e = seedEntry('digits-of')!;
+    expect(e.mode).toBe('formula');
+    const r = req(e, { count: 3 });
+    const got = seedBatch(r, fnFor(r));
+    // The same steps written out (the original preset's form): digits 1–16, 17–32, 33–48.
+    ['3141592653589793', '2384626433832795', '0288419716939937'].forEach((digits, i) => {
+      const expr = `[${digits.split('').join(',')}][floor(t*16)]/4.5-1`;
+      const want = seedTable(req(e, { expr, count: 3 }), i, compileFormula(expr)).data;
+      expect(Math.max(...Array.from(want, (v, j) => Math.abs(v - got[i].data[j]))), `window ${i}`).toBeLessThan(1e-6);
+    });
   });
 
   it('Superformula read from the centre: the default sweep never passes the circle (n2 = n3 = 2, silent)', () => {
