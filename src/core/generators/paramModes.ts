@@ -20,6 +20,7 @@ import { DEFAULT_PD as PDD, PD_SHAPES, pdTable, type PdParams } from './phaseDis
 import { DEFAULT_RESONANCE as RSD, RESONANCE_WINDOWS, resonanceTable, type ResonanceParams } from './resonance';
 import { DEFAULT_SUPERFORMULA as SFD, superformulaTable, type SuperformulaParams } from './superformula';
 import { DEFAULT_FRACTAL as FRD, FRACTAL_BASES, fractalTable, type FractalParams } from './fractal';
+import { DEFAULT_SYNC as SYD, SYNC_WAVES, syncTable, type SyncParams } from './sync';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
@@ -82,6 +83,23 @@ function nums<T extends object>(p: ModeParams, defaults: T): T {
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
 export const PARAM_MODES = [
+  {
+    mode: 'sync',
+    id: 'hard-sync',
+    cat: 'Math',
+    name: 'Hard sync',
+    about:
+      'A slave oscillator at Ratio times the cycle’s frequency, restarted every cycle; a non-integer ratio leaves the ' +
+      'jump at the restart that gives sync its edge. The batch sweeps the ratio.',
+    params: [
+      { key: 'wave', label: 'Slave wave', min: 0, max: SYNC_WAVES.length - 1, step: 1, value: SYD.wave, options: opts(SYNC_WAVES) },
+      { key: 'ratio', label: 'Ratio', min: 0.25, max: 16, step: 0.01, value: SYD.ratio },
+      { key: 'ratioEnd', label: 'Batch → ratio', min: 0.25, max: 16, step: 0.01, value: SYD.ratioEnd },
+    ],
+    variants: [{ id: 'sync-sweep', values: {} }],
+    seeded: () => false,
+    render: (p, _seed, index, count) => syncTable(nums<SyncParams>(p, SYD), index, count),
+  },
   {
     mode: 'fractal',
     id: 'fractal-sum',

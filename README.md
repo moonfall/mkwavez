@@ -348,6 +348,7 @@ Seed tab, **ƒ Functions** in the legend opens this list.
 | `resonance(x, window, ratio)` | sin(ratio·x) under a window restarting every cycle: 0 raised cosine · 1 saw (falling) · 2 triangle · 3 trapezoid (Resonance: the CZ resonance presets) |
 | `superformula(x, m, n1, n2, n3)` | Gielis superformula radius vs angle, (\|cos(mx/4)\|^n2 + \|sin(mx/4)\|^n3)^(−1/n1) (Superformula) |
 | `fractal(x, base, ratio, terms, decay)` | Σ decay^k · f(ratio^k · x), k < terms: base 0 cosine (Weierstrass) · 1 triangle (Takagi / blancmange) · 2 sine · 3 square (Fractal sum: Weierstrass, Blancmange) |
+| `sync(x, wave, ratio)` | hard sync: a slave 0 sine · 1 triangle · 2 saw · 3 square at `ratio` × the cycle, restarted every cycle (Hard sync: Sync sweep) |
 | `perlin(x, freq, z, oct, pers, seed?)` | loop-seamless Perlin noise (Perlin noise: z = start + drift·u) |
 | `ca(x, rule, cells, gen, seed?)` | generation `gen` of an elementary cellular automaton as ±1 steps (Cellular automaton: gen = start + n) |
 | `dyn(x, map, control, iters, spread, output)` | chaotic map 0 logistic · 1 sine · 2 circle · 3 Hénon · 4 tent; control 0 … 1; output 0 linear / 1 soft clip (Dynamical systems) |

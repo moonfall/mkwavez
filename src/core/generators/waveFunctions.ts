@@ -43,6 +43,7 @@ import { SPLINE_MAX_POINTS, splinePointsAt, splineRaw } from './spline';
 import { SUPERSAW_MAX_VOICES, supersawRaw } from './supersaw';
 import { POLYGON_MAX_SIDES, polygonRaw } from './polygon';
 import { SHAPERS, SHAPER_INPUTS, shaperRaw } from './shaper';
+import { syncRaw, SYNC_WAVES } from './sync';
 import { FRACTAL_BASES, fractalRaw } from './fractal';
 import { superformulaRaw } from './superformula';
 import { resonanceRaw, RESONANCE_WINDOWS } from './resonance';
@@ -65,6 +66,7 @@ export interface WaveFunctions {
   resonance(x: number, window?: number, ratio?: number): number;
   superformula(x: number, m?: number, n1?: number, n2?: number, n3?: number): number;
   fractal(x: number, base?: number, ratio?: number, terms?: number, decay?: number): number;
+  sync(x: number, wave?: number, ratio?: number): number;
   perlin(x: number, freq?: number, z?: number, oct?: number, pers?: number, seed?: number): number;
   ca(x: number, rule?: number, cells?: number, gen?: number, seed?: number): number;
   dyn(x: number, map?: number, control?: number, iters?: number, spread?: number, output?: number): number;
@@ -125,6 +127,7 @@ export const WAVE_FUNCTION_DOCS: readonly WaveFunctionDoc[] = [
     sig: 'fractal(x, base, ratio, terms, decay)',
     about: 'Σ decay^k·f(ratio^k·x), base 0 cosine · 1 triangle · 2 sine · 3 square, terms 1–16 (Fractal sum)',
   },
+  { name: 'sync', sig: 'sync(x, wave, ratio)', about: 'hard-synced slave 0 sine · 1 triangle · 2 saw · 3 square at `ratio` (Hard sync)' },
   { name: 'perlin', sig: 'perlin(x, freq, z, oct, pers, seed?)', about: 'loop-seamless Perlin noise (Perlin noise)' },
   { name: 'ca', sig: 'ca(x, rule, cells, gen, seed?)', about: 'generation `gen` (0–1000) of an elementary cellular automaton (Cellular automaton)' },
   { name: 'dyn', sig: 'dyn(x, map, control, iters, spread, output)', about: 'chaotic map 0–4, control 0–1, iters 1–64 (Dynamical systems)' },
@@ -391,6 +394,7 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
   const resonanceC = cycleFn('resonance', ([win, ratio]) => resonanceRaw(n(win), n(ratio)));
   const superformulaC = cycleFn('superformula', ([m, n1, n2, n3]) => superformulaRaw(n(m), n(n1), n(n2), n(n3)));
   const fractalC = cycleFn('fractal', ([base, ratio, terms, decay]) => fractalRaw(n(base), n(ratio), n(terms), n(decay)));
+  const syncC = cycleFn('sync', ([wave, ratio]) => syncRaw(n(wave), n(ratio)));
   const glyphC = cycleFn('glyph', ([contour, skew]) => glyphRaw(contourPoints(String(contour)), n(skew)));
 
   return {
@@ -454,6 +458,8 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
         Math.round(num('fractal', 'terms', terms, 7, 1, 16)),
         num('fractal', 'decay', decay, 0.5),
       ]),
+    sync: (x, wave, ratio) =>
+      syncC(phase('sync', x), [Math.round(num('sync', 'wave', wave, 0, 0, SYNC_WAVES.length - 1)), num('sync', 'ratio', ratio, 2, -256, 256)]),
     perlin: (x, freq, z, oct, pers, s) => {
       phase('perlin', x);
       const a = [

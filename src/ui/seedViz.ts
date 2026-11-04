@@ -45,6 +45,9 @@ import {
   superformulaRadius,
   supersawLevel,
   supersawPhases,
+  SYNC_WAVES,
+  syncRatio,
+  syncWave,
   type Board,
   type FmParams,
   type FractalParams,
@@ -58,6 +61,7 @@ import {
   type SequenceParams,
   type SplineParams,
   type SuperformulaParams,
+  type SyncParams,
 } from '../core/generators';
 import { fbm, noiseField } from '../core/perlin';
 import type { ParamValue } from '../core/table';
@@ -457,16 +461,18 @@ viz('mode:fm', {
   },
 });
 
-// Hard sync: a slave at ratio r = 1 + 3u restarted every master cycle (two cycles shown).
-viz('sync-sweep', {
-  axis: (i) => ['0', `slave ×${f2(1 + 3 * i.u)}, reset each cycle`, '4π'],
+// Hard sync (Sync sweep, …): two master cycles — the slave restarted at each (solid) against the
+// free-running slave (dashed), at the shown ratio.
+viz('mode:sync', {
+  axis: (i) => ['0', `${SYNC_WAVES[Math.round(i.params.wave)] ?? ''} slave ×${f2(syncRatio(i.params as unknown as SyncParams, i.index, i.count))}, reset each cycle`, '4π'],
   draw: (g, w, h, i, c) => {
-    const r = 1 + 3 * i.u;
+    const r = syncRatio(i.params as unknown as SyncParams, i.index, i.count);
+    const f = syncWave(i.params.wave);
     const s = scale(w, h, 0, 2 * TAU, -1.1, 1.1);
     rules(g, s, w, h, [TAU], [], c.axis);
     rules(g, s, w, h, [], [0], c.grid);
-    plot(g, s, (p) => Math.sin(r * p), 0, 2 * TAU, c.muted, 1, 400, [3, 3]);
-    plot(g, s, (p) => (p % TAU < 1e-9 && p > 0 ? NaN : Math.sin(r * (p % TAU))), 0, 2 * TAU, c.accent, 1.8, 800);
+    plot(g, s, (p) => f(r * p), 0, 2 * TAU, c.muted, 1, 800, [3, 3]);
+    plot(g, s, (p) => (p % TAU < 1e-9 && p > 0 ? NaN : f(r * (p % TAU))), 0, 2 * TAU, c.accent, 1.8, 800);
   },
 });
 
