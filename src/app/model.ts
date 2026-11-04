@@ -9,7 +9,7 @@ import type { ModelState } from '../core/session';
 import { DEFAULT_STEP_LENGTH, emptySteps, isStepLength, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
-import { PREVIEW_ID_BASE } from '../core/wavetable';
+import { PREVIEW_BATCH_WAVETABLE_ID, PREVIEW_ID_BASE } from '../core/wavetable';
 import { chainJson, MAX_CHAIN_NAME, normalizeChain, type ShapeChain } from '../core/shapeChain';
 import { DEFAULT_CHAIN, MAX_SAVED_CHAINS, uniqueName, type SavedChain } from '../core/shapeFactory';
 import { MAX_USER_PRESETS, presetPatch, resolvePresetWavetable, soundOf as presetSoundOf, type PresetSound, type VoicePreset } from '../core/presets';
@@ -194,7 +194,16 @@ export class AppModel {
     };
     const sel = this.selectedId !== null && this.byId.has(this.selectedId) ? this.selectedId : null;
     const shown = this.previewShownId !== null && this.previewById.has(this.previewShownId) ? this.previewShownId : null;
-    this.wavetables = this.wavetables.map((w) => (w.builtin === 'selection' ? one(sel)(w) : w.builtin === 'preview' ? one(shown)(w) : w));
+    const batch = this.previewTables.map((t) => t.id);
+    const all = (w: Wavetable): Wavetable => {
+      const row = w.rows[0] ?? [];
+      if (w.rows.length === 1 && row.length === batch.length && row.every((id, i) => id === batch[i])) return w;
+      changed = true;
+      return { ...w, rows: [batch], head: { x: batch.length, y: 0 } };
+    };
+    this.wavetables = this.wavetables.map((w) =>
+      w.builtin === 'selection' ? one(sel)(w) : w.builtin === 'preview' ? one(shown)(w) : w.builtin === 'previewBatch' ? all(w) : w,
+    );
     return changed;
   }
 
@@ -211,9 +220,37 @@ export class AppModel {
     this.previewTables = tables;
     this.previewById = new Map(tables.map((t) => [t.id, t]));
     this.previewShownId = shownId;
+    const before = this.wavetable(PREVIEW_BATCH_WAVETABLE_ID);
     this.syncDerived();
+    const voicesMoved = this.followPreviewBatch(before);
     this.emits++;
     for (const fn of this.listeners.get('preview') ?? []) fn();
+    if (voicesMoved) this.emit('voices');
+  }
+
+  /**
+   * Voices (osc A or B) on Preview batch after its size changed: a window that covered the
+   * whole batch covers the whole new one; others are clamped. True if a window moved.
+   */
+  private followPreviewBatch(before: Wavetable | undefined): boolean {
+    const after = this.wavetable(PREVIEW_BATCH_WAVETABLE_ID);
+    if (!before || !after || before === after) return false;
+    const oldLen = before.rows[0]?.length ?? 0;
+    const full = fullWindow(after);
+    const id = PREVIEW_BATCH_WAVETABLE_ID;
+    let moved = false;
+    this.voices = this.voices.map((v) => {
+      let n = v;
+      if (n.wavetableId === id) n = n.windowStart === 0 && n.windowEnd >= oldLen - 1 ? { ...n, ...full } : clampVoiceWindow(n, after);
+      const b = n.synth.b;
+      if (b.wavetableId === id)
+        n = b.windowStart === 0 && b.windowEnd >= oldLen - 1 ? { ...n, synth: { ...n.synth, b: { ...b, windowStart: full.windowStart, windowEnd: full.windowEnd } } } : clampOscB(n, after);
+      const same = n.windowStart === v.windowStart && n.windowEnd === v.windowEnd && n.synth.b.windowStart === v.synth.b.windowStart && n.synth.b.windowEnd === v.synth.b.windowEnd;
+      if (same) return v;
+      moved = true;
+      return n;
+    });
+    return moved;
   }
 
   // ---- queries ----

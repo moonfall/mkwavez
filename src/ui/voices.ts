@@ -3,7 +3,7 @@ import { TABLE_SIZE } from '../core/constants';
 import { LFO_RATE_MAX, LFO_RATE_MIN } from '../core/midi';
 import type { VoiceType } from '../core/synth';
 import type { VoiceParams } from '../core/voice';
-import { shapeLabel } from '../core/wavetable';
+import { PREVIEW_WAVETABLE_IDS, shapeLabel } from '../core/wavetable';
 import { Mix } from '../core/wavetablePlayback';
 import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
@@ -437,6 +437,13 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
     dirtyScope = dirtyPad = true;
   });
   model.on('wavetables', () => {
+    sync();
+    dirtyScope = dirtyPad = true;
+  });
+  // Preview wavetables change with Generate's preview: refresh a voice that plays one.
+  model.on('preview', () => {
+    const v = cur();
+    if (!v || !(PREVIEW_WAVETABLE_IDS.includes(v.wavetableId) || PREVIEW_WAVETABLE_IDS.includes(v.synth.b.wavetableId))) return;
     sync();
     dirtyScope = dirtyPad = true;
   });

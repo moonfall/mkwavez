@@ -14,7 +14,7 @@
 // search / stepping / thumbnails, parent chips: Timeline Shift-click / long-press, Add
 // selected, Use window of Vn, reorder by keyboard and drag, remove; bias / walk / custom
 // weights / seed; Sweep / Generation strip, Add shown / Add +N recipes and selection, guards;
-// fits the Generate panel) while playing; evicted parents drop out. Wavetables: the built-ins (Timeline, Last batch, Batches, Grid, Selection, Preview) exist, update on
+// fits the Generate panel) while playing; evicted parents drop out. Wavetables: the built-ins (Timeline, Last batch, Batches, Grid, Selection, Preview, Preview batch) exist, update on
 // Seed Add shown / Add batch and show their views; no "Sets window of" checkboxes; V1 on the
 // Grid shows the X/Y pad (sliders move the dot, live dot while playing), the worklet plays it,
 // Step on the wavetable plays one cell; the Voice panel fits at 1440×900 / 1180×820 and 390px
@@ -1987,7 +1987,7 @@ async function wavetableChecks(page) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.waitForTimeout(150);
   const chips = await page.$$eval('#wt-chips [role="option"]', (bs) => bs.map((b) => b.textContent.trim()));
-  assert(chips.join() === 'Timeline,Last batch,Batches,Grid,Selection,Preview', `built-in wavetables (${chips.join(', ')})`);
+  assert(chips.join() === 'Timeline,Last batch,Batches,Grid,Selection,Preview,Preview batch', `built-in wavetables (${chips.join(', ')})`);
   // Preview: Generate's shown, unadded waveform; the engine gets preview tables only while a voice plays it.
   {
     await page.click('#tab-seed');
@@ -2002,6 +2002,11 @@ async function wavetableChecks(page) {
       return m.wavetable(5).rows[0][0] === m.previewTables[1].id;
     }, null, { timeout: 3000 });
     assert(true, 'showing another card moves the Preview slot');
+    const pb = await M(() => {
+      const m = window.mkwavez.model;
+      return { row: m.wavetable(6).rows[0].join(), ids: m.previewTables.map((t) => t.id).join(), n: Number(document.querySelector('#seed-n').value) };
+    });
+    assert(pb.row === pb.ids && pb.ids.split(',').length === pb.n, `Preview batch holds the whole batch (${pb.n})`);
     const tlLen = await M(() => window.mkwavez.model.timeline.length);
     const before = await M(() => window.mkwavez.bridge.workletTableCount);
     assert(before === tlLen, 'no preview tables in the engine while no voice plays them');
@@ -3163,7 +3168,7 @@ async function sessionChecks(label, url, browser) {
         bpm: m.bpm,
         voices: m.voices,
         // The Preview wavetable follows Generate's unadded waveforms: not session state.
-        wavetables: m.wavetables.map((w) => (w.builtin === 'preview' ? { ...w, rows: null } : w)),
+        wavetables: m.wavetables.map((w) => (w.builtin === 'preview' || w.builtin === 'previewBatch' ? { ...w, rows: null, head: null } : w)),
         nextWavetableId: m.nextWavetableId,
         sequences: m.sequences,
         voiceTab: ui.voiceId,

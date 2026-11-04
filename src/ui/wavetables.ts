@@ -420,7 +420,8 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
   model.on('voices', refresh);
   // The Preview wavetable changes with Generate's preview (not a 'wavetables' change).
   model.on('preview', () => {
-    if (model.wavetable(current)?.builtin === 'preview') refresh();
+    const b = model.wavetable(current)?.builtin;
+    if (b === 'preview' || b === 'previewBatch') refresh();
   });
   model.on('transport', () => (dirty = true));
   sec.onToggle(() => (dirty = true));

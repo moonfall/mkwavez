@@ -10,6 +10,7 @@ import {
   GRID_WAVETABLE_ID,
   SELECTION_WAVETABLE_ID,
   PREVIEW_WAVETABLE_ID,
+  PREVIEW_BATCH_WAVETABLE_ID,
   LAST_BATCH_WAVETABLE_ID,
   make1D,
   make2D,
@@ -62,7 +63,7 @@ describe('wavetable slots', () => {
     expect(JSON.parse(JSON.stringify(r))).toEqual(r); // serializable
   });
 
-  it('built-ins: Timeline, Last batch, Batches, Grid, Selection, Preview', () => {
+  it('built-ins: Timeline, Last batch, Batches, Grid, Selection, Preview, Preview batch', () => {
     const b = builtinWavetables();
     expect(b.map((w) => [w.id, w.name, w.shape, w.live, w.pins])).toEqual([
       [TIMELINE_WAVETABLE_ID, 'Timeline', '1d', true, false],
@@ -71,6 +72,7 @@ describe('wavetable slots', () => {
       [GRID_WAVETABLE_ID, 'Grid', '2d', true, true],
       [SELECTION_WAVETABLE_ID, 'Selection', '1d', false, false],
       [PREVIEW_WAVETABLE_ID, 'Preview', '1d', false, false],
+      [PREVIEW_BATCH_WAVETABLE_ID, 'Preview batch', '1d', false, false],
     ]);
     expect(writeTables(b[4], [7]).wt).toBe(b[4]); // adds never write it
     expect(wavetableDims(b[3])).toEqual({ w: 8, h: 8 });

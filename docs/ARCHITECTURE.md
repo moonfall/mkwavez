@@ -209,12 +209,14 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   blend|step, live, write (head settings), head {x, y}, builtin?, pins }`. Slots
   reference timeline table ids (a table may sit in many wavetables / slots); `null` = empty.
   1D = one row (fixed or variable size); 2D = a fixed X×Y grid; Rows = rows of differing
-  lengths. Plain, serializable data (persistence is M5). Built-ins (ids 0–5): Timeline
+  lengths. Plain, serializable data (persistence is M5). Built-ins (ids 0–6): Timeline
   (1D, mirrors the timeline, doesn't pin), Last batch (1D, pins), Batches (Rows, one row
   per batch, doesn't pin), Grid (2D 8×8, pins), Selection (1D, one slot: the Timeline
   selection, kept in step by `AppModel` whenever 'selection' / 'timeline' is emitted; not
   Live, so adds never write it; doesn't pin), Preview (1D, one slot: the waveform the open
-  Generate tab shows, before it is added). Preview waveforms are `AppModel.previewTables`
+  Generate tab shows, before it is added), Preview batch (1D, the whole batch it would add; a
+  voice window covering all of it follows its size, others are clamped). Preview waveforms
+  are `AppModel.previewTables`
   (`setPreview(batch, shown)`, called each frame by generate.ts from the open tab's
   `preview()`; unchanged data keeps its table), ids from `PREVIEW_ID_BASE` (2^30), topic
   'preview', never saved or undone (a restore drops their slots); `model.table(id)` resolves

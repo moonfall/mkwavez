@@ -6,7 +6,7 @@ import { decodeSession, encodeMeta, encodeWaveforms, type SessionMeta } from '..
 import { applyChain, normalizeChain, chainJson } from '../src/core/shapeChain';
 import { chainsFile, DEFAULT_CHAIN, FACTORY_CHAINS, MAX_SAVED_CHAINS, normalizeSavedChains, parseChainsFile } from '../src/core/shapeFactory';
 import { newStep } from '../src/core/shapeSteps';
-import { PREVIEW_ID_BASE, PREVIEW_WAVETABLE_ID, SELECTION_WAVETABLE_ID } from '../src/core/wavetable';
+import { PREVIEW_BATCH_WAVETABLE_ID, PREVIEW_ID_BASE, PREVIEW_WAVETABLE_ID, SELECTION_WAVETABLE_ID } from '../src/core/wavetable';
 
 const model = () => {
   const m = new AppModel();
@@ -189,5 +189,29 @@ describe('Preview wavetable', () => {
     // Never saved: a restore drops the preview slot.
     const st = m.exportState();
     expect(st.timeline.some((t) => t.id >= PREVIEW_ID_BASE)).toBe(false);
+  });
+});
+
+describe('Preview batch wavetable', () => {
+  it('holds the whole preview batch; a voice covering it all follows its size, a partial window is clamped', () => {
+    const m = model();
+    const mk = (v: number) => new Float32Array(2048).fill(v);
+    const four = [mk(0.1), mk(0.2), mk(0.3), mk(0.4)];
+    m.setPreview(four, 0);
+    expect(m.wavetable(PREVIEW_BATCH_WAVETABLE_ID)!.rows).toEqual([m.previewTables.map((t) => t.id)]);
+    const [a, b] = m.voices;
+    m.updateVoice(a.id, { wavetableId: PREVIEW_BATCH_WAVETABLE_ID });
+    m.updateVoice(b.id, { wavetableId: PREVIEW_BATCH_WAVETABLE_ID, windowStart: 1, windowEnd: 2 });
+    expect([m.voice(a.id)!.windowStart, m.voice(a.id)!.windowEnd]).toEqual([0, 3]);
+    let voicesEvents = 0;
+    m.on('voices', () => voicesEvents++);
+    m.setPreview([...four, mk(0.5), mk(0.6)], 5);
+    expect([m.voice(a.id)!.windowStart, m.voice(a.id)!.windowEnd]).toEqual([0, 5]); // whole → whole
+    expect([m.voice(b.id)!.windowStart, m.voice(b.id)!.windowEnd]).toEqual([1, 2]); // partial stays
+    expect(voicesEvents).toBe(1);
+    m.setPreview(four.slice(0, 2), 0);
+    expect([m.voice(a.id)!.windowStart, m.voice(a.id)!.windowEnd]).toEqual([0, 1]);
+    expect([m.voice(b.id)!.windowStart, m.voice(b.id)!.windowEnd]).toEqual([1, 1]); // clamped
+    expect(m.windowTables(m.voice(a.id)!).map((t) => t.data)).toEqual(four.slice(0, 2));
   });
 });
