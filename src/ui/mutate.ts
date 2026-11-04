@@ -7,6 +7,7 @@ import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from '
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h } from './dom';
 import { buildLibrary } from './library';
+import { buildShapeOnAdd } from './shapeOnAdd';
 
 /** Minimum interval between preview restarts while a control is dragged. */
 const PREVIEW_MS = 50;
@@ -193,6 +194,10 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     h('button', { id: `mutate-mode-${m.mode}`, title: m.title, onclick: () => setMode(m.mode) }, m.label),
   );
   const stepper = buildStepper('mutate', opts);
+  const shapeOn = buildShapeOnAdd(ctx, 'mutate', () => {
+    for (const c of strip.cards) c.drawn = null;
+    cardsDirty = mainDirty = true;
+  });
   const addShownBtn = h('button', { id: 'mutate-add-shown', onclick: () => addShown() }, 'Add shown');
   const addBatchBtn = h('button', { id: 'mutate-add-batch', class: 'primary', onclick: () => addBatch() }, `Add +${opts.count()}`);
   const status = h('div', { class: 'gen-status', id: 'mutate-status', role: 'status' });
@@ -213,6 +218,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
       h('div', { class: 'seg', role: 'group', 'aria-label': 'Batch mode' }, ...modeButtons),
       stepper.el,
       status,
+      shapeOn.el,
       h('div', { class: 'gen-adds' }, addShownBtn, addBatchBtn),
     ),
     strip.el,
@@ -279,11 +285,9 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     while (j.next < j.req.count && performance.now() < deadline) computeOne(j, j.next++);
   };
 
-  /**
-   * The table that is shown and added. A planned Edit layer (draw / edit harmonics) slots
-   * in here, as in the Seed tab.
-   */
-  const finalTable = (j: Job, i: number): GeneratedTable => computeOne(j, i);
+  /** Table i as shown and added: shaped when a Shape chain is chosen (a Chain sweep continues from the unshaped one). */
+  const shaped = (j: Job, t: GeneratedTable | undefined, i: number) => t && shapeOn.apply(t, { index: i, count: j.req.count });
+  const finalTable = (j: Job, i: number): GeneratedTable => shaped(j, computeOne(j, i), i)!;
 
   // ---- actions ----
   const afterAdd = (msg: string) => {
@@ -318,7 +322,8 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
   const drawMain = () => {
     mainDirty = false;
     const src = source();
-    const t = job && src && job.source === src ? job.tables[Math.min(strip.shown(), job.req.count - 1)] : undefined;
+    const si = job ? Math.min(strip.shown(), job.req.count - 1) : 0;
+    const t = job && src && job.source === src ? shaped(job, job.tables[si], si) : undefined;
     if (src && !t) return; // redrawn when computeOne() produces the shown table
     const data = t?.data;
     const grid = cssColor('--surface-2');
@@ -363,7 +368,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
     const src = source();
     const cur = job && job.source === src ? job : null;
     strip.cards.forEach((c, i) => {
-      const t = cur && i < cur.req.count ? cur.tables[i] : undefined;
+      const t = cur && i < cur.req.count ? shaped(cur, cur.tables[i], i) : undefined;
       // Keep the previous drawing until the current job has computed this card.
       if (c.drawn === t || (!t && src)) return;
       c.drawn = t;

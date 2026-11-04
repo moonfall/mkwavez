@@ -85,6 +85,31 @@ describe('Shape chain in the model', () => {
   });
 });
 
+describe('write back into a wavetable', () => {
+  it('addReplacing puts each result in its slot, one undo step; refused for built-ins and Live wavetables', () => {
+    const m = model();
+    const w = m.createWavetable('1d');
+    const ids = m.timeline.slice(0, 3).map((t) => t.id);
+    ids.forEach((id, i) => m.placeInWavetable(w.id, { kind: 'gap', x: i, y: 0 }, id));
+    const gen = ids.map((id) => ({ data: m.table(id)!.data, recipe: { op: 'shape', params: {}, seed: 1, parents: [id] } }));
+    const cells = ids.map((_, x) => ({ x, y: 0 }));
+    const d0 = m.undoDepth;
+    const n0 = m.timeline.length;
+    const added = m.addReplacing(gen, w.id, cells);
+    expect(added.length).toBe(3);
+    expect(m.timeline.length).toBe(n0 + 3);
+    expect(m.wavetable(w.id)!.rows[0]).toEqual(added.map((t) => t.id));
+    expect(m.undoDepth).toBe(d0 + 1);
+    m.undo();
+    expect(m.wavetable(w.id)!.rows[0]).toEqual(ids);
+    expect(m.timeline.length).toBe(n0);
+    expect(m.addReplacing(gen, 1, cells)).toEqual([]); // Last batch: built-in
+    m.setWavetableLive(w.id, true);
+    expect(m.addReplacing(gen, w.id, cells)).toEqual([]);
+    expect(m.addReplacing(gen.slice(1), w.id, cells)).toEqual([]);
+  });
+});
+
 describe('Shape chain engine (review fixes)', () => {
   it('a Mutation step keeps the chain’s phase (a Rotate before it stays)', () => {
     const sine = basicWave('sine', 0);

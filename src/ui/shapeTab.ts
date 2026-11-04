@@ -55,6 +55,7 @@ import {
   type StepOp,
 } from '../core/shapeSteps';
 import { describeRecipe, type GeneratedTable, type WaveTable } from '../core/table';
+import { LAST_BATCH_WAVETABLE_ID, type Cell } from '../core/wavetable';
 import { buildStepper, buildStrip, drawCard, flasher } from './batch';
 import { cssColor, drawWave, fit, fitFixed, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
@@ -138,7 +139,8 @@ export function stepSummary(s: Step): string {
 /** A finished result job: the cards for one source + chain + N, computed incrementally. */
 interface Job {
   key: string;
-  src: WaveTable;
+  /** Source of each result. */
+  srcs: WaveTable[];
   chain: ShapeChain;
   n: number;
   tables: (GeneratedTable | undefined)[];
@@ -156,10 +158,66 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     return i >= 0 ? i : chain().steps.length ? 0 : -1;
   };
   const sel = (): Step | undefined => chain().steps[selIndex()];
-  const source = (): WaveTable | undefined => model.table(model.selectedId);
-  /** Results per Add: N when a step sweeps or seeded steps vary per waveform, else 1. */
+  /** The Timeline selection (the source when applying to the selection). */
+  const selected = (): WaveTable | undefined => model.table(model.selectedId);
+  /** What the chain applies to: 'sel', 'last' (Last batch), `v:<voice id>` (its window) or `w:<wavetable id>`. */
+  let applyTo = 'sel';
+  let writeBack = false;
+  interface Targets {
+    tables: WaveTable[];
+    /** Wavetable sources: the slot each table came from (for Write back). */
+    cells?: Cell[];
+    wtId?: number;
+    label: string;
+  }
+  let targetsCache: { key: unknown[]; t: Targets } | null = null;
+  const targets = (): Targets => {
+    const key = [applyTo, model.timeline, model.wavetables, model.voices];
+    if (targetsCache && targetsCache.key.every((k, i) => k === key[i])) return targetsCache.t;
+    const fromWavetable = (id: number, label: string): Targets => {
+      const wt = model.wavetable(id);
+      const tables: WaveTable[] = [];
+      const cells: Cell[] = [];
+      wt?.rows.forEach((row, y) =>
+        row.forEach((tid, x) => {
+          const t = tid === null ? undefined : model.table(tid);
+          if (t) {
+            tables.push(t);
+            cells.push({ x, y });
+          }
+        }),
+      );
+      return { tables, cells, wtId: id, label };
+    };
+    let t: Targets;
+    if (applyTo === 'last') t = { ...fromWavetable(LAST_BATCH_WAVETABLE_ID, 'Last batch'), cells: undefined, wtId: undefined };
+    else if (applyTo.startsWith('v:')) {
+      const v = model.voice(Number(applyTo.slice(2)));
+      t = { tables: v ? model.windowTables(v) : [], label: v ? `V${model.voiceIndex(v.id) + 1} window` : 'Voice window' };
+    } else if (applyTo.startsWith('w:')) {
+      const id = Number(applyTo.slice(2));
+      t = fromWavetable(id, model.wavetable(id)?.name ?? 'Wavetable');
+    } else {
+      const sel = selected();
+      t = { tables: sel ? [sel] : [], label: 'Selection' };
+    }
+    targetsCache = { key, t };
+    return t;
+  };
+  const multi = () => applyTo !== 'sel';
+  /** Results per Add: one per source; for the selection, N when a step sweeps or seeded steps vary, else 1. */
   const batchVaries = (c: ShapeChain) => chainSweeps(c) || (c.varySeed && chainUsesSeed(c));
-  const batchN = () => (batchVaries(chain()) ? opts.count() : 1);
+  const batchN = () => (multi() ? Math.max(1, targets().tables.length) : batchVaries(chain()) ? opts.count() : 1);
+  /** Source of result i (undefined: nothing to shape). */
+  const srcFor = (i: number): WaveTable | undefined => (multi() ? targets().tables[i] : selected());
+  /** The source of the shown card. */
+  const source = (): WaveTable | undefined => srcFor(Math.min(strip.shown(), batchN() - 1));
+  /** Whether results go back into the source wavetable's slots instead of only the Timeline. */
+  const writingBack = () => {
+    const t = targets();
+    const wt = t.wtId === undefined ? undefined : model.wavetable(t.wtId);
+    return writeBack && !!wt && !wt.builtin && !wt.live && !!t.cells && t.cells.length > 0;
+  };
 
   /** Replace step `id` (an undo step; `gesture` coalesces a drag). */
   const updateStep = (id: string, fn: (s: Step) => Step, gesture?: string) => {
@@ -221,7 +279,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const saved = model.savedChainNamed(c.name);
     const isFactory = !saved && FACTORY_CHAINS.some((f) => f.chain.name === c.name);
     const srcChain = (() => {
-      const t = source();
+      const t = selected();
       return t ? recipeChain(t.recipe) : null;
     })();
     const saveAs = () => {
@@ -1212,6 +1270,32 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     h('button', { id: 'shape-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => setChain((c) => ({ ...c, seed: randomSeed() })) }, 'Reroll'),
     h('label', { class: 'shape-check', title: 'Seeded steps use a different seed for each waveform of the batch' }, varyBox, 'Vary'),
   );
+  const applyPick = h('select', { id: 'shape-apply', 'aria-label': 'Apply the chain to', title: 'What the chain applies to' });
+  const fillApply = () => {
+    const voices = model.voices.map((v, i) => h('option', { value: `v:${v.id}` }, `V${i + 1} window`));
+    const wts = model.wavetables.filter((w) => w.builtin === 'grid' || w.builtin === 'batches' || !w.builtin).map((w) => h('option', { value: `w:${w.id}` }, w.name));
+    applyPick.replaceChildren(
+      h('option', { value: 'sel' }, 'Selection'),
+      h('option', { value: 'last' }, 'Last batch'),
+      ...(voices.length ? [h('optgroup', { label: 'Voice windows' }, ...voices)] : []),
+      ...(wts.length ? [h('optgroup', { label: 'Wavetables' }, ...wts)] : []),
+    );
+    if (![...applyPick.options].some((o) => o.value === applyTo)) applyTo = 'sel';
+    applyPick.value = applyTo;
+  };
+  applyPick.addEventListener('change', () => {
+    applyTo = applyPick.value;
+    targetsCache = null;
+    strip.setShown(0);
+    syncBatch();
+    onSource();
+  });
+  const writeBox = h('input', { type: 'checkbox', id: 'shape-writeback' });
+  writeBox.addEventListener('change', () => {
+    writeBack = writeBox.checked;
+    syncBatch();
+  });
+  const writeLabel = h('label', { class: 'shape-check', id: 'shape-writeback-label', title: 'Put each result in its source’s slot (one undo step)' }, writeBox, 'Write back');
   const addShownBtn = h('button', { id: 'shape-add-shown', onclick: () => addShown() }, 'Add shown');
   const addBatchBtn = h('button', { id: 'shape-add-batch', class: 'primary', onclick: () => addBatch() }, 'Add +N');
   const status = h('div', { class: 'gen-status', id: 'shape-status', role: 'status' });
@@ -1224,21 +1308,25 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const batchBox = h(
     'div',
     { class: 'gen-box gen-batch' },
-    h('div', { class: 'gen-batch-head' }, h('span', { class: 'gen-h' }, 'Batch'), stepper.el, seedBox, status, h('div', { class: 'gen-adds' }, addShownBtn, addBatchBtn)),
+    h('div', { class: 'gen-batch-head' }, h('span', { class: 'gen-h' }, 'Apply to'), applyPick, writeLabel, stepper.el, seedBox, status, h('div', { class: 'gen-adds' }, addShownBtn, addBatchBtn)),
     strip.el,
   );
 
   const cardLabel = (i: number, n: number) => {
     const sw = chain().steps.find((s) => s.on && s.amountEnd !== undefined);
+    const amt = sw && n > 1 ? ` · ${pct(stepAmount(sw, batchUOf({ index: i, count: n })))}` : '';
+    if (multi()) {
+      const t = srcFor(i);
+      return `${t ? `#${model.indexOf(t.id) + 1}` : '—'}${amt}`;
+    }
     if (n <= 1) return 'result';
-    if (!sw) return `#${i + 1}`;
-    return `#${i + 1} · ${pct(stepAmount(sw, batchUOf({ index: i, count: n })))}`;
+    return `#${i + 1}${amt}`;
   };
   let stripSig = '';
   const syncBatch = () => {
     const n = batchN();
     const sweeps = n > 1;
-    const sig = JSON.stringify([n, chain().steps.map((s) => (s.on ? [s.amount, s.amountEnd] : 0)), chain().varySeed]);
+    const sig = JSON.stringify([n, chain().steps.map((s) => (s.on ? [s.amount, s.amountEnd] : 0)), chain().varySeed, applyTo, targets().tables.map((t) => t.id)]);
     if (sig !== stripSig) {
       const atEnd = strip.shown() >= strip.cards.length - 1;
       stripSig = sig;
@@ -1246,10 +1334,17 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       if (atEnd) strip.setShown(n - 1);
       cardsDirty = mainDirty = true;
     }
-    stepper.el.hidden = !sweeps;
+    const t = targets();
+    const wt = t.wtId === undefined ? undefined : model.wavetable(t.wtId);
+    writeLabel.hidden = !wt || !!wt.builtin;
+    writeBox.checked = writeBack;
+    writeBox.disabled = !!wt?.live;
+    writeLabel.title = wt?.live ? 'Freeze the wavetable to write back into it (a Live one takes every add)' : 'Put each result in its source’s slot (one undo step)';
+    stepper.el.hidden = multi() || !sweeps;
     addBatchBtn.hidden = !sweeps;
-    addBatchBtn.textContent = `Add +${n}`;
+    addBatchBtn.textContent = writingBack() ? `Write back ${n}` : `Add +${n}`;
     addShownBtn.textContent = sweeps ? 'Add shown' : 'Add';
+    addShownBtn.hidden = writingBack();
     seedBox.hidden = !chainUsesSeed(chain());
     seedLabel.textContent = hex(chain().seed);
     varyBox.checked = chain().varySeed;
@@ -1259,21 +1354,26 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   // ---------------- result job ----------------
   let job: Job | null = null;
   let lastStart = -Infinity;
-  const keyOf = (src: WaveTable | undefined, c: ShapeChain, n: number) => (src ? `${src.id}|${JSON.stringify(c)}|${n}` : 'none');
-  const startJob = (): Job | null => {
-    const src = source();
-    const c = chain();
+  /** Sources of the N results, or null when there is nothing to shape. */
+  const jobSources = (): WaveTable[] | null => {
     const n = batchN();
-    job = src ? { key: keyOf(src, c, n), src, chain: c, n, tables: new Array(n), next: 0 } : null;
+    const srcs = Array.from({ length: n }, (_, i) => srcFor(i));
+    return srcs.every((x): x is WaveTable => !!x) ? srcs : null;
+  };
+  const keyOf = (srcs: WaveTable[] | null, c: ShapeChain) => (srcs ? `${srcs.map((x) => x.id).join(',')}|${JSON.stringify(c)}` : 'none');
+  const startJob = (): Job | null => {
+    const srcs = jobSources();
+    const c = chain();
+    job = srcs ? { key: keyOf(srcs, c), srcs, chain: c, n: srcs.length, tables: new Array(srcs.length), next: 0 } : null;
     cardsDirty = true;
     return job;
   };
-  const currentJob = (): Job | null => (job?.key === keyOf(source(), chain(), batchN()) ? job : startJob());
+  const currentJob = (): Job | null => (job?.key === keyOf(jobSources(), chain()) ? job : startJob());
   const computeOne = (j: Job, i: number): GeneratedTable => {
     let t = j.tables[i];
     if (!t) {
       const b = { index: i, count: j.n };
-      t = { data: applyChain(j.src.data, j.chain, b), recipe: shapeRecipe(j.src.id, j.chain, b) };
+      t = { data: applyChain(j.srcs[i].data, j.chain, b), recipe: shapeRecipe(j.srcs[i].id, j.chain, b) };
       j.tables[i] = t;
       cardsDirty = true;
     }
@@ -1293,21 +1393,26 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const t = computeOne(j, i);
     if (silent(t)) return flash(SILENT, true);
     if (!model.addTables([t], false).length) return; // refused (Timeline full): the notice says why
-    flash(j.n > 1 ? `Added #${i + 1} to the Timeline (the source stays selected)` : 'Added to the Timeline (the source stays selected)');
+    flash(multi() ? `Added the result for ${cardLabel(i, j.n).split(' ')[0]} to the Timeline` : j.n > 1 ? `Added #${i + 1} to the Timeline (the source stays selected)` : 'Added to the Timeline (the source stays selected)');
   };
   const addBatch = () => {
     const j = currentJob();
     if (!j) return;
     const tables = Array.from({ length: j.n }, (_, i) => computeOne(j, i));
     if (tables.some(silent)) return flash(SILENT, true);
+    if (writingBack()) {
+      const t = targets();
+      if (!model.addReplacing(tables, t.wtId!, t.cells!).length) return;
+      return flash(`Wrote ${tables.length} results back into ${t.label} (one undo step)`);
+    }
     if (!model.addTables(tables, false).length) return;
-    flash(`Added ${tables.length} waveforms to the Timeline (the source stays selected)`);
+    flash(multi() ? `Added ${tables.length} results to the Timeline (one per source)` : `Added ${tables.length} waveforms to the Timeline (the source stays selected)`);
   };
 
   const drawCards = () => {
     cardsDirty = false;
     const src = source();
-    const cur = job && job.src === src && job.chain === chain() ? job : null;
+    const cur = job && job.key === keyOf(jobSources(), chain()) ? job : null;
     strip.cards.forEach((c, i) => {
       const t = cur && i < cur.n ? cur.tables[i] : undefined;
       if (c.drawn === t || (!t && src)) return;
@@ -1319,9 +1424,15 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const drawSource = () => {
     srcDirty = false;
     const src = source();
-    const idx = model.indexOf(model.selectedId);
-    srcNo.textContent = src ? `#${idx + 1}` : '—';
-    srcChip.title = src ? `The Timeline selection: #${idx + 1} · id ${src.id} · ${describeRecipe(src.recipe)}` : 'Select a waveform in the Timeline';
+    const idx = src ? model.indexOf(src.id) : -1;
+    if (multi()) {
+      const t = targets();
+      srcNo.textContent = `${t.label} · ${t.tables.length}`;
+      srcChip.title = t.tables.length ? `${t.label}: ${t.tables.length} waveforms; the plot shows #${idx + 1} (the shown card’s)` : `${t.label} is empty`;
+    } else {
+      srcNo.textContent = src ? `#${idx + 1}` : '—';
+      srcChip.title = src ? `The Timeline selection: #${idx + 1} · id ${src.id} · ${describeRecipe(src.recipe)}` : 'Select a waveform in the Timeline';
+    }
     const n = batchN();
     const room1 = model.roomFor(1);
     const roomN = model.roomFor(n);
@@ -1372,9 +1483,15 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const onSource = () => {
     srcDirty = mainDirty = thumbsDirty = cardsDirty = true;
   };
-  model.on('timeline', onSource);
+  const onTargets = () => {
+    fillApply();
+    syncBatch();
+    onSource();
+  };
+  model.on('timeline', onTargets);
   model.on('selection', onSource);
-  model.on('wavetables', () => (srcDirty = true));
+  model.on('wavetables', onTargets);
+  model.on('voices', onTargets);
   opts.onCount((n) => {
     stepper.sync(n);
     syncBatch();
@@ -1386,6 +1503,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   });
   new ResizeObserver(() => (mainDirty = true)).observe(viewer);
 
+  fillApply();
   syncView();
   syncAll();
   stepper.sync(opts.count());
@@ -1396,7 +1514,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       frame(now) {
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;
-        const key = keyOf(source(), chain(), batchN());
+        const key = keyOf(jobSources(), chain());
         if (job?.key !== key && now - lastStart >= PREVIEW_MS) {
           lastStart = now;
           startJob();

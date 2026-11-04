@@ -18,6 +18,7 @@ import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './c
 import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { h, selectField, slider } from './dom';
 import { buildLibrary } from './library';
+import { buildShapeOnAdd } from './shapeOnAdd';
 
 /** Minimum interval between preview restarts while typing / dragging. */
 const PREVIEW_MS = 50;
@@ -343,14 +344,6 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       'div',
       { class: 'gen-plot-tags' },
       shownLabel,
-      // Planned: an Edit layer (draw the waveform / edit harmonics) between the generated
-      // table and Add — see finalTable().
-      h(
-        'div',
-        { class: 'seg', role: 'group', 'aria-label': 'Preview mode' },
-        h('button', { class: 'seg-on', 'aria-pressed': 'true', tabindex: -1 }, 'View'),
-        h('button', { id: 'seed-edit-mode', disabled: true, title: 'Planned: draw / edit the waveform and harmonics' }, 'Edit · planned'),
-      ),
     ),
   );
   const specBox = h('div', { class: 'gen-plot-box' }, specC);
@@ -367,6 +360,10 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
 
   // ---- batch ----
   const stepper = buildStepper('seed', opts);
+  const shapeOn = buildShapeOnAdd(ctx, 'seed', () => {
+    for (const c of strip.cards) c.drawn = null;
+    cardsDirty = mainDirty = true;
+  });
   const seedLabel = h('span', { id: 'seed-seed', class: 'mono-label', title: 'Shared by the preview and every Add' });
   const seedBox = h(
     'div',
@@ -395,6 +392,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       stepper.el,
       seedBox,
       status,
+      shapeOn.el,
       h('div', { class: 'gen-adds' }, addShownBtn, addBatchBtn),
     ),
     strip.el,
@@ -476,11 +474,11 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     return out;
   };
 
-  /**
-   * The table that is shown and added. Planned Edit layer (draw / edit harmonics) slots
-   * in here: it will map the generated table to an edited, re-shaped one.
-   */
-  const finalTable = (j: Job, i: number): GeneratedTable | undefined => j.tables[i];
+  /** The table that is shown and added: the generated one, shaped when a Shape chain is chosen. */
+  const finalTable = (j: Job, i: number): GeneratedTable | undefined => {
+    const t = j.tables[i];
+    return t && shapeOn.apply(t, { index: i, count: j.req.count });
+  };
 
   const updateStatus = () => {
     statusDirty = false;

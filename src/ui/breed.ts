@@ -18,6 +18,7 @@ import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from '
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, icon, ICONS } from './dom';
 import { buildLibrary } from './library';
+import { buildShapeOnAdd } from './shapeOnAdd';
 
 /** Minimum interval between preview restarts while a control is dragged. */
 const PREVIEW_MS = 50;
@@ -345,6 +346,10 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   // ---- batch ----
   const modeButtons = MODES.map((m) => h('button', { id: `breed-mode-${m.mode}`, title: m.title, onclick: () => setMode(m.mode) }, m.label));
   const stepper = buildStepper('breed', opts);
+  const shapeOn = buildShapeOnAdd(ctx, 'breed', () => {
+    for (const c of strip.cards) c.drawn = null;
+    cardsDirty = mainDirty = true;
+  });
   const addShownBtn = h('button', { id: 'breed-add-shown', onclick: () => addShown() }, 'Add shown');
   const addBatchBtn = h('button', { id: 'breed-add-batch', class: 'primary', onclick: () => addBatch() }, `Add +${opts.count()}`);
   const status = h('div', { class: 'gen-status', id: 'breed-status', role: 'status' });
@@ -367,6 +372,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
       stepper.el,
       status,
       blockedNote,
+      shapeOn.el,
       h('div', { class: 'gen-adds' }, addShownBtn, addBatchBtn),
     ),
     strip.el,
@@ -639,11 +645,9 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     while (j.next < j.req.count && performance.now() < deadline) computeOne(j, j.next++);
   };
 
-  /**
-   * The child that is shown and added. A planned Edit layer (draw / edit harmonics) slots
-   * in here, as in the Seed tab.
-   */
-  const finalTable = (j: Job, i: number): GeneratedTable => computeOne(j, i);
+  /** Child i as shown and added: shaped when a Shape chain is chosen. */
+  const shaped = (j: Job, t: GeneratedTable | undefined, i: number) => t && shapeOn.apply(t, { index: i, count: j.req.count });
+  const finalTable = (j: Job, i: number): GeneratedTable => shaped(j, computeOne(j, i), i)!;
 
   // ---- actions ----
   const afterAdd = (msg: string) => {
@@ -677,7 +681,8 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     mainDirty = false;
     const ps = parents();
     const cur = job && ready() && job.parents.length === ps.length && job.parents.every((p, i) => p === ps[i]) ? job : null;
-    const t = cur?.tables[Math.min(strip.shown(), cur.req.count - 1)];
+    const si = cur ? Math.min(strip.shown(), cur.req.count - 1) : 0;
+    const t = cur ? shaped(cur, cur.tables[si], si) : undefined;
     if (ready() && !t) return; // redrawn when computeOne() produces the shown child
     const data = t?.data;
     const grid = cssColor('--surface-2');
@@ -726,7 +731,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     cardsDirty = false;
     const cur = ready() && job?.key === keyOf(model.breedParents, request()) ? job : null;
     strip.cards.forEach((c, i) => {
-      const t = cur && i < cur.req.count ? cur.tables[i] : undefined;
+      const t = cur && i < cur.req.count ? shaped(cur, cur.tables[i], i) : undefined;
       // Keep the previous drawing until the current job has computed this card.
       if (c.drawn === t || (!t && ready())) return;
       c.drawn = t;

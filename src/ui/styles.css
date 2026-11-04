@@ -2738,7 +2738,7 @@ button.gen-card.failed .gen-card-label::after {
   }
   .gen-viewer {
     flex: 1 1 0;
-    min-height: 70px;
+    min-height: 60px;
   }
   .gen-views {
     height: 100%;
@@ -2756,9 +2756,10 @@ button.gen-card.failed .gen-card-label::after {
     flex: none;
     gap: 6px;
   }
+  /* One row when it fits; wraps (Add on a second line) rather than overflowing. */
   .gen-batch-head {
-    flex-wrap: nowrap;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 6px 10px;
   }
   .gen-stepper button {
     width: 26px;
@@ -3177,6 +3178,32 @@ input.shape-num {
 }
 .shape .gen-seedbox {
   flex: none;
+}
+
+/* Shape on add (Seed / Mutate / Breed batch rows): outlined in the draw colour when a chain is on. */
+button.shape-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+button.shape-chip.on {
+  border-color: var(--v2);
+  color: var(--text);
+}
+.shape-chip-v {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+button.shape-chip:not(.on) .shape-chip-v {
+  color: var(--muted);
 }
 
 /* Wide shell: the chain column fills the panel height (its list scrolls); one-row head. */
@@ -3957,5 +3984,22 @@ button.br-clear:hover {
   .br-empty {
     white-space: normal;
     line-height: 1.4;
+  }
+}
+
+/* Narrower Generate panels: the Shape chip shows only its label (outline + tooltip say which chain). */
+@container br-main (max-width: 900px) {
+  .breed .shape-chip-v {
+    display: none;
+  }
+}
+@container br-main (max-width: 620px) {
+  .breed .gen-batch-head > .gen-h {
+    display: none;
+  }
+}
+@container mut-main (max-width: 900px) {
+  .mutate .shape-chip-v {
+    display: none;
   }
 }

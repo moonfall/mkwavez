@@ -709,6 +709,30 @@ export class AppModel {
     return true;
   }
 
+  /**
+   * Add generated tables (one batch, the selection kept) and put result i into the slot at
+   * cells[i] of user wavetable `id`, replacing what was there: one undo step for both (the
+   * add's). Refused for built-ins and Live wavetables (the add itself would write there).
+   * Returns the added tables (empty if refused).
+   */
+  addReplacing(gen: readonly GeneratedTable[], id: WavetableId, cells: readonly Cell[]): WaveTable[] {
+    const wt0 = this.userWavetable(id);
+    if (!wt0 || wt0.live || cells.length !== gen.length) return [];
+    const added = this.addTables(gen, false);
+    if (!added.length) return [];
+    const cur = this.userWavetable(id);
+    if (!cur) return added;
+    let next = cur;
+    cells.forEach((c, i) => {
+      next = placeTable(next, { kind: 'slot', x: c.x, y: c.y }, added[i].id).wt;
+    });
+    if (next !== cur) {
+      this.wavetables = this.wavetables.map((w) => (w.id === id ? next : w));
+      this.emit('wavetables', 'voices');
+    }
+    return added;
+  }
+
   /** A fresh user wavetable id (never reused, not even after undo / delete). */
   private newWavetableId(): WavetableId {
     const id = Math.max(this.nextWavetableId, ...this.wavetables.map((w) => w.id + 1));

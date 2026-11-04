@@ -2209,6 +2209,66 @@ async function shapeChecks(page, tlCount) {
   assert(saved === 0 && (await chain()).name === 'My organ', 'Delete removes the saved chain (the edited one stays)');
   await M((id) => window.mkwavez.model.select(id), src.id);
 
+  // Apply to: Last batch (one result per waveform), a wavetable with Write back (one undo step).
+  await page.selectOption('#shape-chains', 'f:soft-clip');
+  // A batch of 4 so Last batch has several sources.
+  await M(() => {
+    const m = window.mkwavez.model;
+    m.addTables(m.timeline.slice(0, 4).map((t) => ({ data: t.data, recipe: t.recipe })), false);
+  });
+  await page.selectOption('#shape-apply', 'last');
+  const last = await M(() => {
+    const m = window.mkwavez.model;
+    return m.wavetable(1).rows.flat().filter((id) => id !== null);
+  });
+  await page.waitForFunction(
+    (n) => document.querySelectorAll('#shape-strip .gen-card').length === n && document.querySelector('#shape-src-no').textContent.includes(`Last batch · ${n}`),
+    last.length,
+    { timeout: 3000 },
+  );
+  assert(true, `Last batch: ${last.length} sources, one card each`);
+  let n1 = await tlCount();
+  await page.click('#shape-add-batch');
+  let parents = await M((n) => window.mkwavez.model.timeline.slice(-n).map((t) => t.recipe.parents[0]), last.length);
+  assert((await tlCount()) === n1 + last.length && parents.join() === last.join(), 'Add +N shapes each Last batch waveform once');
+  const wt = await M(() => {
+    const m = window.mkwavez.model;
+    const w = m.createWavetable('1d');
+    const ids = m.timeline.slice(0, 3).map((t) => t.id);
+    ids.forEach((id, i) => m.placeInWavetable(w.id, { kind: 'gap', x: i, y: 0 }, id));
+    return { id: w.id, ids: m.wavetable(w.id).rows[0].slice() };
+  });
+  await page.selectOption('#shape-apply', `w:${wt.id}`);
+  assert(await page.isVisible('#shape-writeback-label'), 'a wavetable of yours offers Write back');
+  await page.check('#shape-writeback');
+  assert((await page.textContent('#shape-add-batch')).trim() === `Write back ${wt.ids.length}`, 'Write back replaces Add');
+  u = await undoDepth();
+  n1 = await tlCount();
+  await page.click('#shape-add-batch');
+  const after = await M((id) => window.mkwavez.model.wavetable(id).rows[0].slice(), wt.id);
+  const newIds = await M((n) => window.mkwavez.model.timeline.slice(-n).map((t) => t.id), wt.ids.length);
+  assert((await tlCount()) === n1 + wt.ids.length && after.join() === newIds.join() && (await undoDepth()) === u + 1, 'Write back puts each result in its slot, one undo step');
+  await page.click('#undo');
+  assert((await M((id) => window.mkwavez.model.wavetable(id).rows[0].join(), wt.id)) === wt.ids.join(), 'undo restores the slots');
+  await page.uncheck('#shape-writeback');
+  await page.selectOption('#shape-apply', 'sel');
+  // Don't leave pinned waveforms behind (later checks rely on eviction).
+  await M((id) => window.mkwavez.model.deleteWavetable(id), wt.id);
+
+  // Shape on add: Seed's chip shapes what Add shown adds (recorded in the recipe).
+  await page.click('#tab-seed');
+  await page.click('#seed-shape');
+  await page.click('#seed-shape-f-soft-clip');
+  assert(!!(await page.$('#seed-shape.on')) && (await page.textContent('#seed-shape')).includes('Soft clip'), 'the Shape chip lights up with the chosen chain');
+  await page.click('#seed-add-shown');
+  const rec = await M(() => window.mkwavez.model.timeline.at(-1).recipe);
+  assert(typeof rec.shape === 'string' && JSON.parse(rec.shape).name === 'Soft clip' && rec.op !== 'shape', 'Seed adds shaped waveforms (recipe.shape)');
+  await page.click('#seed-shape');
+  await page.click('#seed-shape-none');
+  await page.click('#seed-add-shown');
+  assert((await M(() => window.mkwavez.model.timeline.at(-1).recipe.shape)) === undefined, 'None: unshaped');
+  await page.click('#tab-shape');
+
   await page.setViewportSize({ width: 1180, height: 820 });
   await page.waitForTimeout(150);
   assert((await genFits()) && (await fitsScreen(page)), '1180×820: Shape fits the Generate panel');
