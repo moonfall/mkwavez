@@ -476,3 +476,16 @@ viz('polygon', {
     dot(g, cx + R, cy, 3, c.line);
   },
 });
+
+// Gray code: bits of g = s ^ (s >> 1), s = 0…63, masked by n + 7.
+viz('gray-code', {
+  axis: (i) => ['0', `Gray-code bits & ${i.index + 7}`, '63'],
+  draw: (g, w, h, i, c) => {
+    const mask = i.index + 7;
+    const rows = Array.from({ length: 6 }, (_, r) => {
+      const b = 5 - r;
+      return Array.from({ length: 64 }, (_, s) => ((s ^ (s >> 1)) >> b) & 1);
+    });
+    cells(g, 0, 2, w, h - 4, rows, (v, r) => (v ? (((mask >> (5 - r)) & 1) ? c.accent : c.grid) : null));
+  },
+});
