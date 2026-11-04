@@ -366,7 +366,7 @@ Known gaps:
 - Blend crossfade and LFO are block-rate (64 samples) with ramped crossfade; gain is
   smoothed. (Synth voices now have a filter; MIDI input is done; Synth voices are polyphonic.)
 - Sequencer: no swing, velocity, per-step probability, or scale choice; multiple
-  sequences on one voice just retrigger it (monophonic, last note wins).
+  sequences on a monophonic voice just retrigger it (last note wins).
 - Formula language is JS (browser-only); a portable expression parser is needed for
   native targets.
 - No draw-a-waveform generator yet (Glyph contour covers text outlines; arbitrary

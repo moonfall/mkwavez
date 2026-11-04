@@ -4354,7 +4354,7 @@ async function layoutChecks(label, url, browser) {
     await settle();
     const f = await fullFits();
     assert(
-      f.view === 'full' && f.inside && f.noScroll && !f.tabs && f.knobs >= 82 && (await fitsScreen(page)),
+      f.view === 'full' && f.inside && f.noScroll && !f.tabs && f.knobs >= 85 && (await fitsScreen(page)),
       `${w}×${hh}, Sequence collapsed: Synth full view, ${f.knobs} knobs, every group shown, no page tabs, no overflow (${f.density})`,
     );
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/collapse-seq-synth-${w}x${hh}.png` });

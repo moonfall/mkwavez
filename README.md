@@ -319,9 +319,10 @@ switches (the choice is remembered).
   (or All inputs) in the transport bar — the choice is remembered and reconnects on load
   and on hot-plug. The LED in the **MIDI** button blinks on activity; the button opens
   routing and the controller map (on a phone the input picker is there too). Channel N
-  plays voice VN; **Omni** sends every channel to the selected voice tab. Voices stay
-  monophonic: the last key wins, releasing it returns to a key still held (legato, no
-  retrigger), velocity sets loudness, pitch bend is ±2 semitones, the voice's octave
+  plays voice VN; **Omni** sends every channel to the selected voice tab. Synth voices
+  play chords (up to their Voices setting); Simple voices and Synth voices at Voices 1
+  are monophonic: the last key wins, releasing it returns to a key still held (legato, no
+  retrigger). Velocity sets loudness, pitch bend is ±2 semitones, the voice's octave
   applies. Held keys take over from the voice's sequence (it keeps counting and resumes
   on its next step once all keys are up); stopping the transport doesn't cut held keys.
   All-notes-off / all-sound-off (CC 123 / 120), unplugging the device or switching input
