@@ -193,13 +193,36 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     editedBadge.classList.toggle('seed-off', !on);
     revertBtn.classList.toggle('seed-off', !on);
   };
+  // The entry's description and "Edit as formula" live in the head row: on the wide shell the
+  // description is one line (click to expand; the full text is its tooltip), on a phone it wraps
+  // below the head.
+  const aboutLine = h('span', { class: 'seed-about-line', id: 'seed-about', tabindex: 0, role: 'button', 'aria-expanded': 'false' });
+  const toggleAbout = () => {
+    const open = !aboutLine.classList.contains('open');
+    aboutLine.classList.toggle('open', open);
+    aboutLine.setAttribute('aria-expanded', String(open));
+    mainDirty = true;
+  };
+  aboutLine.addEventListener('click', toggleAbout);
+  aboutLine.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    ev.preventDefault();
+    toggleAbout();
+  });
+  const asSlot = h('span', { class: 'seed-as-slot' });
+  const setAbout = (text: string, asBtn: HTMLElement | null) => {
+    aboutLine.textContent = text;
+    aboutLine.title = text;
+    aboutLine.hidden = !text;
+    asSlot.replaceChildren(...(asBtn ? [asBtn] : []));
+  };
   const edBody = h('div', { class: 'seed-editor-body' });
   const errEl = h('div', { class: 'error', id: 'seed-error', role: 'status' });
   let exprInput: HTMLInputElement | null = null;
   const editor = h(
     'div',
     { class: 'gen-box seed-editor' },
-    h('div', { class: 'gen-box-head' }, edKind, edPath, editedBadge, revertBtn),
+    h('div', { class: 'gen-box-head' }, edKind, edPath, aboutLine, editedBadge, revertBtn, asSlot),
     edBody,
     errEl,
   );
@@ -382,6 +405,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
           (v) => setParam(e, p.key, Number(v)),
         );
         f.select.id = `seed-param-${p.key}`;
+        f.el.title = p.label;
         paramInputs.push(f.select);
         return f.el;
       }
@@ -395,6 +419,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         onInput: (v) => setParam(e, p.key, v),
       });
       s.input.id = `seed-param-${p.key}`;
+      s.el.title = p.label;
       paramInputs.push(s.input);
       return s.el;
     });
@@ -413,6 +438,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       ca: 'Each generation’s cells become ±1 steps of one waveform; a batch is N consecutive generations from the start.',
     };
     if (e.mode === 'formula') {
+      setAbout('', null);
       edBody.replaceChildren(formulaInput(e), ...legend());
     } else if (hasSource(e)) {
       // Basic presets: the expression (built-in function or naive formula), Pulse's sliders below it.
@@ -426,12 +452,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
             ? hints.pulse
             : 'The naive formula: ±1 by comparing t with the width (identical to the band-limited pulse once shaped).';
       const controls = e.mode === 'pulse' ? [h('div', { class: 'seed-params' }, ...paramControls(e))] : [];
-      edBody.replaceChildren(
-        h('div', { class: 'seed-source-row' }, sourceSeg(e), formulaInput(e)),
-        ...legend(),
-        ...controls,
-        h('p', { class: 'hint' }, `${about} `, asFormulaButton(e, () => exprOf(e))),
-      );
+      setAbout(about, asFormulaButton(e, () => exprOf(e)));
+      edBody.replaceChildren(h('div', { class: 'seed-source-row' }, sourceSeg(e), formulaInput(e)), ...legend(), ...controls);
       syncParamLock();
     } else {
       const controls = paramControls(e);
@@ -455,7 +477,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         controls.unshift(h('label', { class: 'seed-formula' }, h('span', { class: 'seed-f' }, 'Text'), text));
       }
       const asF = asFormulaButton(e, () => modeFormula(e, paramsOf(e), { glyphChars: glyphChars(e), contourOf }));
-      edBody.replaceChildren(h('div', { class: 'seed-params' }, ...controls), h('p', { class: 'hint' }, `${e.about ?? hints[e.mode] ?? ''} `, asF));
+      setAbout(e.about ?? hints[e.mode] ?? '', asF);
+      // Many parameters (Additive designer): narrower cells, so they still fit in few rows.
+      edBody.replaceChildren(h('div', { class: `seed-params${controls.length >= 10 ? ' dense' : ''}` }, ...controls));
     }
   };
 

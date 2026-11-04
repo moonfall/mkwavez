@@ -99,6 +99,7 @@ async function run(label, url, browser) {
 
   // Seed: library, formula / params, preview, batch strip, adds.
   await seedChecks(page, tlCount);
+  await seedFitChecks(page);
 
   // Timeline selection by click.
   await page.$eval('#timeline-scroll', (s) => (s.scrollLeft = 0));
@@ -279,6 +280,38 @@ async function run(label, url, browser) {
   }
   assert(errors.length === 0, `no console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
   await page.close();
+}
+
+/**
+ * Every Seed library page fits the Generate panel on the wide shell (1440 × 900, and 1180 × 820
+ * beside the Wavetables panel): the panel body doesn't scroll and the viewer keeps ≥ 50 px.
+ * Restores the phone viewport with Saw selected (as seedChecks leaves it).
+ */
+async function seedFitChecks(page) {
+  const search0 = await page.inputValue('#seed-search');
+  for (const [w, h] of [
+    [1440, 900],
+    [1180, 820],
+  ]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(150);
+    await page.fill('#seed-search', '');
+    const ids = await page.$$eval('#seed-list .gen-entry', (bs) => bs.map((b) => b.dataset.id));
+    const bad = [];
+    for (const id of ids) {
+      await page.click(`#seed-list .gen-entry[data-id="${id}"]`);
+      const r = await page.evaluate(() => {
+        const body = document.querySelector('#sec-generate .panel-body');
+        return { over: body.scrollHeight - body.clientHeight, viewer: document.querySelector('#panel-seed .gen-viewer').offsetHeight };
+      });
+      if (r.over > 0 || r.viewer < 50) bad.push(`${id} (+${r.over} px, viewer ${r.viewer})`);
+    }
+    assert(ids.length > 50 && !bad.length, `${w}×${h}: every Seed page fits without scrolling (${ids.length} entries${bad.length ? `; ${bad.join(', ')}` : ''})`);
+  }
+  await page.click('#seed-list .gen-entry[data-id="saw"]');
+  await page.fill('#seed-search', search0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(150);
 }
 
 /**
