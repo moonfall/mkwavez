@@ -18,7 +18,7 @@ import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from '
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, icon, ICONS } from './dom';
 import { buildLibrary } from './library';
-import { buildShapeOnAdd } from './shapeOnAdd';
+import { buildShapeOnAdd, SHAPE_CARDS_MS } from './shapeOnAdd';
 
 /** Minimum interval between preview restarts while a control is dragged. */
 const PREVIEW_MS = 50;
@@ -730,8 +730,12 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   const drawCards = () => {
     cardsDirty = false;
     const cur = ready() && job?.key === keyOf(model.breedParents, request()) ? job : null;
+    const deadline = performance.now() + SHAPE_CARDS_MS;
     strip.cards.forEach((c, i) => {
-      const t = cur && i < cur.req.count ? shaped(cur, cur.tables[i], i) : undefined;
+      const raw = cur && i < cur.req.count ? cur.tables[i] : undefined;
+      // Shaping (Shape chip) within a per-frame budget: the rest next frame.
+      const t = raw && shapeOn.applyWithin(raw, { index: i, count: cur!.req.count }, deadline);
+      if (raw && !t) cardsDirty = true;
       // Keep the previous drawing until the current job has computed this card.
       if (c.drawn === t || (!t && ready())) return;
       c.drawn = t;

@@ -519,6 +519,21 @@ describe('Autosaver', () => {
     expect(r.ui).toEqual({ tab: 'Seed' });
   });
 
+  it('saves Shape chain edits and saved chains', async () => {
+    const m = new AppModel(64);
+    m.loadState(defaultSessionState());
+    const { saver, be } = saverFor(m);
+    m.saveShapeChain('Mine');
+    expect(saver.status).toBe('pending');
+    await saver.flush();
+    m.setShapeChain({ ...m.shapeChain, varySeed: true });
+    expect(saver.status).toBe('pending');
+    await saver.flush();
+    const r = restore(be);
+    expect(r.model.shapeChains?.map((c) => c.chain.name)).toEqual(['Mine']);
+    expect(r.model.shapeChain?.varySeed).toBe(true);
+  });
+
   it('writes each waveform once (incremental) and deletes evicted ones', async () => {
     const m = new AppModel(70);
     m.loadState(defaultSessionState());

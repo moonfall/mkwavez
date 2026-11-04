@@ -2252,8 +2252,20 @@ async function shapeChecks(page, tlCount) {
   assert((await M((id) => window.mkwavez.model.wavetable(id).rows[0].join(), wt.id)) === wt.ids.join(), 'undo restores the slots');
   await page.uncheck('#shape-writeback');
   await page.selectOption('#shape-apply', 'sel');
+  // One slot: Write back is still offered.
+  const wt1 = await M(() => {
+    const m = window.mkwavez.model;
+    const w = m.createWavetable('1d');
+    m.placeInWavetable(w.id, { kind: 'gap', x: 0, y: 0 }, m.timeline[0].id);
+    return w.id;
+  });
+  await page.selectOption('#shape-apply', `w:${wt1}`);
+  await page.check('#shape-writeback');
+  assert((await page.isVisible('#shape-add-batch')) && (await page.textContent('#shape-add-batch')).trim() === 'Write back 1', 'Write back with a single slot');
+  await page.uncheck('#shape-writeback');
+  await page.selectOption('#shape-apply', 'sel');
   // Don't leave pinned waveforms behind (later checks rely on eviction).
-  await M((id) => window.mkwavez.model.deleteWavetable(id), wt.id);
+  await M((ids) => ids.forEach((id) => window.mkwavez.model.deleteWavetable(id)), [wt.id, wt1]);
 
   // Shape on add: Seed's chip shapes what Add shown adds (recorded in the recipe).
   await page.click('#tab-seed');
@@ -2269,9 +2281,15 @@ async function shapeChecks(page, tlCount) {
   assert((await M(() => window.mkwavez.model.timeline.at(-1).recipe.shape)) === undefined, 'None: unshaped');
   await page.click('#tab-shape');
 
+  // The tallest settings: a harmonic Add with a seeded phase, swept (two settings rows, seed box).
+  await page.selectOption('#shape-chains', 'f:warm-fold-organ');
+  await page.click('#shape-step-3');
+  await page.selectOption('#shape-hmode', 'add');
+  await page.selectOption('#shape-hphase', 'random');
+  await page.click('#shape-sweep');
   await page.setViewportSize({ width: 1180, height: 820 });
   await page.waitForTimeout(150);
-  assert((await genFits()) && (await fitsScreen(page)), '1180×820: Shape fits the Generate panel');
+  assert((await genFits()) && (await fitsScreen(page)), '1180×820: Shape fits the Generate panel (tallest settings)');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(150);
   assert((await M(() => document.documentElement.scrollWidth - innerWidth)) <= 0 && (await page.isVisible('#shape-ed')), '390px: Shape stacks without sideways overflow');

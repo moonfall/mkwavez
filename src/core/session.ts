@@ -458,7 +458,8 @@ export function decodeSession(raw: unknown, records: Records, o: DecodeOptions =
         breedParents,
         bpm,
         voicePresets: normalizePresets(m.voicePresets),
-        shapeChain: m.shapeChain === undefined ? DEFAULT_CHAIN : normalizeChain(m.shapeChain),
+        // Missing or not an object (older or damaged sessions): the default chain.
+        shapeChain: m.shapeChain && typeof m.shapeChain === 'object' ? normalizeChain(m.shapeChain) : DEFAULT_CHAIN,
         shapeChains: normalizeSavedChains(m.shapeChains),
       },
       ui: isObj(m.ui) ? m.ui : {},

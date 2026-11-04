@@ -3240,6 +3240,16 @@ button.shape-chip:not(.on) .shape-chip-v {
     min-width: 90px;
   }
 }
+/* 1180-wide shell (main column ~565 px): the batch row stays one line. */
+@container shape-main (max-width: 620px) {
+  .shape .gen-batch-head > .gen-h,
+  .shape .gen-seedbox .mono-label {
+    display: none;
+  }
+  #shape-apply {
+    max-width: 112px;
+  }
+}
 @container shape-main (max-width: 700px) {
   .shape .gen-batch-head {
     flex-wrap: wrap;

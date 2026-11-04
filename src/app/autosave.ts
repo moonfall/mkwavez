@@ -55,7 +55,7 @@ export interface AutosaveOptions {
   chunk?: number;
 }
 
-const TOPICS: Topic[] = ['timeline', 'wavetables', 'selection', 'voices', 'sequences', 'transport', 'parents', 'presets'];
+const TOPICS: Topic[] = ['timeline', 'wavetables', 'selection', 'voices', 'sequences', 'transport', 'parents', 'presets', 'shape'];
 
 export function isQuotaError(e: unknown): boolean {
   const name = (e as { name?: unknown } | null)?.name;

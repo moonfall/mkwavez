@@ -9,7 +9,7 @@ import type { ModelState } from '../core/session';
 import { DEFAULT_STEP_LENGTH, emptySteps, isStepLength, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
-import { chainJson, normalizeChain, type ShapeChain } from '../core/shapeChain';
+import { chainJson, MAX_CHAIN_NAME, normalizeChain, type ShapeChain } from '../core/shapeChain';
 import { DEFAULT_CHAIN, MAX_SAVED_CHAINS, uniqueName, type SavedChain } from '../core/shapeFactory';
 import { MAX_USER_PRESETS, presetPatch, resolvePresetWavetable, soundOf as presetSoundOf, type PresetSound, type VoicePreset } from '../core/presets';
 
@@ -530,7 +530,7 @@ export class AppModel {
    * list is full or the name is empty.
    */
   saveShapeChain(name: string): SavedChain | null {
-    const nm = name.trim().slice(0, 60);
+    const nm = name.trim().slice(0, MAX_CHAIN_NAME);
     if (!nm) return null;
     const existing = this.savedChainNamed(nm);
     if (!existing && this.shapeChains.length >= MAX_SAVED_CHAINS) return null;
@@ -564,14 +564,18 @@ export class AppModel {
     return added.length;
   }
 
+  /**
+   * A saved-chain id never used before (not even by a deleted chain: a Shape chip that
+   * pointed at a deleted chain must not pick up a new one): time-based plus a counter.
+   */
   private chainId(offset = 0): string {
-    let n = 1;
-    for (const c of this.shapeChains) {
-      const m = /^chain-(\d+)$/.exec(c.id);
-      if (m) n = Math.max(n, Number(m[1]) + 1);
+    const used = new Set(this.shapeChains.map((c) => c.id));
+    for (;;) {
+      const id = `chain-${Date.now().toString(36)}${(this.chainSeq++ + offset).toString(36)}`;
+      if (!used.has(id)) return id;
     }
-    return `chain-${n + offset}`;
   }
+  private chainSeq = 0;
 
   // ---- voice presets ----
 

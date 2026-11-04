@@ -18,7 +18,12 @@ export interface ShapeOnAdd {
   chain(): ShapeChain | null;
   /** t shaped by the chosen chain at its batch position (t itself when none); memoised per table. */
   apply(t: GeneratedTable, b: BatchPos): GeneratedTable;
+  /** Like apply(), but undefined if it isn't memoised and `deadline` (performance.now()) has passed: try again next frame. */
+  applyWithin(t: GeneratedTable, b: BatchPos, deadline: number): GeneratedTable | undefined;
 }
+
+/** Main-thread time a tab's card drawing may spend shaping per frame. */
+export const SHAPE_CARDS_MS = 6;
 
 /** Menu item id for a choice value ('none', 'tab', 'f:<id>', 'u:<id>'). */
 export const shapeChoiceId = (prefix: string, value: string) => `${prefix}-shape-${value.replace(':', '-')}`;
@@ -82,9 +87,16 @@ export function buildShapeOnAdd(ctx: UiContext, prefix: string, onChange: () => 
   sync(false);
 
   const memo = new WeakMap<GeneratedTable, { json: string; out: GeneratedTable }>();
-  return {
+  const self: ShapeOnAdd = {
     el,
     chain: () => resolve(choice()),
+    applyWithin(t, b, deadline) {
+      const c = resolve(choice());
+      if (!c || !c.steps.some((s) => s.on)) return t;
+      const m = memo.get(t);
+      if (m && m.json === (lastJson || chainJson(c))) return m.out;
+      return performance.now() < deadline ? self.apply(t, b) : undefined;
+    },
     apply(t, b) {
       const c = resolve(choice());
       if (!c || !c.steps.some((s) => s.on)) return t;
@@ -98,4 +110,5 @@ export function buildShapeOnAdd(ctx: UiContext, prefix: string, onChange: () => 
       return out;
     },
   };
+  return self;
 }

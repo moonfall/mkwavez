@@ -19,6 +19,7 @@ import {
   applyChain,
   batchUOf,
   chainJson,
+  MAX_CHAIN_NAME,
   EMPTY_CHAIN,
   recipeChain,
   chainStages,
@@ -285,7 +286,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const saveAs = () => {
       const name = prompt('Save the chain as', isFactory ? `${c.name} (mine)` : c.name);
       if (name === null) return;
-      if (model.savedChainNamed(name.trim()) && !confirm(`Replace your saved chain “${name.trim()}”?`)) return;
+      const nm = name.trim().slice(0, MAX_CHAIN_NAME);
+      if (model.savedChainNamed(nm) && !confirm(`Replace your saved chain “${nm}”?`)) return;
       const r = model.saveShapeChain(name);
       flash(r ? `Saved “${r.chain.name}”` : 'Not saved: the name is empty or your list is full', !r);
     };
@@ -926,7 +928,10 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const specs = (inp: ArrayLike<number>, out: ArrayLike<number>) => {
     if (!specCache || specCache.a !== inp || specCache.b !== out) specCache = { a: inp, b: out, mi: dbOf(inp), mo: dbOf(out) };
     const ref = Math.max(...specCache.mi.slice(1), ...specCache.mo.slice(1));
-    return { di: toDb(specCache.mi, ref), dout: toDb(specCache.mo, ref) };
+    const inMax = Math.max(...specCache.mi.slice(1));
+    // A drawn set's levels are relative to the input's strongest harmonic; the plot's to the stronger of both.
+    const drawnOffset = ref > 0 && inMax > 0 ? 20 * Math.log10(inMax / ref) : 0;
+    return { di: toDb(specCache.mi, ref), dout: toDb(specCache.mo, ref), drawnOffset };
   };
 
   // Plot geometry ↔ drawing coordinates.
@@ -1083,9 +1088,11 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         g.lineWidth = 2;
         g.beginPath();
         const bw = (w / KMAX) * 0.8;
+        const off = specs(inp, out).drawnOffset;
         s.set.mags.forEach((db, i) => {
-          if (db <= HARM_DB[0]) return;
-          const y = Math.round(((hh - DOTS_H) * -db) / -HARM_DB[0]) + 0.5;
+          // Harmonic 1 follows "Fundamental in set", not its bar.
+          if (db <= HARM_DB[0] || (i === 0 && !s.fundamental)) return;
+          const y = Math.round(((hh - DOTS_H) * -Math.max(HARM_DB[0], db + off)) / -HARM_DB[0]) + 0.5;
           const cx = ((i + 0.5) / KMAX) * w;
           g.moveTo(cx - bw / 2, y);
           g.lineTo(cx + bw / 2, y);
@@ -1145,7 +1152,9 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const [u, db0] = fromPx(e.clientX - r.left, e.clientY - r.top, r.width, r.height);
     const k = clamp(Math.round(1 + u * (KMAX - 1)), 1, KMAX);
     // The bottom few dB (and the dots row) remove the harmonic.
-    const db = db0 <= HARM_DB[0] + 2 ? HARM_DB[0] : Math.round(db0 * 10) / 10;
+    const st = stages();
+    const off = st ? specs(st.inp, st.out).drawnOffset : 0;
+    const db = db0 <= HARM_DB[0] + 2 ? HARM_DB[0] : clamp(Math.round((db0 - off) * 10) / 10, HARM_DB[0] + 0.1, HARM_DB[1]);
     const k0 = painting.lastK;
     const from = Math.min(k0, k);
     const to = Math.max(k0, k);
@@ -1262,12 +1271,13 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const seedLabel = h('span', { id: 'shape-seed', class: 'mono-label', title: 'The chain’s seed (saved with it)' });
   const varyBox = h('input', { type: 'checkbox', id: 'shape-vary' });
   varyBox.addEventListener('change', () => setChain((c) => ({ ...c, varySeed: varyBox.checked })));
+  const rerollBtn = h('button', { id: 'shape-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => setChain((c) => ({ ...c, seed: randomSeed() })) }, 'Reroll');
   const seedBox = h(
     'div',
     { class: 'gen-seedbox', id: 'shape-seedbox' },
     h('span', {}, 'Seed'),
     seedLabel,
-    h('button', { id: 'shape-reroll', class: 'small', 'aria-label': 'Reroll the seed', onclick: () => setChain((c) => ({ ...c, seed: randomSeed() })) }, 'Reroll'),
+    rerollBtn,
     h('label', { class: 'shape-check', title: 'Seeded steps use a different seed for each waveform of the batch' }, varyBox, 'Vary'),
   );
   const applyPick = h('select', { id: 'shape-apply', 'aria-label': 'Apply the chain to', title: 'What the chain applies to' });
@@ -1326,7 +1336,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const syncBatch = () => {
     const n = batchN();
     const sweeps = n > 1;
-    const sig = JSON.stringify([n, chain().steps.map((s) => (s.on ? [s.amount, s.amountEnd] : 0)), chain().varySeed, applyTo, targets().tables.map((t) => t.id)]);
+    const sig = JSON.stringify([n, chain().steps.map((s) => (s.on ? [s.amount, s.amountEnd] : 0)), chain().varySeed, applyTo, targets().tables.map((t) => [t.id, model.indexOf(t.id)])]);
     if (sig !== stripSig) {
       const atEnd = strip.shown() >= strip.cards.length - 1;
       stripSig = sig;
@@ -1341,12 +1351,13 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     writeBox.disabled = !!wt?.live;
     writeLabel.title = wt?.live ? 'Freeze the wavetable to write back into it (a Live one takes every add)' : 'Put each result in its source’s slot (one undo step)';
     stepper.el.hidden = multi() || !sweeps;
-    addBatchBtn.hidden = !sweeps;
+    addBatchBtn.hidden = !sweeps && !writingBack();
     addBatchBtn.textContent = writingBack() ? `Write back ${n}` : `Add +${n}`;
     addShownBtn.textContent = sweeps ? 'Add shown' : 'Add';
     addShownBtn.hidden = writingBack();
     seedBox.hidden = !chainUsesSeed(chain());
     seedLabel.textContent = hex(chain().seed);
+    rerollBtn.title = `Seed ${hex(chain().seed)} — reroll it`;
     varyBox.checked = chain().varySeed;
     srcDirty = true;
   };
@@ -1393,6 +1404,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const t = computeOne(j, i);
     if (silent(t)) return flash(SILENT, true);
     if (!model.addTables([t], false).length) return; // refused (Timeline full): the notice says why
+    if (applyTo === 'last') return fromLastBatchDone(1);
     flash(multi() ? `Added the result for ${cardLabel(i, j.n).split(' ')[0]} to the Timeline` : j.n > 1 ? `Added #${i + 1} to the Timeline (the source stays selected)` : 'Added to the Timeline (the source stays selected)');
   };
   const addBatch = () => {
@@ -1406,7 +1418,17 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       return flash(`Wrote ${tables.length} results back into ${t.label} (one undo step)`);
     }
     if (!model.addTables(tables, false).length) return;
+    if (applyTo === 'last') return fromLastBatchDone(tables.length);
     flash(multi() ? `Added ${tables.length} results to the Timeline (one per source)` : `Added ${tables.length} waveforms to the Timeline (the source stays selected)`);
+  };
+  /** After adding from Last batch, it holds the results: go back to the selection rather than shape them again. */
+  const fromLastBatchDone = (n: number) => {
+    applyTo = 'sel';
+    targetsCache = null;
+    applyPick.value = 'sel';
+    syncBatch();
+    onSource();
+    flash(`Added ${n} result${n === 1 ? '' : 's'}; Last batch now holds them, so Apply to is back on Selection`);
   };
 
   const drawCards = () => {

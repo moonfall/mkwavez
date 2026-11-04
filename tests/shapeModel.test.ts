@@ -47,9 +47,19 @@ describe('Shape chain in the model', () => {
     expect(m.importShapeChains([m.shapeChain, m.shapeChain])).toBe(2);
     expect(m.shapeChains.map((c) => c.chain.name)).toEqual(['Warm', 'Warm 2', 'Warm 3']);
     expect(new Set(m.shapeChains.map((c) => c.id)).size).toBe(3);
+    const gone = m.shapeChains[2].id;
     m.deleteShapeChain(m.shapeChains[1].id);
     expect(m.shapeChains.map((c) => c.chain.name)).toEqual(['Warm', 'Warm 3']);
+    // A deleted chain's id is never handed out again (a Shape chip may still point at it).
+    m.deleteShapeChain(gone);
+    const again = m.saveShapeChain('Fresh')!;
+    expect(again.id).not.toBe(gone);
+    expect(normalizeSavedChains(m.shapeChains).map((c) => c.id)).toEqual(m.shapeChains.map((c) => c.id));
     expect(m.importShapeChains(Array.from({ length: 100 }, () => DEFAULT_CHAIN))).toBe(MAX_SAVED_CHAINS - 2);
+    const long = 'x'.repeat(60);
+    const n2 = model();
+    n2.importShapeChains([{ ...DEFAULT_CHAIN, name: long }, { ...DEFAULT_CHAIN, name: long }]);
+    expect(n2.shapeChains.map((c) => c.chain.name)).toEqual([long, `${'x'.repeat(58)} 2`]);
     expect(m.saveShapeChain('One more')).toBeNull();
   });
 
@@ -79,7 +89,7 @@ describe('Shape chain in the model', () => {
     expect(parseChainsFile(chainsFile(list))).toEqual(list);
     expect(() => parseChainsFile('{"format":"other"}')).toThrow();
     expect(() => parseChainsFile('nope')).toThrow();
-    const fixed = normalizeSavedChains([{ id: 'chain-1', chain: DEFAULT_CHAIN }, { id: 'chain-1', chain: DEFAULT_CHAIN }, { id: 'evil', chain: {} }, 7]);
+    const fixed = normalizeSavedChains([{ id: 'chain-1', chain: DEFAULT_CHAIN }, { id: 'chain-1', chain: DEFAULT_CHAIN }, { id: 'evil!', chain: {} }, { id: 'chain-9' }, 7]);
     expect(fixed.map((c) => c.id)).toEqual(['chain-1', 'chain-2', 'chain-3']);
     expect(fixed.map((c) => c.chain.name)).toEqual([DEFAULT_CHAIN.name, `${DEFAULT_CHAIN.name} 2`, 'Untitled chain']);
   });

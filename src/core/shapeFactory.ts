@@ -2,7 +2,7 @@
  * Factory Shape chains (read-only; the Shape tab's chain picker lists them before the
  * user's saved chains). Built through normalizeChain, so they are canonical.
  */
-import { normalizeChain, type ShapeChain } from './shapeChain';
+import { MAX_CHAIN_NAME, normalizeChain, type ShapeChain } from './shapeChain';
 
 export interface FactoryChain {
   readonly id: string;
@@ -81,8 +81,10 @@ export function normalizeSavedChains(raw: unknown): SavedChain[] {
     if (out.length >= MAX_SAVED_CHAINS) break;
     if (!r || typeof r !== 'object') continue;
     const o = r as { id?: unknown; chain?: unknown };
+    // An entry without a chain is dropped (not turned into an empty one).
+    if (!o.chain || typeof o.chain !== 'object') continue;
     const chain = normalizeChain(o.chain);
-    let id = typeof o.id === 'string' && /^chain-\d+$/.test(o.id) ? o.id : '';
+    let id = typeof o.id === 'string' && /^chain-[a-z0-9]{1,24}$/.test(o.id) ? o.id : '';
     while (!id || ids.has(id)) id = `chain-${++n}`;
     ids.add(id);
     out.push({ id, chain: { ...chain, name: uniqueName(chain.name, names) } });
@@ -91,10 +93,14 @@ export function normalizeSavedChains(raw: unknown): SavedChain[] {
   return out;
 }
 
-/** `base`, or `base 2`, `base 3`, … — the first not in `used`. */
+/** `base`, or `base 2`, `base 3`, … — the first not in `used`, kept within MAX_CHAIN_NAME characters. */
 export function uniqueName(base: string, used: ReadonlySet<string>): string {
   if (!used.has(base)) return base;
-  for (let i = 2; ; i++) if (!used.has(`${base} ${i}`)) return `${base} ${i}`;
+  for (let i = 2; ; i++) {
+    const tail = ` ${i}`;
+    const name = `${base.slice(0, MAX_CHAIN_NAME - tail.length)}${tail}`;
+    if (!used.has(name)) return name;
+  }
 }
 
 /** The export file for a list of chains. */

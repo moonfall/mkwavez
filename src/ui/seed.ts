@@ -18,7 +18,7 @@ import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './c
 import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { h, selectField, slider } from './dom';
 import { buildLibrary } from './library';
-import { buildShapeOnAdd } from './shapeOnAdd';
+import { buildShapeOnAdd, SHAPE_CARDS_MS } from './shapeOnAdd';
 
 /** Minimum interval between preview restarts while typing / dragging. */
 const PREVIEW_MS = 50;
@@ -578,11 +578,15 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const drawCards = () => {
     cardsDirty = false;
     const cur = currentEntryJob();
+    const deadline = performance.now() + SHAPE_CARDS_MS;
     strip.cards.forEach((c, i) => {
       const err = cur && i < cur.req.count ? cur.errors[i] : undefined;
       c.el.classList.toggle('failed', !!err);
       c.el.title = err ? `Error: ${err}` : '';
-      const t = cur && i < cur.req.count ? finalTable(cur, i) : undefined;
+      const raw = cur && i < cur.req.count ? cur.tables[i] : undefined;
+      // Shaping (Shape chip) within a per-frame budget: the rest next frame.
+      const t = raw && shapeOn.applyWithin(raw, { index: i, count: cur!.req.count }, deadline);
+      if (raw && !t) cardsDirty = true;
       // Keep the previous drawing while a restarted job computes this card.
       if (c.drawn === t || (!t && c.drawn && cur && !err && !cur.fatal)) return;
       c.drawn = t;
