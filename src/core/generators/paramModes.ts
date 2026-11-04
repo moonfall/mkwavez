@@ -266,7 +266,7 @@ export type ParamModeId = (typeof PARAM_MODES)[number]['mode'];
 export const RESERVED_PARAM_KEYS: readonly string[] = ['preset', 'name'];
 
 /** Recipe ops that are not parameter modes (a mode may not reuse one). */
-export const RESERVED_OPS: readonly string[] = ['basic', 'pulse', 'formula', 'perlin', 'ca', 'mutate', 'breed'];
+export const RESERVED_OPS: readonly string[] = ['basic', 'pulse', 'formula', 'perlin', 'ca', 'mutate', 'breed', 'shape'];
 
 {
   const seen = new Set<string>(RESERVED_OPS);

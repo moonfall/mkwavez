@@ -20,6 +20,11 @@ export interface Recipe {
   readonly parents: readonly TableId[];
   /** Position within the batch that produced this table, if any. */
   readonly batch?: { readonly index: number; readonly count: number };
+  /**
+   * A Shape chain (canonical JSON, core/shapeChain.ts) applied after the op: set on tables
+   * shaped on add (Seed / Mutate / Breed's Shape chip). Absent = unshaped.
+   */
+  readonly shape?: string;
 }
 
 /** An immutable, shaped, single-cycle table plus its recipe. Never mutate `data`. */
@@ -60,8 +65,19 @@ export function copyRecipe(parentId: TableId, r: Recipe): Recipe {
 
 /** Short human-readable recipe summary for UI labels. */
 export function describeRecipe(r: Recipe): string {
-  const desc = describeOp(r);
+  let desc = describeOp(r);
+  if (r.shape !== undefined) desc += ` · shaped: ${shapeName(r.shape)}`;
   return r.params.copyOf === undefined ? desc : `${desc} · copy of id ${String(r.params.copyOf)}`;
+}
+
+/** A chain's name from its JSON, without depending on core/shapeChain.ts. */
+function shapeName(json: string): string {
+  try {
+    const n = (JSON.parse(json) as { name?: unknown }).name;
+    return typeof n === 'string' && n ? n : 'chain';
+  } catch {
+    return 'chain';
+  }
 }
 
 function describeOp(r: Recipe): string {
@@ -89,6 +105,10 @@ function describeOp(r: Recipe): string {
       const mode = p.mode === 'gen' ? ' gen' : '';
       const label = BREED_OPS.find((o) => o.id === p.breed)?.label ?? String(p.breed);
       return `${label} ${pct}%${mode}${b} of id ${r.parents.join('×')}`;
+    }
+    case 'shape': {
+      const n = Number(p.steps);
+      return `${p.name ? String(p.name) : 'Shape'} · ${n} step${n === 1 ? '' : 's'}${b} of id ${r.parents.join('×')}`;
     }
     default:
       // Parameter modes (core/generators/paramModes.ts) record their library name.

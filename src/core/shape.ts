@@ -6,6 +6,8 @@ export interface ShapeOptions {
   lowpassHarmonic?: number;
   /** Highest harmonic kept (default KMAX). */
   kmax?: number;
+  /** Rotate so the fundamental has sine phase (default true). Shape chains may turn it off. */
+  align?: boolean;
 }
 
 /** Relative magnitude below which a harmonic is considered absent for phase alignment. */
@@ -17,7 +19,7 @@ const ALIGN_EPS = 1e-6;
  *  2. Remove DC, zero harmonics above kmax, optional Gaussian low-pass.
  *  3. Rotate (exact fractional circular shift, done in the frequency domain) so the
  *     fundamental has sine phase (-pi/2 in cosine terms). If the fundamental is absent,
- *     the lowest present harmonic is aligned instead.
+ *     the lowest present harmonic is aligned instead. Skipped with `align: false`.
  *  4. Inverse FFT and peak-normalise to +-1.
  *
  * Input may be any length-2048 numeric array; output is a new Float32Array.
@@ -45,7 +47,7 @@ export function shape(x: ArrayLike<number>, opts: ShapeOptions = {}): Float32Arr
   }
 
   // Phase alignment: choose the lowest harmonic with meaningful energy.
-  if (maxMag > 0) {
+  if (maxMag > 0 && opts.align !== false) {
     let k0 = 0;
     for (let k = 1; k <= kmax; k++) {
       if (Math.hypot(re[k], im[k]) > maxMag * ALIGN_EPS) {

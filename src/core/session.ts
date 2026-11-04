@@ -169,7 +169,7 @@ export class RenderCache {
 
   render(r: Recipe): Float32Array {
     const { copyOf: _copyOf, ...params } = r.params;
-    const key = JSON.stringify([r.op, params, r.seed, r.batch ?? null]);
+    const key = JSON.stringify([r.op, params, r.seed, r.batch ?? null, r.shape ?? null]);
     let d = this.map.get(key);
     if (!d) {
       d = renderRecipe(r);
@@ -688,5 +688,6 @@ function isNum(x: unknown): x is number {
 
 function isRecipe(r: unknown): r is Recipe {
   if (!isObj(r) || typeof r.op !== 'string' || !isObj(r.params) || !Array.isArray(r.parents)) return false;
+  if (r.shape !== undefined && typeof r.shape !== 'string') return false;
   return Object.values(r.params).every((v: unknown): v is ParamValue => ['number', 'string', 'boolean'].includes(typeof v));
 }

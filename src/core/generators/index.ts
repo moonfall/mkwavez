@@ -1,5 +1,6 @@
 import { renderBreedRecipe } from '../breed';
 import { renderMutateRecipe } from '../mutateBatch';
+import { applyChain, recipeChain, renderShapeRecipe, SHAPE_OP } from '../shapeChain';
 import type { Recipe, TableId } from '../table';
 import { basicWave, pulse, type BasicWave } from './basic';
 import { caGenerations } from './ca';
@@ -29,12 +30,22 @@ export * from './spline';
 export interface RenderEnv {
   /** Needed only for 'formula' recipes (browser: src/browser/formulaEval.ts). */
   compileFormula?: FormulaCompiler;
-  /** Needed only for recipes with parents ('mutate', 'breed'): parent table data by id. */
+  /** Needed only for recipes with parents ('mutate', 'breed', 'shape'): parent table data by id. */
   resolveTable?: (id: TableId) => Float32Array | undefined;
 }
 
-/** Re-render a single table from its recipe (seed generators, mutations, breeds). Deterministic. */
+/**
+ * Re-render a single table from its recipe (seed generators, mutations, breeds, shape
+ * chains), then its shape-on-add chain if it has one. Deterministic.
+ */
 export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
+  const base = renderOp(r, env);
+  if (r.shape === undefined || r.op === SHAPE_OP) return base;
+  const c = recipeChain(r);
+  return c ? applyChain(base, c, r.batch ?? { index: 0, count: 1 }) : base;
+}
+
+function renderOp(r: Recipe, env: RenderEnv): Float32Array {
   const index = r.batch?.index ?? 0;
   const count = r.batch?.count ?? 1;
   const p = r.params;
@@ -74,6 +85,10 @@ export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
     case 'breed': {
       if (!env.resolveTable) throw new Error('renderRecipe: breed needs resolveTable');
       return renderBreedRecipe(r, env.resolveTable);
+    }
+    case SHAPE_OP: {
+      if (!env.resolveTable) throw new Error('renderRecipe: shape needs resolveTable');
+      return renderShapeRecipe(r, env.resolveTable);
     }
     default: {
       const pm = paramMode(r.op);
