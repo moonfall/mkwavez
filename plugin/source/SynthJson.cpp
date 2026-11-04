@@ -14,13 +14,14 @@ const char* const NOISE_TYPES[] = {"white", "pink"};
 const char* const PITCH_TARGETS[] = {"a", "b", "ab"};
 const char* const MOD_MODES[] = {"ad", "adsr"};
 const char* const WARP_MODES[] = {"none", "sync", "formant", "bend", "squeeze", "quantize", "fold"};
-const char* const LFO_SHAPES[] = {"sine", "tri", "saw", "square", "sh", "smooth"};
+const char* const LFO_SHAPES[] = {"sine", "tri", "saw", "square", "sh", "smooth", "rise", "fall"};
 const char* const LFO_DIVS[] = {"8/1", "4/1", "2/1", "1/1", "1/2", "1/2D", "1/2T", "1/4", "1/4D", "1/4T", "1/8", "1/8D", "1/8T", "1/16", "1/16T", "1/32"};
 const char* const MOD_SOURCES[] = {"lfo1", "lfo2", "lfo3", "fenv", "penv", "menv", "vel", "wheel", "at", "key", "rand",
-                                   "macro1", "macro2", "macro3", "macro4"};
+                                   "macro1", "macro2", "macro3", "macro4", "gate"};
 const char* const MOD_DESTS[] = {"pitchA", "pitchB", "posA", "posYA", "posB", "posYB", "levelA", "levelB", "sub", "noise",
                                  "cutoff", "res", "drive", "amp", "pan", "lfo1Rate", "lfo2Rate", "lfo3Rate",
-                                 "panA", "panB", "fSpread", "warpA", "warpB"};
+                                 "panA", "panB", "fSpread", "warpA", "warpB",
+                                 "fm", "ring", "sat", "width", "detuneA", "detuneB", "lfo1Depth", "lfo2Depth", "lfo3Depth"};
 
 template <size_t N>
 int indexOf(const char* const (&list)[N], const juce::var& v, int fallback) {

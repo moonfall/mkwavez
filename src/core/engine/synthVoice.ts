@@ -32,9 +32,11 @@ import {
   LFO_RATE_MAX_HZ,
 
   lfoRateHz,
+  isOneShot,
   isPeriodicShape,
   lfoWave,
   MOD_CUTOFF_OCTAVES,
+  MOD_DETUNE_CENTS,
   MOD_LFO_RATE_OCTAVES,
   MOD_PITCH_SEMIS,
   N_DESTS,
@@ -374,6 +376,17 @@ export class SynthVoice {
   private readonly lfoPrev = new Float64Array(LFO_COUNT);
   private readonly lfoAge = new Float64Array(LFO_COUNT);
   readonly lfoOut = new Float64Array(LFO_COUNT);
+  /** One-shot LFOs (rise / fall) that finished their cycle since the last note. */
+  private readonly lfoDone = new Uint8Array(LFO_COUNT);
+  /** A note holds the voice's gate (the Gate source). */
+  private gated = false;
+  /** Matrix offsets of FM, saturation and width at the block start / end (ramped; 0 = the knob as is). */
+  private dFm0 = 0;
+  private dFm1 = 0;
+  private dSat0 = 0;
+  private dSat1 = 0;
+  private dW0 = 0;
+  private dW1 = 0;
   /** The right channel's LFO outputs (an LFO's stereo phase; equal to lfoOut otherwise). */
   readonly lfoOutR = new Float64Array(LFO_COUNT);
   /** Some LFO has a stereo phase this block (the matrix is summed for the right channel too). */
@@ -455,6 +468,7 @@ export class SynthVoice {
     const s = p.synth;
     this.target = pitch;
     this.vel = vel;
+    this.gated = true;
     const glide = s.glide > 0 && sounding && (!s.glideLegato || legato);
     if (!glide) this.pitch = pitch;
     if (retrigger) {
@@ -466,7 +480,9 @@ export class SynthVoice {
       for (let i = 0; i < LFO_COUNT; i++) {
         const l = s.lfos[i];
         this.lfoAge[i] = 0;
-        if (l.retrig) {
+        this.lfoDone[i] = 0;
+        if (isOneShot(l.shape)) this.lfoPhase[i] = l.phase;
+        else if (l.retrig) {
           this.lfoPhase[i] = l.phase;
           this.lfoPrev[i] = this.lfoCur[i];
           this.lfoCur[i] = this.modRng.bipolar();
@@ -477,6 +493,7 @@ export class SynthVoice {
   }
 
   gateOff(p: VoiceParams): void {
+    this.gated = false;
     this.fenv.gateOff();
     this.penv.gateOff();
     if (p.synth.mMode !== 'ad') this.menv.gateOff();
@@ -505,7 +522,8 @@ export class SynthVoice {
     const fa = incA * this.maxRatA * sr * this.wsA;
     const fb = incB * this.maxRatB * sr * this.wsB;
     // FM (Carson's rule): sidebands reach (β + 1)·f_B past each harmonic of A, β = 2π·FM_DEPTH·fm.
-    const side = s.fm > 0 ? (TWO_PI * FM_DEPTH * s.fm + 1) * fb : 0;
+    const fmMax = this.dFm0 === 0 && this.dFm1 === 0 ? s.fm : clamp01(s.fm + Math.max(this.dFm0, this.dFm1));
+    const side = fmMax > 0 ? (TWO_PI * FM_DEPTH * fmMax + 1) * fb : 0;
     const limit = MIP_NYQUIST_FRACTION * sr;
     let la = MIP_LEVELS - 1;
     for (let l = 0; l < MIP_LEVELS; l++) {
@@ -526,6 +544,7 @@ export class SynthVoice {
   resync(p: VoiceParams, pitch: number, gated: boolean, sounding: boolean): void {
     this.target = this.pitch = pitch;
     this.configure(p.synth, this.blockLen);
+    this.gated = gated;
     if (gated) {
       this.fenv.gateOn();
       this.penv.gateOn();
@@ -586,7 +605,14 @@ export class SynthVoice {
       const mult = m === 0 ? 1 : Math.pow(2, m * MOD_LFO_RATE_OCTAVES);
       const inc = Math.min(LFO_RATE_MAX_HZ * 2, Math.max(0, lfoRateHz(l, bpm) * mult)) * dt;
       let ph = this.lfoPhase[i] + inc;
-      if (l.sync && !l.retrig && beat >= 0 && m === 0) {
+      const once = isOneShot(l.shape);
+      if (once) {
+        // One cycle from the note, then hold the end (no random draws).
+        if (this.lfoDone[i] || ph >= 1) {
+          ph = 1;
+          this.lfoDone[i] = 1;
+        }
+      } else if (l.sync && !l.retrig && beat >= 0 && m === 0) {
         // Tempo-synced, free-running, transport playing, no rate modulation: steer towards
         // the bar clock's phase (cycles from the transport's beat 0, offset by the start
         // phase) at up to ±½ of its own speed, so it locks without a jump (at Play, or when
@@ -596,7 +622,7 @@ export class SynthVoice {
         d -= Math.round(d);
         ph += Math.max(-0.5 * inc, Math.min(0.5 * inc, d));
       }
-      if (ph >= 1) {
+      if (ph >= 1 && !once) {
         // Only a forward wrap is a new cycle (S&H / smooth random draw their next value).
         ph -= Math.floor(ph);
         this.lfoPrev[i] = this.lfoCur[i];
@@ -607,12 +633,15 @@ export class SynthVoice {
       const age = this.lfoAge[i];
       const fade = l.fade > 0 ? Math.min(1, age / l.fade) : 1;
       this.lfoAge[i] = age + dt;
-      this.lfoOut[i] = lfoWave(l.shape, ph, this.lfoCur[i], this.lfoPrev[i]) * l.depth * fade;
-      if (l.stereo > 0 && l.depth > 0 && isPeriodicShape(l.shape)) {
+      // Depth modulation, like rate: the previous block's matrix.
+      const dm = this.dst[D.lfo1Depth + i];
+      const depth = dm ? clamp01(l.depth + dm) : l.depth;
+      this.lfoOut[i] = lfoWave(l.shape, ph, this.lfoCur[i], this.lfoPrev[i]) * depth * fade;
+      if (l.stereo > 0 && depth > 0 && isPeriodicShape(l.shape)) {
         // The right channel's copy runs `stereo` cycles ahead.
         let phR = ph + l.stereo;
         if (phR >= 1) phR -= 1;
-        this.lfoOutR[i] = lfoWave(l.shape, phR, this.lfoCur[i], this.lfoPrev[i]) * l.depth * fade;
+        this.lfoOutR[i] = lfoWave(l.shape, phR, this.lfoCur[i], this.lfoPrev[i]) * depth * fade;
         stereo = true;
       } else this.lfoOutR[i] = this.lfoOut[i];
     }
@@ -655,6 +684,7 @@ export class SynthVoice {
     src[S.macro2] = s.macro2;
     src[S.macro3] = s.macro3;
     src[S.macro4] = s.macro4;
+    src[S.gate] = this.gated ? 1 : 0;
     applyMatrix(s.mods, src, this.dst);
     const dst = this.dst;
     // The right channel's destinations: the matrix again with the LFOs' right-channel
@@ -675,6 +705,12 @@ export class SynthVoice {
     this.incB0 = this.incB1;
     this.incS0 = this.incS1;
     this.pitches(p, bend);
+    this.dFm0 = this.dFm1;
+    this.dSat0 = this.dSat1;
+    this.dW0 = this.dW1;
+    this.dFm1 = dst[D.fm];
+    this.dSat1 = dst[D.sat];
+    this.dW1 = dst[D.width];
     this.unison(s, c.unisonScale);
     // Warp amounts (smoothed: a jump would be a step in the read phase) and speed-ups.
     this.waA0 = this.waA1;
@@ -758,7 +794,7 @@ export class SynthVoice {
     lv[1] += (clamp01(s.bLevel + dst[D.levelB]) - lv[1]) * this.smooth;
     lv[2] += (clamp01(s.subLevel + dst[D.sub]) - lv[2]) * this.smooth;
     lv[3] += (clamp01(s.noiseLevel + dst[D.noise]) - lv[3]) * this.smooth;
-    lv[4] += (s.ringLevel - lv[4]) * this.smooth;
+    lv[4] += ((dst[D.ring] ? clamp01(s.ringLevel + dst[D.ring]) : s.ringLevel) - lv[4]) * this.smooth;
     // Stereo controls: filter spread (± half on each side) plus a stereo LFO's cutoff
     // difference on the right; right − left levels; oscillator pans; stereo phases; noise width.
     const sm = this.smooth;
@@ -857,8 +893,12 @@ export class SynthVoice {
     if (this.uA === 1) this.phCA = this.phA[0];
     if (this.uB === 1) this.phCB = this.phB[0];
 
-    this.maxRatA = this.place(this.uA, nA, s.aDetune, s.aSpread, this.plA, this.pnA, this.ratA, this.gAL, this.gAR);
-    this.maxRatB = this.place(this.uB, nB, s.bDetune, s.bSpread, this.plB, this.pnB, this.ratB, this.gBL, this.gBR);
+    const dA = this.dst[D.detuneA];
+    const dB = this.dst[D.detuneB];
+    const centsA = dA ? Math.max(0, s.aDetune + dA * MOD_DETUNE_CENTS) : s.aDetune;
+    const centsB = dB ? Math.max(0, s.bDetune + dB * MOD_DETUNE_CENTS) : s.bDetune;
+    this.maxRatA = this.place(this.uA, nA, centsA, s.aSpread, this.plA, this.pnA, this.ratA, this.gAL, this.gAR);
+    this.maxRatB = this.place(this.uB, nB, centsB, s.bSpread, this.plB, this.pnB, this.ratB, this.gBL, this.gBR);
     this.spread = (this.uA > 1 && s.aSpread > 0) || (this.uB > 1 && s.bSpread > 0);
   }
 
@@ -951,9 +991,12 @@ export class SynthVoice {
       let sbL = 0;
       let sbR = 0;
       let b0 = 0;
-      if (this.b.n > 0 && (lb > 0 || lr > 0 || s.fm > 0)) {
+      // FM / saturation / width with their matrix offsets ramped across the block (the knob
+      // value exactly when unmodulated).
+      const fm = this.dFm0 === 0 && this.dFm1 === 0 ? s.fm : clamp01(s.fm + this.dFm0 + (this.dFm1 - this.dFm0) * t);
+      if (this.b.n > 0 && (lb > 0 || lr > 0 || fm > 0)) {
         // FM source: B at its centre pitch (with one copy, that copy).
-        if (s.fm > 0) b0 = readWarp(this.b, this.uB === 1 ? this.phB[0] : this.phCB, t, wmB, wb);
+        if (fm > 0) b0 = readWarp(this.b, this.uB === 1 ? this.phB[0] : this.phCB, t, wmB, wb);
         for (let i = 0; i < this.uB; i++) {
           const w = this.wB0[i] + (this.wB1[i] - this.wB0[i]) * t;
           const v = readWarp(this.b, this.phB[i], t, wmB, wb) * w;
@@ -968,7 +1011,7 @@ export class SynthVoice {
       let saL = 0;
       let saR = 0;
       if (this.a.n > 0) {
-        const fmOff = s.fm > 0 ? s.fm * FM_DEPTH * b0 : 0;
+        const fmOff = fm > 0 ? fm * FM_DEPTH * b0 : 0;
         for (let i = 0; i < this.uA; i++) {
           let ph = this.phA[i] + fmOff;
           ph -= Math.floor(ph);
@@ -1052,13 +1095,15 @@ export class SynthVoice {
       const k = this.k0 + (this.k1 - this.k0) * t;
       const mode = FILTER_MODE_INDEX[s.filterMode];
       const amp = e * this.gain;
-      yL = driveSample(this.filter.process(driveSample(x, this.driveM), mode, g, k), s.sat) * amp;
+      const sat = this.dSat0 === 0 && this.dSat1 === 0 ? s.sat : clamp01(s.sat + this.dSat0 + (this.dSat1 - this.dSat0) * t);
+      yL = driveSample(this.filter.process(driveSample(x, this.driveM), mode, g, k), sat) * amp;
       if (stereo) {
         const gR = cutR === cutL ? g : cutoffG(Math.pow(2, cutR), this.sampleRate);
-        yR = driveSample(this.filterR.process(driveSample(xr, this.driveM), mode, gR, k), s.sat) * (e * this.gainR);
-        if (s.width !== 1) {
+        yR = driveSample(this.filterR.process(driveSample(xr, this.driveM), mode, gR, k), sat) * (e * this.gainR);
+        const width = this.dW0 === 0 && this.dW1 === 0 ? s.width : Math.max(0, Math.min(2, s.width + 2 * (this.dW0 + (this.dW1 - this.dW0) * t)));
+        if (width !== 1) {
           const m = (yL + yR) * 0.5;
-          const d = (yL - yR) * 0.5 * s.width;
+          const d = (yL - yR) * 0.5 * width;
           yL = m + d;
           yR = m - d;
         }

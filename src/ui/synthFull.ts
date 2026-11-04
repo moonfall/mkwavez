@@ -11,7 +11,7 @@ import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
 import { TABLE_SIZE } from '../core/constants';
 import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MACRO_KEYS, MAX_POLY, WARP_LABELS, WARP_MODES, type FilterMode, type OscSource, type SynthParams } from '../core/synth';
-import { isPeriodicShape, LFO_DIVS, LFO_RATE_MAX_HZ, LFO_RATE_MIN_HZ, LFO_SHAPE_LABELS, LFO_SHAPES, type LfoDiv, type LfoParams, type LfoShape } from '../core/modulation';
+import { isOneShot, isPeriodicShape, LFO_DIVS, LFO_RATE_MAX_HZ, LFO_RATE_MIN_HZ, LFO_SHAPE_LABELS, LFO_SHAPES, type LfoDiv, type LfoParams, type LfoShape } from '../core/modulation';
 import type { VoicePatch, VoiceParams } from '../core/voice';
 import { shapeLabel } from '../core/wavetable';
 import { Mix } from '../core/wavetablePlayback';
@@ -360,7 +360,13 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
           commit();
         },
       }, text);
-      synced.push({ sync: (v) => b.setAttribute('aria-pressed', String(get(v)[key])) });
+      synced.push({
+        sync(v) {
+          b.setAttribute('aria-pressed', String(get(v)[key]));
+          // One-shot shapes always restart on a note.
+          if (key === 'retrig') b.disabled = isOneShot(get(v).shape);
+        },
+      });
       return b;
     };
     const flags = h(

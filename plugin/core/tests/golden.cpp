@@ -243,7 +243,7 @@ TEST("golden: resolveMix (400 random wavetables and queries)") {
 
 // ---- engine scenarios (opcodes as in tests/golden.test.ts) ----
 
-const char* const SCENARIOS[] = {"sequence", "midi2d", "steplen", "synth", "synthEdit", "synthGuard", "stereo", "poly", "warp", "macros", "rows"};
+const char* const SCENARIOS[] = {"sequence", "midi2d", "steplen", "synth", "synthEdit", "synthGuard", "stereo", "poly", "warp", "macros", "modplus", "rows"};
 /** Synth voices: the same bound as the rest (measured: well under it). */
 constexpr double SYNTH_TOL = 2e-6;
 

@@ -316,6 +316,10 @@ Open:
   cutoff, resonance, filter env, drive, A / B levels, A / B warp, FM, pan, width, glide.
   A project saved before they existed takes their values from its document (not their
   defaults).
+- Stage 8 (deeper modulation, no new knobs): one-shot LFO shapes Rise / Fall (extra AD
+  envelopes), a Gate source, destinations FM, ring, saturation, width, A / B detune, LFO
+  1–3 depth. Deferred to keep the panels as they are: a second source scaling a slot's
+  amount, per-slot curves, envelope curves / more envelopes, LFO delay.
 
 Decisions / deviations:
 - New voices from "+" are offered as Synth (first in the menu) or Simple; both start on

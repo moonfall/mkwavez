@@ -28,6 +28,7 @@ import {
 } from '../core/synth';
 import {
   EMPTY_SLOT,
+  isOneShot,
   isPeriodicShape,
   LFO_DIVS,
   LFO_RATE_MAX_HZ,
@@ -782,6 +783,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     const synced = lfo(v).sync;
     lfoRate.el.hidden = synced;
     lfoStereo.input.disabled = !isPeriodicShape(lfo(v).shape);
+    lfoRetrig.el.querySelector('input')!.disabled = isOneShot(lfo(v).shape);
     warpRow.input.disabled = v.synth[wm()] === 'none';
     divRow.hidden = !synced;
     mRows[2].el.hidden = mRows[3].el.hidden = v.synth.mMode === 'ad';

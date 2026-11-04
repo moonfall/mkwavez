@@ -10,8 +10,8 @@
 
 namespace mkwavez {
 
-enum class LfoShape : uint8_t { sine, tri, saw, square, sh, smooth };
-inline constexpr int LFO_SHAPE_COUNT = 6;
+enum class LfoShape : uint8_t { sine, tri, saw, square, sh, smooth, rise, fall };
+inline constexpr int LFO_SHAPE_COUNT = 8;
 
 /** Tempo-synced LFO divisions (order = LFO_DIVS in TS). */
 inline constexpr int LFO_DIV_COUNT = 16;
@@ -38,7 +38,9 @@ struct LfoParams {
 };
 
 /** Shapes a stereo phase applies to (S&H / smooth random draw one value for both sides). */
-inline bool isPeriodicShape(LfoShape s) { return s != LfoShape::sh && s != LfoShape::smooth; }
+inline bool isPeriodicShape(LfoShape s) { return s != LfoShape::sh && s != LfoShape::smooth && s != LfoShape::rise && s != LfoShape::fall; }
+/** One-shot shapes: one cycle from each note, then hold the end value. */
+inline bool isOneShot(LfoShape s) { return s == LfoShape::rise || s == LfoShape::fall; }
 
 inline double lfoRateHz(const LfoParams& l, double bpm) { return l.sync ? bpm / 60 / LFO_DIV_BEATS[(size_t) l.div] : l.rate; }
 
@@ -47,20 +49,22 @@ enum class ModEnvMode : uint8_t { ad, adsr };
 /** Sources (order = MOD_SOURCES in TS). */
 enum ModSource : int8_t {
     SRC_NONE = -1, SRC_LFO1, SRC_LFO2, SRC_LFO3, SRC_FENV, SRC_PENV, SRC_MENV, SRC_VEL, SRC_WHEEL, SRC_AT, SRC_KEY, SRC_RAND,
-    SRC_MACRO1, SRC_MACRO2, SRC_MACRO3, SRC_MACRO4
+    SRC_MACRO1, SRC_MACRO2, SRC_MACRO3, SRC_MACRO4, SRC_GATE
 };
-inline constexpr int N_SOURCES = 15;
+inline constexpr int N_SOURCES = 16;
 /** Destinations (order = MOD_DESTS in TS). */
 enum ModDest : int8_t {
     DST_NONE = -1, DST_PITCH_A, DST_PITCH_B, DST_POS_A, DST_POSY_A, DST_POS_B, DST_POSY_B, DST_LEVEL_A, DST_LEVEL_B, DST_SUB,
     DST_NOISE, DST_CUTOFF, DST_RES, DST_DRIVE, DST_AMP, DST_PAN, DST_LFO1_RATE, DST_LFO2_RATE, DST_LFO3_RATE,
-    DST_PAN_A, DST_PAN_B, DST_F_SPREAD, DST_WARP_A, DST_WARP_B
+    DST_PAN_A, DST_PAN_B, DST_F_SPREAD, DST_WARP_A, DST_WARP_B, DST_FM, DST_RING, DST_SAT, DST_WIDTH, DST_DETUNE_A, DST_DETUNE_B,
+    DST_LFO1_DEPTH, DST_LFO2_DEPTH, DST_LFO3_DEPTH
 };
-inline constexpr int N_DESTS = 23;
+inline constexpr int N_DESTS = 32;
 
 inline constexpr double MOD_PITCH_SEMIS = 12;
 inline constexpr double MOD_CUTOFF_OCTAVES = 6;
 inline constexpr double MOD_LFO_RATE_OCTAVES = 4;
+inline constexpr double MOD_DETUNE_CENTS = 50;
 
 struct ModSlot {
     ModSource src = SRC_NONE;
@@ -92,6 +96,8 @@ inline double lfoWave(LfoShape shape, double phase, double cur = 0, double prev 
             const double t = 0.5 - 0.5 * std::cos(PI * phase);
             return prev + (cur - prev) * t;
         }
+        case LfoShape::rise: return phase;
+        case LfoShape::fall: return 1 - phase;
     }
     return 0;
 }

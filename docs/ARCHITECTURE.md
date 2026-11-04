@@ -770,6 +770,13 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   them jump (a slow division can take up to about a cycle to lock; only forward wraps start
   a new S&H cycle); LFO-rate modulation multiplies their speed (unlocked while it is non-zero,
   then they glide back into lock). Denormal-range filter / pink state is flushed per block.
+- Modulation additions: one-shot LFO shapes rise (0 → 1) and fall (1 → 0) run one cycle
+  from each note (always restarted, whatever Retrig says; no random draws) and hold their
+  end — extra AD envelopes with the LFO's rate, fade and depth. The Gate source is 1 while a
+  note holds the voice. Destinations FM, ring, saturation and width add a matrix offset
+  ramped across the block (the knob value exactly when unmodulated), A / B detune add up to
+  ±`MOD_DETUNE_CENTS` (50) cents per block, LFO 1–3 depth use the previous block's matrix
+  (like LFO rate). Ring joins the level smoothing.
 - Oscillator warps (per oscillator; the tables are untouched): every read of a copy (left,
   right, B as FM source) goes through `warpPhase` (the phase the table is read at) and
   `warpOut` (a sample-domain part). Sync reads the cycle 1 + 7·|a| times per period;

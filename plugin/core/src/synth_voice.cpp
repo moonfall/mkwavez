@@ -154,6 +154,7 @@ void SynthVoice::noteOn(const VoiceParams& p, double notePitch, double velocity,
     const SynthParams& s = p.synth;
     target = notePitch;
     vel = velocity;
+    gateHeld = true;
     const bool glide = s.glide > 0 && sounding && (!s.glideLegato || legato);
     if (!glide) pitch = notePitch;
     if (retrigger) {
@@ -165,7 +166,10 @@ void SynthVoice::noteOn(const VoiceParams& p, double notePitch, double velocity,
         for (int i = 0; i < LFO_COUNT; ++i) {
             const LfoParams& l = s.lfos[(size_t) i];
             lfoAge[i] = 0;
-            if (l.retrig) {
+            lfoDone[i] = 0;
+            if (isOneShot(l.shape))
+                lfoPhase[i] = l.phase;
+            else if (l.retrig) {
                 lfoPhase[i] = l.phase;
                 lfoPrev[i] = lfoCur[i];
                 lfoCur[i] = modRng.bipolar();
@@ -176,6 +180,7 @@ void SynthVoice::noteOn(const VoiceParams& p, double notePitch, double velocity,
 }
 
 void SynthVoice::gateOff(const VoiceParams& p) {
+    gateHeld = false;
     fenv.gateOff();
     penv.gateOff();
     if (p.synth.mMode != ModEnvMode::ad) menv.gateOff();
@@ -194,7 +199,8 @@ void SynthVoice::mips(const SynthParams& s, double incA, double incB) {
     const int ring = s.ringLevel > 0 || lv1[4] > 1e-4 ? 1 : 0;
     const double fa = incA * maxRatA * sr * wsA;
     const double fb = incB * maxRatB * sr * wsB;
-    const double side = s.fm > 0 ? (TWO_PI * FM_DEPTH * s.fm + 1) * fb : 0;
+    const double fmMax = dFm0 == 0 && dFm1 == 0 ? s.fm : clamp01(s.fm + std::max(dFm0, dFm1));
+    const double side = fmMax > 0 ? (TWO_PI * FM_DEPTH * fmMax + 1) * fb : 0;
     const double limit = MIP_NYQUIST_FRACTION * sr;
     int la = MIP_LEVELS - 1;
     for (int l = 0; l < MIP_LEVELS; ++l) {
@@ -210,6 +216,7 @@ void SynthVoice::mips(const SynthParams& s, double incA, double incB) {
 void SynthVoice::resync(const VoiceParams& p, double notePitch, bool gated, bool sounding) {
     target = pitch = notePitch;
     configure(p.synth, blockLen);
+    gateHeld = gated;
     if (gated) {
         fenv.gateOn();
         penv.gateOn();
@@ -258,13 +265,19 @@ void SynthVoice::stepLfos(const SynthParams& s, double bpm, int block, double be
         const double mult = m == 0 ? 1 : std::pow(2.0, m * MOD_LFO_RATE_OCTAVES);
         const double inc = std::min(LFO_RATE_MAX_HZ * 2, std::max(0.0, lfoRateHz(l, bpm) * mult)) * dt;
         double ph = lfoPhase[i] + inc;
-        if (l.sync && !l.retrig && beat >= 0 && m == 0) {
+        const bool once = isOneShot(l.shape);
+        if (once) {
+            if (lfoDone[i] || ph >= 1) {
+                ph = 1;
+                lfoDone[i] = 1;
+            }
+        } else if (l.sync && !l.retrig && beat >= 0 && m == 0) {
             const double t = beat / LFO_DIV_BEATS[(size_t) l.div] + l.phase;
             double d = t - std::floor(t) - ph;
             d -= jsRound(d);
             ph += std::max(-0.5 * inc, std::min(0.5 * inc, d));
         }
-        if (ph >= 1) {
+        if (ph >= 1 && !once) {
             ph -= std::floor(ph);
             lfoPrev[i] = lfoCur[i];
             lfoCur[i] = modRng.bipolar();
@@ -274,11 +287,13 @@ void SynthVoice::stepLfos(const SynthParams& s, double bpm, int block, double be
         const double age = lfoAge[i];
         const double fade = l.fade > 0 ? std::min(1.0, age / l.fade) : 1;
         lfoAge[i] = age + dt;
-        lfoOut[i] = lfoWave(l.shape, ph, lfoCur[i], lfoPrev[i]) * l.depth * fade;
-        if (l.stereo > 0 && l.depth > 0 && isPeriodicShape(l.shape)) {
+        const double dm = dst[DST_LFO1_DEPTH + i];
+        const double depth = dm != 0 ? clamp01(l.depth + dm) : l.depth;
+        lfoOut[i] = lfoWave(l.shape, ph, lfoCur[i], lfoPrev[i]) * depth * fade;
+        if (l.stereo > 0 && depth > 0 && isPeriodicShape(l.shape)) {
             double phR = ph + l.stereo;
             if (phR >= 1) phR -= 1;
-            lfoOutR[i] = lfoWave(l.shape, phR, lfoCur[i], lfoPrev[i]) * l.depth * fade;
+            lfoOutR[i] = lfoWave(l.shape, phR, lfoCur[i], lfoPrev[i]) * depth * fade;
             st = true;
         } else
             lfoOutR[i] = lfoOut[i];
@@ -316,6 +331,7 @@ void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
     src[SRC_MACRO2] = s.macro2;
     src[SRC_MACRO3] = s.macro3;
     src[SRC_MACRO4] = s.macro4;
+    src[SRC_GATE] = gateHeld ? 1 : 0;
     applyMatrix(s.mods, src, dst);
     const double* dR = dst;
     if (lfoStereo) {
@@ -332,6 +348,12 @@ void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
     incB0 = incB1;
     incS0 = incS1;
     pitches(p, bend);
+    dFm0 = dFm1;
+    dSat0 = dSat1;
+    dW0 = dW1;
+    dFm1 = dst[DST_FM];
+    dSat1 = dst[DST_SAT];
+    dW1 = dst[DST_WIDTH];
     unison(s, c.unisonScale);
     waA0 = waA1;
     waB0 = waB1;
@@ -407,7 +429,7 @@ void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
     lv1[1] += (clamp01(s.bLevel + dst[DST_LEVEL_B]) - lv1[1]) * smooth;
     lv1[2] += (clamp01(s.subLevel + dst[DST_SUB]) - lv1[2]) * smooth;
     lv1[3] += (clamp01(s.noiseLevel + dst[DST_NOISE]) - lv1[3]) * smooth;
-    lv1[4] += (s.ringLevel - lv1[4]) * smooth;
+    lv1[4] += ((dst[DST_RING] != 0 ? clamp01(s.ringLevel + dst[DST_RING]) : s.ringLevel) - lv1[4]) * smooth;
     // Stereo controls (see synthVoice.ts).
     const double sm = smooth;
     fsS = approach(fsS, clamp11(s.filterSpread + dst[DST_F_SPREAD]) * FILTER_SPREAD_OCTAVES, sm);
@@ -466,8 +488,11 @@ void SynthVoice::unison(const SynthParams& s, double scale) {
     uB = copies(nB, wB0, wB1, phB, phCB, plB, pnB);
     if (uA == 1) phCA = phA[0];
     if (uB == 1) phCB = phB[0];
-    maxRatA = place(uA, nA, s.aDetune, s.aSpread, plA, pnA, ratA, gAL, gAR);
-    maxRatB = place(uB, nB, s.bDetune, s.bSpread, plB, pnB, ratB, gBL, gBR);
+    const double dA = dst[DST_DETUNE_A], dB = dst[DST_DETUNE_B];
+    const double centsA = dA != 0 ? std::max(0.0, s.aDetune + dA * MOD_DETUNE_CENTS) : s.aDetune;
+    const double centsB = dB != 0 ? std::max(0.0, s.bDetune + dB * MOD_DETUNE_CENTS) : s.bDetune;
+    maxRatA = place(uA, nA, centsA, s.aSpread, plA, pnA, ratA, gAL, gAR);
+    maxRatB = place(uB, nB, centsB, s.bSpread, plB, pnB, ratB, gBL, gBR);
     spread = (uA > 1 && s.aSpread > 0) || (uB > 1 && s.bSpread > 0);
 }
 
@@ -538,8 +563,9 @@ double SynthVoice::render(const VoiceParams& p, double e, double blockT, const T
         const double wa = wmA == WarpMode::none ? 0 : waA0 + (waA1 - waA0) * t;
         const double wb = wmB == WarpMode::none ? 0 : waB0 + (waB1 - waB0) * t;
         double sbL = 0, sbR = 0, b0 = 0;
-        if (b.n > 0 && (lb > 0 || lr > 0 || s.fm > 0)) {
-            if (s.fm > 0) b0 = readWarp(b, uB == 1 ? phB[0] : phCB, t, wmB, wb);
+        const double fm = dFm0 == 0 && dFm1 == 0 ? s.fm : clamp01(s.fm + dFm0 + (dFm1 - dFm0) * t);
+        if (b.n > 0 && (lb > 0 || lr > 0 || fm > 0)) {
+            if (fm > 0) b0 = readWarp(b, uB == 1 ? phB[0] : phCB, t, wmB, wb);
             for (int i = 0; i < uB; ++i) {
                 const double w = wB0[i] + (wB1[i] - wB0[i]) * t;
                 const double v = readWarp(b, phB[i], t, wmB, wb) * w;
@@ -554,7 +580,7 @@ double SynthVoice::render(const VoiceParams& p, double e, double blockT, const T
         }
         double saL = 0, saR = 0;
         if (a.n > 0) {
-            const double fmOff = s.fm > 0 ? s.fm * FM_DEPTH * b0 : 0;
+            const double fmOff = fm > 0 ? fm * FM_DEPTH * b0 : 0;
             for (int i = 0; i < uA; ++i) {
                 double ph = phA[i] + fmOff;
                 ph -= std::floor(ph);
@@ -634,13 +660,15 @@ double SynthVoice::render(const VoiceParams& p, double e, double blockT, const T
         const double k = k0 + (k1 - k0) * t;
         const int mode = (int) s.filterMode;
         const double amp = e * gain;
-        yL = driveSample(filter.process(driveSample(x, driveM), mode, g, k), s.sat) * amp;
+        const double sat = dSat0 == 0 && dSat1 == 0 ? s.sat : clamp01(s.sat + dSat0 + (dSat1 - dSat0) * t);
+        yL = driveSample(filter.process(driveSample(x, driveM), mode, g, k), sat) * amp;
         if (stereo) {
             const double gR = cutR == cutL ? g : cutoffG(std::pow(2.0, cutR), sampleRate);
-            yR = driveSample(filterR.process(driveSample(xr, driveM), mode, gR, k), s.sat) * (e * gainR);
-            if (s.width != 1) {
+            yR = driveSample(filterR.process(driveSample(xr, driveM), mode, gR, k), sat) * (e * gainR);
+            const double width = dW0 == 0 && dW1 == 0 ? s.width : std::max(0.0, std::min(2.0, s.width + 2 * (dW0 + (dW1 - dW0) * t)));
+            if (width != 1) {
                 const double m = (yL + yR) * 0.5;
-                const double d = (yL - yR) * 0.5 * s.width;
+                const double d = (yL - yR) * 0.5 * width;
                 yL = m + d;
                 yR = m - d;
             }

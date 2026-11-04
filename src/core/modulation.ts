@@ -4,8 +4,13 @@
  * and the matrix arithmetic. Portable, allocation-free per call (callers own the buffers).
  */
 
-export type LfoShape = 'sine' | 'tri' | 'saw' | 'square' | 'sh' | 'smooth';
-export const LFO_SHAPES: readonly LfoShape[] = ['sine', 'tri', 'saw', 'square', 'sh', 'smooth'];
+/**
+ * Periodic shapes, two random ones (S&H, smooth random) and two one-shots: rise (0 → 1) and
+ * fall (1 → 0) run one cycle from each note and then hold — envelopes with the LFO's rate,
+ * fade and depth.
+ */
+export type LfoShape = 'sine' | 'tri' | 'saw' | 'square' | 'sh' | 'smooth' | 'rise' | 'fall';
+export const LFO_SHAPES: readonly LfoShape[] = ['sine', 'tri', 'saw', 'square', 'sh', 'smooth', 'rise', 'fall'];
 export const LFO_SHAPE_LABELS: Readonly<Record<LfoShape, string>> = {
   sine: 'Sine',
   tri: 'Triangle',
@@ -13,6 +18,8 @@ export const LFO_SHAPE_LABELS: Readonly<Record<LfoShape, string>> = {
   square: 'Square',
   sh: 'S&H',
   smooth: 'Smooth random',
+  rise: 'Rise (once)',
+  fall: 'Fall (once)',
 };
 
 /** Tempo-synced LFO cycle lengths (whole notes; T = triplet, D = dotted). */
@@ -68,7 +75,12 @@ export const DEFAULT_LFO: LfoParams = { shape: 'sine', rate: 2, sync: false, div
 
 /** Shapes a stereo phase applies to (the random ones draw one value per cycle for both sides). */
 export function isPeriodicShape(shape: LfoShape): boolean {
-  return shape !== 'sh' && shape !== 'smooth';
+  return shape !== 'sh' && shape !== 'smooth' && shape !== 'rise' && shape !== 'fall';
+}
+
+/** One-shot shapes: one cycle from each note (always restarted), then hold their end value. */
+export function isOneShot(shape: LfoShape): boolean {
+  return shape === 'rise' || shape === 'fall';
 }
 export const LFO_COUNT = 3;
 
@@ -80,7 +92,7 @@ export function lfoRateHz(l: LfoParams, bpm: number): number {
 /** Mod envelope: AD (attack, then decay to 0; ignores the gate) or ADSR (follows the gate). */
 export type ModEnvMode = 'ad' | 'adsr';
 
-export const MOD_SOURCES = ['lfo1', 'lfo2', 'lfo3', 'fenv', 'penv', 'menv', 'vel', 'wheel', 'at', 'key', 'rand', 'macro1', 'macro2', 'macro3', 'macro4'] as const;
+export const MOD_SOURCES = ['lfo1', 'lfo2', 'lfo3', 'fenv', 'penv', 'menv', 'vel', 'wheel', 'at', 'key', 'rand', 'macro1', 'macro2', 'macro3', 'macro4', 'gate'] as const;
 export type ModSource = (typeof MOD_SOURCES)[number];
 export const MOD_SOURCE_LABELS: Readonly<Record<ModSource, string>> = {
   lfo1: 'LFO 1',
@@ -98,6 +110,7 @@ export const MOD_SOURCE_LABELS: Readonly<Record<ModSource, string>> = {
   macro2: 'Macro 2',
   macro3: 'Macro 3',
   macro4: 'Macro 4',
+  gate: 'Gate',
 };
 
 export const MOD_DESTS = [
@@ -124,6 +137,15 @@ export const MOD_DESTS = [
   'fSpread',
   'warpA',
   'warpB',
+  'fm',
+  'ring',
+  'sat',
+  'width',
+  'detuneA',
+  'detuneB',
+  'lfo1Depth',
+  'lfo2Depth',
+  'lfo3Depth',
 ] as const;
 export type ModDest = (typeof MOD_DESTS)[number];
 export const MOD_DEST_LABELS: Readonly<Record<ModDest, string>> = {
@@ -150,6 +172,15 @@ export const MOD_DEST_LABELS: Readonly<Record<ModDest, string>> = {
   fSpread: 'Filter spread',
   warpA: 'A warp',
   warpB: 'B warp',
+  fm: 'FM amount',
+  ring: 'Ring level',
+  sat: 'Saturation',
+  width: 'Width',
+  detuneA: 'A detune',
+  detuneB: 'B detune',
+  lfo1Depth: 'LFO 1 depth',
+  lfo2Depth: 'LFO 2 depth',
+  lfo3Depth: 'LFO 3 depth',
 };
 
 /**
@@ -167,9 +198,11 @@ export const N_DESTS = MOD_DESTS.length;
 export const MOD_PITCH_SEMIS = 12;
 export const MOD_CUTOFF_OCTAVES = 6;
 export const MOD_LFO_RATE_OCTAVES = 4;
+/** Unison detune at amount 1 (cents, added to the knob's). */
+export const MOD_DETUNE_CENTS = 50;
 
 /** Unipolar (0..1) sources; the others are bipolar (−1..1). */
-export const UNIPOLAR_SOURCES: ReadonlySet<ModSource> = new Set(['fenv', 'penv', 'menv', 'vel', 'wheel', 'at', 'macro1', 'macro2', 'macro3', 'macro4']);
+export const UNIPOLAR_SOURCES: ReadonlySet<ModSource> = new Set(['fenv', 'penv', 'menv', 'vel', 'wheel', 'at', 'macro1', 'macro2', 'macro3', 'macro4', 'gate']);
 
 export interface ModSlot {
   readonly src: ModSource | 'none';
@@ -224,5 +257,9 @@ export function lfoWave(shape: LfoShape, phase: number, cur = 0, prev = 0): numb
       const t = 0.5 - 0.5 * Math.cos(Math.PI * phase);
       return prev + (cur - prev) * t;
     }
+    case 'rise':
+      return phase;
+    case 'fall':
+      return 1 - phase;
   }
 }

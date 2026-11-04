@@ -110,6 +110,9 @@ private:
     double offL0 = 0, offL1 = 0, offR0 = 0, offR1 = 0;
     double dLv0[2]{}, dLv1[2]{};
     double waA0 = 0, waA1 = 0, waB0 = 0, waB1 = 0, wsA = 1, wsB = 1;
+    uint8_t lfoDone[LFO_COUNT]{};
+    bool gateHeld = false;
+    double dFm0 = 0, dFm1 = 0, dSat0 = 0, dSat1 = 0, dW0 = 0, dW1 = 0;
     Prng noiseR;
     double pinkR0 = 0, pinkR1 = 0, pinkR2 = 0;
     double nwC = 1, nwS = 0;
