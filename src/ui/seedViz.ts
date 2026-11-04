@@ -15,6 +15,7 @@ import { KMAX } from '../core/constants';
 import { SEQ_SOURCES, sequenceValues } from '../core/generators';
 import type { SequenceParams } from '../core/generators';
 import { rdState, StepCache, type RdParams, type RdState } from '../core/generators';
+import { LIFE_RULES, lifeBoard, StepCache as LifeCache, type Board, type LifeParams } from '../core/generators';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -820,5 +821,29 @@ viz('reaction-diffusion', {
     const heat = heatScale(c);
     cells(g, 0, 0, w, h, rows, (v) => heat((v / hi) * 2 - 1));
     rowMark(g, 0, 0, w, h, nr, best, c.line);
+  },
+});
+
+// Life-like CA: the board at the shown generation; the line read (row / column / diagonal) highlighted.
+const lifeCache = new LifeCache<Board>(2, 64);
+viz('life-like-ca', {
+  axis: (i) => {
+    const gen = Math.max(0, Math.round(i.params.start)) + i.index * clamp(Math.round(i.params.step), 1, 16);
+    return ['', `${LIFE_RULES[Math.round(i.params.rule)]?.label ?? ''} · generation ${gen}`, ''];
+  },
+  draw: (g, w, h, i, c) => {
+    const size = clamp(Math.round(i.params.size), 8, 64);
+    const gen = Math.max(0, Math.round(i.params.start)) + i.index * clamp(Math.round(i.params.step), 1, 16);
+    const board = lifeBoard(i.params as unknown as LifeParams, i.seed, gen, lifeCache);
+    const side = Math.floor(Math.min(w, h) / size) * size || Math.min(w, h);
+    const x0 = Math.floor((w - side) / 2);
+    const y0 = Math.floor((h - side) / 2);
+    const read = Math.round(i.params.read);
+    const mid = size >> 1;
+    const onLine = (r: number, k: number) => (read === 0 ? r === mid : read === 1 ? k === mid : read === 2 ? r === k : false);
+    const rows = Array.from({ length: size }, (_, r) => board.subarray(r * size, (r + 1) * size));
+    g.fillStyle = c.grid;
+    g.fillRect(x0, y0, side, side);
+    cells(g, x0, y0, side, side, rows, (v, r, k) => (onLine(r, k) ? (v ? c.accent : c.muted) : v ? c.line : null));
   },
 });
