@@ -84,7 +84,8 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
       const sides = b === 0 ? stepExpr(Math.round(p.sides), 1) : lit(Math.round(p.sides));
       const round = b === 1 ? lerpExpr(p.roundness, p.roundnessEnd) : lit(p.roundness);
       const rot = b === 2 ? lerpExpr(p.rotation, p.rotationEnd) : lit(p.rotation);
-      return `polygon(p, ${sides}, ${lit(p.star)}, ${round}, ${rot}, ${lit(p.read)})`;
+      const off = p.offset ? `, ${lit(p.offset)}` : '';
+      return `polygon(p, ${sides}, ${lit(p.star)}, ${round}, ${rot}, ${lit(p.read)}${off})`;
     }
     case 'shaper':
       return `shaper(p, ${lit(p.shaper)}, ${lerpExpr(p.amount, p.amountEnd)}, ${lerpExpr(p.bias, p.biasEnd)}, ${lit(p.level)}, ${lit(p.input)})`;
@@ -95,7 +96,7 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
     case 'resonance':
       return `resonance(p, ${lit(p.window)}, ${lerpExpr(p.ratio, p.ratioEnd)})`;
     case 'superformula':
-      return `superformula(p, ${lit(p.m)}, ${lit(p.n1)}, ${lerpExpr(p.n2, p.n2End)}, ${lerpExpr(p.n3, p.n3End)})`;
+      return `superformula(p, ${lit(p.m)}, ${lit(p.n1)}, ${lerpExpr(p.n2, p.n2End)}, ${lerpExpr(p.n3, p.n3End)}${p.offset ? `, ${lit(p.offset)}` : ''})`;
     case 'fractal':
       return `fractal(p, ${lit(p.base)}, ${lit(p.ratio)}, ${lit(p.terms)}, ${lerpExpr(p.decay, p.decayEnd)})`;
     case 'sync':
@@ -110,8 +111,10 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
     }
     case 'ca':
       return `ca(p, ${lit(p.rule)}, ${lit(p.cells)}, ${p.start === 0 ? 'n' : `${lit(p.start)}+n`})`;
-    case 'dynamical':
-      return `dyn(p, ${lit(p.map)}, ${lerpExpr(p.control, p.controlEnd)}, ${lit(p.iterations)}, ${lit(p.spread)}, ${lit(p.output)})`;
+    case 'dynamical': {
+      const start = Math.round(p.start ?? 0) === 1 ? ', 1' : '';
+      return `dyn(p, ${lit(p.map)}, ${lerpExpr(p.control, p.controlEnd)}, ${lit(p.iterations)}, ${lit(p.spread)}, ${lit(p.output)}${start})`;
+    }
     case 'karplus': {
       const a = clamp(p.start, 0, KS_MAX_PASS);
       const b = clamp(p.end, 0, KS_MAX_PASS);

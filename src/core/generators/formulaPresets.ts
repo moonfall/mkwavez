@@ -1,6 +1,12 @@
 /**
  * Formula presets from the prototype. Expressions are JavaScript (Math functions in
  * scope). Each uses `u` or `n` so a batch (+N) gives a sweep.
+ *
+ * Retuned presets (stored recipes keep their own expression, so they re-render as made):
+ * Chebyshev sweeps odd orders (even Tₖ of a sine has even harmonics only: an octave up),
+ * Superformula reads the shape off-centre (its 6-fold symmetry otherwise sounds 31
+ * semitones up), Logistic map starts asymmetrically (its symmetry about ½ otherwise
+ * leaves even harmonics only).
  */
 export interface FormulaPreset {
   readonly group: string;
@@ -16,11 +22,11 @@ export const FORMULA_PRESETS: readonly FormulaPreset[] = [
   { group: 'Perlin', name: 'Sine + noise', expr: 'sin(p) + u*pnoise(4, 0, 3, 0.6)' },
   { group: 'Perlin', name: 'Noisy FM', expr: 'sin(p + 3*u*pnoise(1.5, u, 3, 0.5))' },
   { group: 'Shapers', name: 'Soft clip', expr: 'tanh((1+5*u)*sin(p))/tanh(1+5*u)' },
-  { group: 'Shapers', name: 'Chebyshev', expr: 'cos((n+2)*acos(0.95*sin(p)))' },
+  { group: 'Shapers', name: 'Chebyshev', expr: 'cos((2*n+3)*acos(0.95*sin(p)))' },
   {
     group: 'Shapers',
     name: 'Superformula',
-    expr: 'pow(pow(abs(cos(1.5*p)),2+u*6)+pow(abs(sin(1.5*p)),2+u*6),-0.5)',
+    expr: 'superformula(p, 6, 2, 2+(8-2)*u, 2+(8-2)*u, 0.25)',
   },
   { group: 'Shapers', name: 'Superellipse', expr: 'sign(sin(p))*pow(abs(sin(p)),0.05+0.95*u)' },
   { group: 'Shapers', name: 'Shaped PWM', expr: 'tanh((3+20*u)*(sin(p)-0.8+1.6*u))' },
@@ -86,7 +92,7 @@ export const FORMULA_PRESETS: readonly FormulaPreset[] = [
   { group: 'Math', name: 'Harmonics', expr: 'sin((n+1)*p)' },
   { group: 'Math', name: 'Sync sweep', expr: 'sin(p*(1+u*3))' },
   { group: 'Math', name: 'Sine→saw', expr: '(1-u)*sin(p) + u*(t*2-1)' },
-  { group: 'Chaos', name: 'Logistic map', expr: '[...Array(20)].reduce(x=>(3.5+0.5*u)*x*(1-x), 0.5+0.4*sin(p))*2-1' },
+  { group: 'Chaos', name: 'Logistic map', expr: '[...Array(20)].reduce(x=>(3.5+0.5*u)*x*(1-x), 0.5+0.4*(sin(p)+0.2*sin(2*p))/1.1)*2-1' },
   { group: 'Chaos', name: 'Iterated sine map', expr: '[...Array(3+n)].reduce(x=>sin(PI*(1+u)*x), sin(p))' },
   {
     group: 'Voice',

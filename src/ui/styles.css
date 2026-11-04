@@ -2560,6 +2560,28 @@ input.seed-expr:focus-visible {
   gap: 8px;
   pointer-events: none;
 }
+.pitch-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 1;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--accent-text);
+  font-size: 10.5px;
+  line-height: 15px;
+  white-space: nowrap;
+  cursor: help;
+}
+.pitch-badge.pitch-weak {
+  border-color: var(--border-strong);
+  color: var(--text-2);
+}
+.pitch-badge[hidden] {
+  display: none;
+}
 .gen-plot-tags .seg {
   pointer-events: auto;
 }

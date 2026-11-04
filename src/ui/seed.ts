@@ -20,6 +20,7 @@ import {
 import { randomSeed } from '../core/prng';
 import type { GeneratedTable } from '../core/table';
 import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
+import { pitchBadge } from './pitchBadge';
 import { isOnScreen, watchVisibility, type GenerateView, type UiContext } from './context';
 import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { h, selectField, slider } from './dom';
@@ -499,7 +500,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       shownLabel,
     ),
   );
-  const specBox = h('div', { class: 'gen-plot-box' }, specC);
+  const pitch = pitchBadge('seed-pitch');
+  const specBox = h('div', { class: 'gen-plot-box' }, specC, pitch.el);
   // What the builder is based on (seedViz.ts); hidden for builders without one.
   const basisC = h('canvas', { id: 'seed-basis', role: 'img', 'aria-label': 'What the builder is based on' });
   const basisBox = h('div', { class: 'gen-plot-box' }, basisC);
@@ -734,6 +736,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     }
     gs.stroke();
     if (t) drawSpectrum(gs, sw, sh, t.data, cssColor('--accent'), { bins: SPEC_BINS });
+    pitch.show(t?.data);
     drawBasis(cur, i, failed);
   };
 

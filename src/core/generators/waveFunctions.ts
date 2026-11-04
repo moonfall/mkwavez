@@ -41,12 +41,12 @@ import { rdRaw, rdState } from './reactionDiffusion';
 import { sequenceRaw, sequenceValuesAt } from './sequences';
 import { SPLINE_MAX_POINTS, splinePointsAt, splineRaw } from './spline';
 import { SUPERSAW_MAX_VOICES, supersawRaw } from './supersaw';
-import { POLYGON_MAX_SIDES, polygonRaw } from './polygon';
+import { POLYGON_MAX_OFFSET, POLYGON_MAX_SIDES, polygonRaw } from './polygon';
 import { SHAPERS, SHAPER_INPUTS, shaperRaw } from './shaper';
 import { SERIES_PHASES, SERIES_SETS, seriesRaw } from './series';
 import { syncRaw, SYNC_WAVES } from './sync';
 import { FRACTAL_BASES, fractalRaw } from './fractal';
-import { superformulaRaw } from './superformula';
+import { SUPERFORMULA_MAX_OFFSET, superformulaRaw } from './superformula';
 import { resonanceRaw, RESONANCE_WINDOWS } from './resonance';
 import { pdRaw, PD_SHAPES } from './phaseDistortion';
 import { fmRaw, FM_ROUTINGS } from './fm';
@@ -60,18 +60,18 @@ export interface WaveFunctions {
   square(x: number): number;
   pulse(x: number, width?: number): number;
   supersaw(x: number, voices?: number, drift?: number, outer?: number, wave?: number, phases?: number, seed?: number): number;
-  polygon(x: number, sides?: number, star?: number, roundness?: number, rotation?: number, read?: number): number;
+  polygon(x: number, sides?: number, star?: number, roundness?: number, rotation?: number, read?: number, offset?: number): number;
   shaper(x: number, curve?: number, amount?: number, bias?: number, level?: number, input?: number): number;
   fm(x: number, carrier?: number, ratio?: number, index?: number, ratio2?: number, amount2?: number, routing?: number): number;
   pd(x: number, shape?: number, amount?: number): number;
   resonance(x: number, window?: number, ratio?: number): number;
-  superformula(x: number, m?: number, n1?: number, n2?: number, n3?: number): number;
+  superformula(x: number, m?: number, n1?: number, n2?: number, n3?: number, offset?: number): number;
   fractal(x: number, base?: number, ratio?: number, terms?: number, decay?: number): number;
   sync(x: number, wave?: number, ratio?: number): number;
   series(x: number, set?: number, highest?: number, rolloff?: number, phases?: number, pluck?: number): number;
   perlin(x: number, freq?: number, z?: number, oct?: number, pers?: number, seed?: number): number;
   ca(x: number, rule?: number, cells?: number, gen?: number, seed?: number): number;
-  dyn(x: number, map?: number, control?: number, iters?: number, spread?: number, output?: number): number;
+  dyn(x: number, map?: number, control?: number, iters?: number, spread?: number, output?: number, start?: number): number;
   ks(x: number, passes?: number, damping?: number, pos?: number, length?: number, excite?: number, seed?: number): number;
   additive(x: number, slope?: number, balance?: number, move?: number, phase?: number, ...formantsAndSeed: number[]): number;
   seq(x: number, source?: number, steps?: number, smoothing?: number, pos?: number, pulses?: number): number;
@@ -104,8 +104,8 @@ export const WAVE_FUNCTION_DOCS: readonly WaveFunctionDoc[] = [
   },
   {
     name: 'polygon',
-    sig: 'polygon(x, sides, star, roundness, rotation, read)',
-    about: 'polygon / star {sides/star}: read 0 radius vs angle, 1 traced x; roundness 0–1 rounds the corners (Polygon)',
+    sig: 'polygon(x, sides, star, roundness, rotation, read, offset?)',
+    about: 'polygon / star {sides/star}: read 0 radius vs angle, 1 traced x; roundness 0–1 rounds the corners; offset 0–0.9 reads the radius off-centre (keeps the fundamental) (Polygon)',
   },
   {
     name: 'shaper',
@@ -123,7 +123,7 @@ export const WAVE_FUNCTION_DOCS: readonly WaveFunctionDoc[] = [
     sig: 'resonance(x, window, ratio)',
     about: 'sin(ratio·x) under a window 0 raised cosine · 1 saw · 2 triangle · 3 trapezoid (Resonance)',
   },
-  { name: 'superformula', sig: 'superformula(x, m, n1, n2, n3)', about: 'Gielis superformula radius vs angle (Superformula)' },
+  { name: 'superformula', sig: 'superformula(x, m, n1, n2, n3, offset?)', about: 'Gielis superformula radius vs angle; offset 0–0.9 reads it off-centre (keeps the fundamental) (Superformula)' },
   {
     name: 'fractal',
     sig: 'fractal(x, base, ratio, terms, decay)',
@@ -137,7 +137,7 @@ export const WAVE_FUNCTION_DOCS: readonly WaveFunctionDoc[] = [
   },
   { name: 'perlin', sig: 'perlin(x, freq, z, oct, pers, seed?)', about: 'loop-seamless Perlin noise (Perlin noise)' },
   { name: 'ca', sig: 'ca(x, rule, cells, gen, seed?)', about: 'generation `gen` (0–1000) of an elementary cellular automaton (Cellular automaton)' },
-  { name: 'dyn', sig: 'dyn(x, map, control, iters, spread, output)', about: 'chaotic map 0–4, control 0–1, iters 1–64 (Dynamical systems)' },
+  { name: 'dyn', sig: 'dyn(x, map, control, iters, spread, output, start?)', about: 'chaotic map 0–4, control 0–1, iters 1–64, start 0 symmetric (octave up) · 1 asymmetric (Dynamical systems)' },
   { name: 'ks', sig: 'ks(x, passes, damping, pos, length, excite, seed?)', about: 'Karplus-Strong string after `passes` (0–4096) round trips' },
   {
     name: 'additive',
@@ -360,7 +360,7 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
   };
 
   const caC = cycleFn('ca', ([rule, cells, gen, s]) => caRawGenerations({ rule: n(rule), cells: n(cells) }, n(s), n(gen), 1)[0]);
-  const dynC = cycleFn('dyn', ([map, c, it, spread, out]) => dynamicalRaw(n(map), n(c), n(it), n(spread), n(out)));
+  const dynC = cycleFn('dyn', ([map, c, it, spread, out, start]) => dynamicalRaw(n(map), n(c), n(it), n(spread), n(out), n(start)));
   const ksC = cycleFn('ks', ([passes, damping, position, length, excite, s]) =>
     karplusRaw({ excite: n(excite), length: n(length), damping: n(damping), position: n(position) }, n(passes), n(s)),
   );
@@ -394,12 +394,12 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
   });
   const splineC = cycleFn('spline', ([points, kind, tension, jitter, s]) => splineRaw(splinePointsAt(n(points), n(jitter), n(s)), n(kind), n(tension)));
   const supersawC = cycleFn('supersaw', ([voices, drift, outer, wave, phases, s]) => supersawRaw(n(voices), n(drift), n(outer), n(wave), n(phases), n(s)));
-  const polygonC = cycleFn('polygon', ([sides, star, roundness, rotation, read]) => polygonRaw(n(sides), n(star), n(roundness), n(rotation), n(read)));
+  const polygonC = cycleFn('polygon', ([sides, star, roundness, rotation, read, offset]) => polygonRaw(n(sides), n(star), n(roundness), n(rotation), n(read), n(offset)));
   const shaperC = cycleFn('shaper', ([curve, amount, bias, level, input]) => shaperRaw(n(curve), n(input), n(level), n(amount), n(bias)));
   const fmC = cycleFn('fm', ([carrier, ratio, index, ratio2, amount2, routing]) => fmRaw(n(carrier), n(ratio), n(index), n(ratio2), n(amount2), n(routing)));
   const pdC = cycleFn('pd', ([shape, amount]) => pdRaw(n(shape), n(amount)));
   const resonanceC = cycleFn('resonance', ([win, ratio]) => resonanceRaw(n(win), n(ratio)));
-  const superformulaC = cycleFn('superformula', ([m, n1, n2, n3]) => superformulaRaw(n(m), n(n1), n(n2), n(n3)));
+  const superformulaC = cycleFn('superformula', ([m, n1, n2, n3, offset]) => superformulaRaw(n(m), n(n1), n(n2), n(n3), n(offset)));
   const fractalC = cycleFn('fractal', ([base, ratio, terms, decay]) => fractalRaw(n(base), n(ratio), n(terms), n(decay)));
   const syncC = cycleFn('sync', ([wave, ratio]) => syncRaw(n(wave), n(ratio)));
   const seriesC = cycleFn('series', ([set, highest, rolloff, phases, pluck]) => seriesRaw(n(set), n(highest), n(rolloff), n(phases), n(pluck)));
@@ -420,13 +420,14 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
         Math.round(num('supersaw', 'phases', phases, 0, 0, 2)),
         seedOf('supersaw', s),
       ]),
-    polygon: (x, sides, star, roundness, rotation, read) =>
+    polygon: (x, sides, star, roundness, rotation, read, offset) =>
       polygonC(phase('polygon', x), [
         Math.round(num('polygon', 'sides', sides, 3, 3, POLYGON_MAX_SIDES)),
         Math.round(num('polygon', 'star', star, 1, 1, POLYGON_MAX_SIDES)),
         num('polygon', 'roundness', roundness, 0, 0, 1),
         num('polygon', 'rotation', rotation, 0),
         Math.round(num('polygon', 'read', read, 0, 0, 1)),
+        num('polygon', 'offset', offset, 0, 0, POLYGON_MAX_OFFSET),
       ]),
     shaper: (x, curve, amount, bias, level, input) =>
       shaperC(phase('shaper', x), [
@@ -452,12 +453,13 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
         Math.round(num('resonance', 'window', win, 0, 0, RESONANCE_WINDOWS.length - 1)),
         num('resonance', 'ratio', ratio, 4, -256, 256),
       ]),
-    superformula: (x, m, n1, n2, n3) =>
+    superformula: (x, m, n1, n2, n3, offset) =>
       superformulaC(phase('superformula', x), [
         num('superformula', 'm', m, 6, -256, 256),
         num('superformula', 'n1', n1, 2),
         num('superformula', 'n2', n2, 2),
         num('superformula', 'n3', n3, 2),
+        num('superformula', 'offset', offset, 0, 0, SUPERFORMULA_MAX_OFFSET),
       ]),
     fractal: (x, base, ratio, terms, decay) =>
       fractalC(phase('fractal', x), [
@@ -497,13 +499,14 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
         num('ca', 'gen', gen, 0, 0, L.caGen),
         seedOf('ca', s),
       ]),
-    dyn: (x, map, control, iters, spread, output) =>
+    dyn: (x, map, control, iters, spread, output, start) =>
       dynC(phase('dyn', x), [
         num('dyn', 'map', map, 0, 0, 4),
         num('dyn', 'control', control, 0.6),
         num('dyn', 'iters', iters, 12, 1, L.dynIters),
         num('dyn', 'spread', spread, 0.8),
         num('dyn', 'output', output, 0),
+        Math.round(num('dyn', 'start', start, 0, 0, 1)),
       ]),
     ks: (x, passes, damping, pos, length, excite, s) =>
       ksC(phase('ks', x), [

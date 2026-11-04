@@ -3,6 +3,12 @@
  * the cycle's phase, so the result is periodic and loops cleanly. Sweeping the control
  * parameter across a batch walks the map's bifurcation diagram (period doubling →
  * chaos). Deterministic: no randomness.
+ *
+ * The logistic, sine and tent maps are symmetric about ½ (f(x) = f(1 − x)), so from the
+ * symmetric start x₀ = ½ + a·sin(p) every iterate depends on sin²(p) only: the cycle
+ * repeats twice and sounds an octave up. The asymmetric start adds a little sin(2p)
+ * (x₀ = ½ + a·(sin p + 0.2·sin 2p)/1.1), which breaks that symmetry and keeps the
+ * fundamental without changing the orbits' character (same chaos, same brightness).
  */
 import { TABLE_SIZE } from '../constants';
 import { shape } from '../shape';
@@ -32,9 +38,18 @@ export interface DynParams {
   spread: number;
   /** 0 = linear output, 1 = soft clip. */
   output: number;
+  /** Initial condition (DYN_STARTS): 0 = symmetric (the original; octave up for the symmetric maps), 1 = asymmetric. */
+  start: number;
 }
 
-export const DEFAULT_DYN: DynParams = { map: 0, control: 0.6, controlEnd: 1, iterations: 12, spread: 0.8, output: 0 };
+/** Initial-condition choices, by index (recipes store the index; recipes without one are symmetric). */
+export const DYN_STARTS: readonly string[] = ['Symmetric (sounds an octave up)', 'Asymmetric (keeps the fundamental)'];
+
+export const DEFAULT_DYN: DynParams = { map: 0, control: 0.6, controlEnd: 1, iterations: 12, spread: 0.8, output: 0, start: 1 };
+
+/** Asymmetric start: sin(p) + ASYM_2·sin(2p), over ASYM_NORM (its peak is ≈ 1.069). */
+const ASYM_2 = 0.2;
+const ASYM_NORM = 1.1;
 
 const CIRCLE_OMEGA = 0.3;
 const HENON_B = 0.3;
@@ -58,21 +73,23 @@ export function dynControl(map: number, c: number): number {
 }
 
 /** One sample: iterate the map from the initial condition at phase `ph` (radians). */
-function iterate(map: DynMap, k: number, iters: number, spread: number, ph: number): number {
+function iterate(map: DynMap, k: number, iters: number, spread: number, ph: number, start = 0): number {
   const s = Math.sin(ph);
+  // The symmetric maps' start (logistic, sine, tent); circle and Hénon have no symmetry to break.
+  const a = start >= 0.5 ? (s + ASYM_2 * Math.sin(2 * ph)) / ASYM_NORM : s;
   switch (map) {
     case 'logistic': {
-      let x = 0.5 + 0.49 * spread * s;
+      let x = 0.5 + 0.49 * spread * a;
       for (let j = 0; j < iters; j++) x = k * x * (1 - x);
       return 2 * x - 1;
     }
     case 'sine': {
-      let x = 0.5 + 0.49 * spread * s;
+      let x = 0.5 + 0.49 * spread * a;
       for (let j = 0; j < iters; j++) x = k * Math.sin(Math.PI * x);
       return 2 * x - 1;
     }
     case 'tent': {
-      let x = 0.5 + 0.49 * spread * s;
+      let x = 0.5 + 0.49 * spread * a;
       for (let j = 0; j < iters; j++) x = k * Math.min(x, 1 - x);
       return 2 * x - 1;
     }
@@ -101,8 +118,8 @@ function iterate(map: DynMap, k: number, iters: number, spread: number, ph: numb
  * One orbit sample for display (Seed's bifurcation diagram): map index `map`, the map's own
  * control `k` (dynControl), `iters` steps from the initial value at phase `ph`.
  */
-export function dynIterate(map: number, k: number, iters: number, spread: number, ph: number): number {
-  return iterate(DYN_MAPS[Math.round(map)] ?? 'logistic', k, iters, clamp(spread, 0.01, 1), ph);
+export function dynIterate(map: number, k: number, iters: number, spread: number, ph: number, start = 0): number {
+  return iterate(DYN_MAPS[Math.round(map)] ?? 'logistic', k, iters, clamp(spread, 0.01, 1), ph, start);
 }
 
 /**
@@ -112,11 +129,11 @@ export function dynIterate(map: number, k: number, iters: number, spread: number
  * toward the fixed point still varies (≥ 1e-6), so every table is audible.
  */
 export function dynamicalTable(p: DynParams, index: number, count: number): Float32Array {
-  return shape(dynamicalRaw(p.map, p.control + (p.controlEnd - p.control) * batchU(index, count), p.iterations, p.spread, p.output));
+  return shape(dynamicalRaw(p.map, p.control + (p.controlEnd - p.control) * batchU(index, count), p.iterations, p.spread, p.output, p.start));
 }
 
-/** The raw cycle (before shape()) for one normalised control value c ∈ [0, 1]. */
-export function dynamicalRaw(map: number, c: number, iterations: number, spreadIn: number, output: number): Float64Array {
+/** The raw cycle (before shape()) for one normalised control value c ∈ [0, 1]; start as DynParams.start (default symmetric). */
+export function dynamicalRaw(map: number, c: number, iterations: number, spreadIn: number, output: number, start = 0): Float64Array {
   const m = Math.round(map);
   const mapName = DYN_MAPS[m] ?? 'logistic';
   const k = dynControl(m, c);
@@ -126,7 +143,7 @@ export function dynamicalRaw(map: number, c: number, iterations: number, spreadI
     let lo = Infinity;
     let hi = -Infinity;
     for (let i = 0; i < TABLE_SIZE; i++) {
-      const v = iterate(mapName, k, iters, spread, (2 * Math.PI * i) / TABLE_SIZE);
+      const v = iterate(mapName, k, iters, spread, (2 * Math.PI * i) / TABLE_SIZE, start);
       x[i] = output >= 0.5 ? Math.tanh(3 * v) : v;
       lo = Math.min(lo, x[i]);
       hi = Math.max(hi, x[i]);

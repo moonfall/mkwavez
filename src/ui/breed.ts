@@ -15,6 +15,7 @@ import { randomSeed } from '../core/prng';
 import { describeRecipe, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
+import { pitchBadge } from './pitchBadge';
 import { isOnScreen, watchVisibility, type GenerateView, type UiContext } from './context';
 import { h, icon, ICONS } from './dom';
 import { buildLibrary } from './library';
@@ -331,7 +332,8 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
   // tooltip), shown child, weights; the parents' legend on the right.
   const waveBox = h('div', { class: 'gen-plot-box' }, waveC);
   const tagRow = h('div', { class: 'gen-axis br-tagrow' }, h('span', { class: 'br-tags-left' }, title, shownLabel, weightsLabel), legend);
-  const specBox = h('div', { class: 'gen-plot-box' }, specC);
+  const pitch = pitchBadge('breed-pitch');
+  const specBox = h('div', { class: 'gen-plot-box' }, specC, pitch.el);
   const viewer = h(
     'div',
     { class: 'gen-viewer' },
@@ -725,6 +727,7 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
       drawSpectrum(gs, sw, sh, data, cssColor('--accent'), { bins: SPEC_BINS });
       gs.globalAlpha = 1;
     }
+    pitch.show(data);
   };
 
   const drawCards = () => {

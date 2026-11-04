@@ -4,6 +4,7 @@ import { randomSeed } from '../core/prng';
 import { describeRecipe, type GeneratedTable, type WaveTable } from '../core/table';
 import { buildStepper, buildStrip, drawCard, flasher, SPEC_BINS } from './batch';
 import { cssColor, drawSpectrum, drawWave, fit, fitFixed, onThemeChange } from './canvas';
+import { pitchBadge } from './pitchBadge';
 import { isOnScreen, watchVisibility, type GenerateView, type UiContext } from './context';
 import { h } from './dom';
 import { buildLibrary } from './library';
@@ -177,7 +178,8 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
       ),
     ),
   );
-  const specBox = h('div', { class: 'gen-plot-box' }, specC);
+  const pitch = pitchBadge('mutate-pitch');
+  const specBox = h('div', { class: 'gen-plot-box' }, specC, pitch.el);
   const viewer = h(
     'div',
     { class: 'gen-viewer' },
@@ -361,6 +363,7 @@ export function buildMutatePanel(ctx: UiContext, opts: MutatePanelOpts): { el: H
       drawSpectrum(gs, sw, sh, data, cssColor('--accent'), { bins: SPEC_BINS });
       gs.globalAlpha = 1;
     }
+    pitch.show(data);
   };
 
   const drawCards = () => {

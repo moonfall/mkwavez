@@ -32,6 +32,10 @@ as a native plugin (VST3 / AU / CLAP / LV2 / Standalone) whose editor is the sam
   and many formula presets) show a basis plot next to the result: the bifurcation diagram a chaotic map samples, the cobweb of an iterated map,
   a cellular automaton's generations, a reaction-diffusion ring's history, a plucked
   string's passes, an FM modulator, the polygon or glyph outline being traced.
+- **You can tell when a waveform won't play its note.** Seed, Mutate, Breed and Shape badge
+  the shown waveform when its harmonics share a common divisor ("sounds +1 oct", "sounds
+  +19 st": an n-gon read from its centre, a symmetric chaotic map) or its fundamental is
+  weak; the tooltip says why.
 - **Every waveform is crossfade-safe.** One pipeline band-limits, removes DC, aligns the
   fundamental's phase and normalizes every waveform, so any two can be blended without
   comb-filtering; playback uses per-octave band-limited copies.

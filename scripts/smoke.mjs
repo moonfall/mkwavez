@@ -482,14 +482,16 @@ async function seedChecks(page, tlCount) {
   }, null, { timeout: 5000 });
   assert(true, 'preview waveform renders');
   assert(!(await page.isVisible('#seed-reroll')), 'no seed / Reroll for a formula without pnoise');
-  // The basis plot: what the builder is based on (Chebyshev: T₂ as a transfer curve).
+  // Chebyshev sweeps odd orders, so its waveforms keep the fundamental: no pitch badge.
+  assert(await page.isHidden('#seed-pitch'), 'no "sounds +n" badge on a waveform that plays its note');
+  // The basis plot: what the builder is based on (Chebyshev: T₃ as a transfer curve).
   await page.waitForFunction(() => {
     const c = document.querySelector('#seed-basis');
     return !document.querySelector('#seed-basis-plot').hidden && c.width > 1 && c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 === 3 && v);
   }, null, { timeout: 5000 });
   assert(
-    (await page.textContent('#seed-kind')) === 'Waveshaper' && (await page.textContent('#seed-basis-plot .gen-axis')).includes('Chebyshev Tₖ · amount 2.00'),
-    'Chebyshev is a Waveshaper starting point; its basis plot shows T₂ for the first waveform',
+    (await page.textContent('#seed-kind')) === 'Waveshaper' && (await page.textContent('#seed-basis-plot .gen-axis')).includes('Chebyshev Tₖ · amount 3.00'),
+    'Chebyshev is a Waveshaper starting point; its basis plot shows T₃ for the first waveform',
   );
 
   // ▲ / ▼.
@@ -730,6 +732,24 @@ async function seedChecks(page, tlCount) {
   await page.click('#seed-n-inc');
   await page.click('#seed-n-inc');
   assert((await page.inputValue('#seed-n')) === '8', 'N back to 8');
+
+  // Pitch badge: a polygon read from its centre repeats n times per cycle, so it sounds above
+  // its note; read off-centre (the default) it keeps the fundamental.
+  await page.click('#seed-current');
+  await page.fill('#seed-search', 'polygon');
+  await page.press('#seed-search', 'Enter');
+  assert((await title()) === 'Geometry › Polygon', 'Polygon selected');
+  await page.waitForTimeout(300);
+  assert(await page.isHidden('#seed-pitch'), 'Polygon read off-centre (default): no pitch badge');
+  await page.fill('#seed-param-offset', '0');
+  await page.waitForFunction(() => !document.querySelector('#seed-pitch').hidden, null, { timeout: 5000 });
+  assert(
+    /^sounds \+\d+ (oct|st)$/.test((await page.textContent('#seed-pitch')).trim()) && (await page.getAttribute('#seed-pitch', 'title')).includes('multiple of'),
+    'Polygon read from the centre: a "sounds +n" badge, explained in its tooltip',
+  );
+  await page.click('#seed-revert');
+  await page.waitForFunction(() => document.querySelector('#seed-pitch').hidden, null, { timeout: 5000 });
+  assert(true, 'Revert: the badge goes again');
 
   // Glyph contour: the browser traces each character; the strip shows one per card.
   await page.click('#seed-current');

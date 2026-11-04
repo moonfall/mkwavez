@@ -62,6 +62,7 @@ import { cssColor, drawWave, fit, fitFixed, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type GenerateView, type UiContext } from './context';
 import { h } from './dom';
 import { popupMenu } from './presets';
+import { pitchBadge } from './pitchBadge';
 import { previewOf } from './shapeOnAdd';
 import { downloadBytes, pickFile } from './session';
 import { ask } from './dialogs';
@@ -955,7 +956,9 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     edHint,
   );
   const sideCanvas = h('canvas', { id: 'shape-side', role: 'img', 'aria-label': 'The selected step in the other view' });
-  const sideBox = h('div', { class: 'gen-plot-box' }, sideCanvas);
+  // The shown waveform (the chain's output) may sound above its note: badge over the side plot.
+  const pitch = pitchBadge('shape-pitch');
+  const sideBox = h('div', { class: 'gen-plot-box' }, sideCanvas, pitch.el);
   const sideAxis = h('div', { class: 'gen-axis' });
   const edAxis = h('div', { class: 'gen-axis' });
   const viewer = h(
@@ -1128,9 +1131,11 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       edHint.textContent = 'Select a waveform in the Timeline to shape it';
       legend.replaceChildren();
       fit(sideCanvas, Math.max(30, sideBox.clientHeight || 90));
+      pitch.show(undefined);
       return;
     }
     const { inp, out } = st;
+    pitch.show(st.all.at(-1) ?? source()?.data);
     if (view === 'wave') {
       if (!drawing) plotR = Math.max(1.25, Math.ceil(Math.max(peakOf(inp), peakOf(out)) * 4.4) / 4);
       g.strokeStyle = grid;

@@ -8,10 +8,17 @@
  *    pen's x coordinate (so rotation changes the waveform; for the radius it only shifts
  *    the cycle, which shape()'s phase alignment undoes).
  * Roundness rounds the corners (each a quadratic Bézier from partway along its edges).
+ *
+ * Read from the centre, an n-gon's radius repeats n times per cycle: only multiples of n
+ * survive and it sounds log2(n) octaves up. Offset moves the reading point off the centre
+ * (a fraction of the inner radius, toward angle 0), so the cycle goes round once and keeps
+ * the fundamental, the outline's corners on top (radiusFrom()). Offset 0 is the original
+ * centre reading; Trace ignores it.
  */
 import { TABLE_SIZE } from '../constants';
 import { shape } from '../shape';
 import { batchU } from './perlin';
+import { minOf, radiusFrom } from './radial';
 
 export const POLYGON_READS = ['Radius vs angle', 'Trace (x as it is drawn)'] as const;
 export const POLYGON_BATCHES = ['Add a side per waveform', 'Sweep roundness', 'Sweep rotation'] as const;
@@ -33,9 +40,14 @@ export interface PolygonParams {
   rotationEnd: number;
   /** POLYGON_BATCHES index. */
   batch: number;
+  /** Radius read: the reading point's distance from the centre, as a fraction of the inner radius (0 = centre). */
+  offset: number;
 }
 
-export const DEFAULT_POLYGON: PolygonParams = { read: 0, sides: 3, star: 1, roundness: 0, roundnessEnd: 0.6, rotation: 0, rotationEnd: 0.25, batch: 0 };
+export const DEFAULT_POLYGON: PolygonParams = { read: 0, sides: 3, star: 1, roundness: 0, roundnessEnd: 0.6, rotation: 0, rotationEnd: 0.25, batch: 0, offset: 0.25 };
+
+/** Largest reading-point offset (a fraction of the inner radius: the point stays inside). */
+export const POLYGON_MAX_OFFSET = 0.9;
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
@@ -148,11 +160,17 @@ export function polygonPoints(sides: number, star: number, roundness: number, ro
   return out;
 }
 
-/** The raw cycle (before shape()): the radius at each angle, or the traced x. */
-export function polygonRaw(sides: number, star: number, roundness: number, rotation: number, read: number): Float64Array {
+/**
+ * The raw cycle (before shape()): the radius at each angle — from the centre, or from the
+ * point `offset` × the inner radius toward angle 0 — or the traced x.
+ */
+export function polygonRaw(sides: number, star: number, roundness: number, rotation: number, read: number, offset = 0): Float64Array {
   const pts = polygonPoints(sides, star, roundness, rotation, read);
   const trace = Math.round(read) === 1;
-  return Float64Array.from(pts, ([x, y]) => (trace ? x : Math.hypot(x, y)));
+  const raw = Float64Array.from(pts, ([x, y]) => (trace ? x : Math.hypot(x, y)));
+  const off = clamp(offset, 0, POLYGON_MAX_OFFSET);
+  if (trace || !(off > 0)) return raw;
+  return radiusFrom(polygonOutline(sides, star, roundness, rotation), off * minOf(raw), 0);
 }
 
 /** Sides, roundness and rotation of table `index` (the batch sweeps one of them). */
@@ -168,5 +186,5 @@ export function polygonAt(p: PolygonParams, index: number, count: number): { sid
 
 export function polygonTable(p: PolygonParams, index: number, count: number): Float32Array {
   const a = polygonAt(p, index, count);
-  return shape(polygonRaw(a.sides, p.star, a.roundness, a.rotation, p.read));
+  return shape(polygonRaw(a.sides, p.star, a.roundness, a.rotation, p.read, p.offset));
 }

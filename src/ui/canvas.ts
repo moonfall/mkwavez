@@ -149,7 +149,8 @@ export function drawWave(
 
 const specCache = new WeakMap<object, Float64Array>();
 
-function spectrum(x: Float32Array): Float64Array {
+/** Harmonic magnitudes 1…KMAX of a table (index k = harmonic k), cached per data array (tables are immutable). */
+export function spectrum(x: Float32Array | Float64Array): Float64Array {
   let s = specCache.get(x);
   if (!s) {
     s = harmonicMagnitudes(x, KMAX);

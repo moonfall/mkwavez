@@ -7,18 +7,18 @@
  */
 import type { ParamValue } from '../table';
 import { additiveTable, DEFAULT_ADDITIVE as AD, type AdditiveParams } from './additive';
-import { DEFAULT_DYN, DYN_MAP_LABELS, dynamicalTable } from './dynamical';
+import { DEFAULT_DYN, DYN_MAP_LABELS, DYN_STARTS, dynamicalTable } from './dynamical';
 import { DEFAULT_KS, KS_MAX_PASS, karplusTable } from './karplus';
 import { glyphTable } from './glyph';
 import { DEFAULT_LIFE as LF, LIFE_READS, LIFE_RULES, lifeTable, type LifeParams } from './life';
 import { DEFAULT_RD as RD, RD_CUSTOM, RD_PRESETS, rdTable, type RdParams } from './reactionDiffusion';
 import { DEFAULT_SPLINE as SP, splineTable, type SplineParams } from './spline';
-import { DEFAULT_POLYGON as PG, POLYGON_BATCHES, POLYGON_READS, polygonTable, type PolygonParams } from './polygon';
+import { DEFAULT_POLYGON as PG, POLYGON_BATCHES, POLYGON_MAX_OFFSET, POLYGON_READS, polygonTable, type PolygonParams } from './polygon';
 import { DEFAULT_SHAPER as SH, SHAPER_INPUTS, SHAPERS, shaperTable, type ShaperParams } from './shaper';
 import { DEFAULT_FM as FMD, FM_ROUTINGS, fmTable, type FmParams } from './fm';
 import { DEFAULT_PD as PDD, PD_SHAPES, pdTable, type PdParams } from './phaseDistortion';
 import { DEFAULT_RESONANCE as RSD, RESONANCE_WINDOWS, resonanceTable, type ResonanceParams } from './resonance';
-import { DEFAULT_SUPERFORMULA as SFD, superformulaTable, type SuperformulaParams } from './superformula';
+import { DEFAULT_SUPERFORMULA as SFD, SUPERFORMULA_MAX_OFFSET, superformulaTable, type SuperformulaParams } from './superformula';
 import { DEFAULT_FRACTAL as FRD, FRACTAL_BASES, fractalTable, type FractalParams } from './fractal';
 import { DEFAULT_SYNC as SYD, SYNC_WAVES, syncTable, type SyncParams } from './sync';
 import { DEFAULT_SERIES as SRD, SERIES_PHASES, SERIES_SETS, seriesTable, type SeriesParams } from './series';
@@ -66,6 +66,12 @@ export interface ParamModeDef {
   /** Formula presets re-made in this mode; a mode with variants is listed only through them. */
   readonly variants?: readonly ModeVariant[];
   readonly params: readonly SeedParam[];
+  /**
+   * Values for params added after the mode first shipped, used when a recipe lacks them
+   * (it was made before the param existed): the value that renders as the mode did then,
+   * so old recipes re-render identically while new batches use the param's default.
+   */
+  readonly legacy?: Readonly<Record<string, number>>;
   /** True when the seed changes the result for these params. */
   seeded(p: ModeParams): boolean;
   render(p: ModeParams, seed: number, index: number, count: number): Float32Array;
@@ -156,7 +162,8 @@ export const PARAM_MODES = [
     name: 'Superformula',
     about:
       'Gielis’ superformula read as radius vs angle: m sets the symmetry, n1 how pinched the shape is, n2 and n3 its ' +
-      'sides. The batch sweeps n2 and n3.',
+      'sides. The batch sweeps n2 and n3. Read from the centre, an m-fold shape sounds above its note; Off-centre reads ' +
+      'the radius from a point off the centre, which keeps the fundamental.',
     params: [
       { key: 'm', label: 'Symmetry m', min: 1, max: 24, step: 1, value: SFD.m },
       { key: 'n1', label: 'n1 (pinch)', min: 0.1, max: 12, step: 0.05, value: SFD.n1 },
@@ -164,7 +171,10 @@ export const PARAM_MODES = [
       { key: 'n2End', label: 'Batch → n2', min: 0.1, max: 20, step: 0.05, value: SFD.n2End },
       { key: 'n3', label: 'n3', min: 0.1, max: 20, step: 0.05, value: SFD.n3 },
       { key: 'n3End', label: 'Batch → n3', min: 0.1, max: 20, step: 0.05, value: SFD.n3End },
+      { key: 'offset', label: 'Off-centre (0 = centre)', min: 0, max: SUPERFORMULA_MAX_OFFSET, step: 0.01, value: SFD.offset },
     ],
+    // Recipes from before the off-centre reading were read from the centre.
+    legacy: { offset: 0 },
     variants: [{ id: 'superformula', values: {} }],
     seeded: () => false,
     render: (p, _seed, index, count) => superformulaTable(nums<SuperformulaParams>(p, SFD), index, count),
@@ -250,7 +260,8 @@ export const PARAM_MODES = [
     ],
     variants: [
       { id: 'soft-clip', values: { shaper: 0, amount: 1, amountEnd: 6 } },
-      { id: 'chebyshev', values: { shaper: 1, level: 0.95, amount: 2, amountEnd: 9 } },
+      // Odd orders 3…17: an even Tₖ of a sine has only even harmonics (an octave up).
+      { id: 'chebyshev', values: { shaper: 1, level: 0.95, amount: 3, amountEnd: 17 } },
       { id: 'superellipse', values: { shaper: 2, amount: 0.05, amountEnd: 1 } },
       { id: 'shaped-pwm', values: { shaper: 0, amount: 3, amountEnd: 23, bias: -0.8, biasEnd: 0.8 } },
     ],
@@ -284,9 +295,11 @@ export const PARAM_MODES = [
     after: 'blancmange',
     about:
       'A regular polygon or star {n/k} (a step sharing a factor with n draws a compound, e.g. {6/2}), read as its radius ' +
-      'around the centre or traced at constant speed (the pen’s x; rotation matters there). Roundness rounds the corners.',
+      'around a point or traced at constant speed (the pen’s x; rotation matters there). Roundness rounds the corners. ' +
+      'Read from the centre, an n-gon repeats n times per cycle and sounds above its note; Off-centre keeps the fundamental.',
     params: [
       { key: 'read', label: 'Read', min: 0, max: 1, step: 1, value: PG.read, options: opts(POLYGON_READS) },
+      { key: 'offset', label: 'Off-centre (radius; 0 = centre)', min: 0, max: POLYGON_MAX_OFFSET, step: 0.01, value: PG.offset },
       { key: 'sides', label: 'Sides', min: 3, max: 16, step: 1, value: PG.sides },
       { key: 'star', label: 'Star step (1 = convex)', min: 1, max: 7, step: 1, value: PG.star },
       { key: 'roundness', label: 'Roundness', min: 0, max: 0.95, step: 0.01, value: PG.roundness },
@@ -295,6 +308,8 @@ export const PARAM_MODES = [
       { key: 'roundnessEnd', label: 'Batch → roundness', min: 0, max: 0.95, step: 0.01, value: PG.roundnessEnd },
       { key: 'rotationEnd', label: 'Batch → rotation', min: 0, max: 1, step: 0.01, value: PG.rotationEnd },
     ],
+    // Recipes from before the off-centre reading were read from the centre.
+    legacy: { offset: 0 },
     seeded: () => false,
     render: (p, _seed, index, count) => polygonTable(nums<PolygonParams>(p, PG), index, count),
   },
@@ -305,15 +320,19 @@ export const PARAM_MODES = [
     name: 'Dynamical systems',
     about:
       'Each sample iterates a chaotic map from an initial condition that follows the phase (so the cycle loops). ' +
-      'A batch sweeps the control from start to end: a walk through the bifurcation diagram.',
+      'A batch sweeps the control from start to end: a walk through the bifurcation diagram. The logistic, sine and tent ' +
+      'maps are symmetric, so a symmetric start sounds an octave up; the asymmetric start keeps the fundamental.',
     params: [
       { key: 'map', label: 'Map', min: 0, max: 4, step: 1, value: DEFAULT_DYN.map, options: opts(DYN_MAP_LABELS) },
       { key: 'control', label: 'Control start', min: 0, max: 1, step: 0.005, value: DEFAULT_DYN.control },
       { key: 'controlEnd', label: 'Batch → control', min: 0, max: 1, step: 0.005, value: DEFAULT_DYN.controlEnd },
       { key: 'iterations', label: 'Iterations', min: 1, max: 64, step: 1, value: DEFAULT_DYN.iterations },
       { key: 'spread', label: 'Initial spread', min: 0.05, max: 1, step: 0.01, value: DEFAULT_DYN.spread },
+      { key: 'start', label: 'Initial condition', min: 0, max: 1, step: 1, value: DEFAULT_DYN.start, options: opts(DYN_STARTS) },
       { key: 'output', label: 'Output', min: 0, max: 1, step: 1, value: DEFAULT_DYN.output, options: opts(['Linear', 'Soft clip']) },
     ],
+    // Recipes from before the start choice used the symmetric start.
+    legacy: { start: 0 },
     seeded: () => false,
     render: (p, _seed, index, count) =>
       dynamicalTable(
@@ -324,6 +343,7 @@ export const PARAM_MODES = [
           iterations: num(p, 'iterations'),
           spread: num(p, 'spread'),
           output: num(p, 'output'),
+          start: num(p, 'start'),
         },
         index,
         count,
@@ -530,8 +550,9 @@ export function paramDefaults(pm: ParamModeDef): Record<string, number> {
 
 /**
  * Render with the mode's defaults under `p`, so a recipe saved before a param existed
- * re-renders with that param's default instead of NaN.
+ * re-renders with that param's default instead of NaN — or with its legacy value (the one
+ * that renders as before the param existed), where the mode declares one.
  */
 export function renderParamMode(pm: ParamModeDef, p: ModeParams, seed: number, index: number, count: number): Float32Array {
-  return pm.render({ ...paramDefaults(pm), ...p }, seed, index, count);
+  return pm.render({ ...paramDefaults(pm), ...pm.legacy, ...p }, seed, index, count);
 }

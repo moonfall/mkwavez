@@ -39,7 +39,10 @@ import {
   splinePoints,
   splineRaw,
   polygonAt,
+  minOf,
+  POLYGON_MAX_OFFSET,
   polygonOutline,
+  polygonRaw,
   polygonShape,
   SHAPERS,
   shaperAt,
@@ -417,20 +420,35 @@ viz('mode:shaper', {
   },
 });
 
-// Superformula: the shape in polar form at the shown n2 / n3 (radius vs angle is the waveform).
+// Superformula: the shape in polar form at the shown n2 / n3 (radius vs angle is the waveform),
+// with the point the radius is read from (off the centre: the fundamental stays).
 viz('mode:superformula', {
   axis: (i) => {
     const a = superformulaAt(i.params as unknown as SuperformulaParams, i.index, i.count);
-    return ['', `m ${i.params.m} · n1 ${f2(i.params.n1)} · n2 ${f2(a.n2)} · n3 ${f2(a.n3)}`, ''];
+    const off = i.params.offset ?? 0;
+    return ['', `m ${i.params.m} · n1 ${f2(i.params.n1)} · n2 ${f2(a.n2)} · n3 ${f2(a.n3)}${off > 0 ? ` · read off-centre ${f2(off)}` : ''}`, ''];
   },
   draw: (g, w, h, i, c) => {
     const p = i.params;
     const a = superformulaAt(p as unknown as SuperformulaParams, i.index, i.count);
+    const R = Math.min(w, h) / 2 - 5;
     g.strokeStyle = c.grid;
     g.beginPath();
-    g.arc(w / 2, h / 2, Math.min(w, h) / 2 - 5, 0, TAU);
+    g.arc(w / 2, h / 2, R, 0, TAU);
     g.stroke();
-    polar(g, w, h, (phi) => Math.min(1e6, superformulaRadius(p.m, p.n1, a.n2, a.n3, phi)), c.accent);
+    const r = (phi: number) => Math.min(1e6, superformulaRadius(p.m, p.n1, a.n2, a.n3, phi));
+    polar(g, w, h, r, c.accent);
+    // The reading point (polar() scales the largest radius to R) and the ray to the cycle's start.
+    const rs = Array.from({ length: 361 }, (_, k) => r((TAU * k) / 360)).filter(Number.isFinite);
+    const max = Math.max(1e-9, ...rs);
+    const ox = w / 2 + (R * Math.min(Math.max(p.offset ?? 0, 0), 0.9) * Math.min(...rs)) / max;
+    g.strokeStyle = c.line;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(ox, h / 2);
+    g.lineTo(w / 2 + (R * r(0)) / max, h / 2);
+    g.stroke();
+    dot(g, ox, h / 2, 3, c.line);
   },
 });
 
@@ -548,7 +566,9 @@ viz('polygon', {
   axis: (i) => {
     const a = polygonAt(i.params as unknown as PolygonParams, i.index, i.count);
     const { n, k } = polygonShape(a.sides, i.params.star);
-    return ['', `${k === 1 ? `${n}-gon` : `{${n}/${k}} star`} · ${Math.round(i.params.read) === 1 ? 'traced x' : 'radius vs angle'}`, ''];
+    const off = i.params.offset ?? 0;
+    const read = Math.round(i.params.read) === 1 ? 'traced x' : off > 0 ? `radius off-centre ${f2(off)}` : 'radius vs angle';
+    return ['', `${k === 1 ? `${n}-gon` : `{${n}/${k}} star`} · ${read}`, ''];
   },
   draw: (g, w, h, i, c) => {
     const a = polygonAt(i.params as unknown as PolygonParams, i.index, i.count);
@@ -572,14 +592,17 @@ viz('polygon', {
     g.beginPath();
     for (const L of outlines) L.forEach(([x, y], j) => (j ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y))));
     g.stroke();
-    // Where the cycle starts: angle 0 (radius) or the pen's first point (trace).
-    const [sx, sy] = trace ? outlines[0][0] : [1, 0];
+    // Where the cycle starts: angle 0 from the reading point (radius) or the pen's first point (trace).
+    const off = trace ? 0 : Math.min(Math.max(i.params.offset ?? 0, 0), POLYGON_MAX_OFFSET);
+    const ox = off > 0 ? off * minOf(polygonRaw(a.sides, i.params.star, a.roundness, a.rotation, 0)) : 0;
+    const [sx, sy] = trace ? outlines[0][0] : [polygonRaw(a.sides, i.params.star, a.roundness, a.rotation, 0, off)[0] + ox, 0];
     if (!trace) {
       g.strokeStyle = c.line;
       g.beginPath();
-      g.moveTo(cx, cy);
+      g.moveTo(X(ox), cy);
       g.lineTo(X(sx), Y(sy));
       g.stroke();
+      if (off > 0) dot(g, X(ox), cy, 2.5, c.line);
     }
     dot(g, X(sx), Y(sy), 3, c.line);
   },
@@ -792,14 +815,14 @@ viz('dynamical-systems', {
     const lim = map === 3 ? 1.6 : 1.05;
     const s = scale(w, h, 0, 1, -lim, lim);
     const d = window.devicePixelRatio || 1;
-    const key = `${map}|${i.params.spread}|${w}|${h}|${d}|${c.line}`;
+    const key = `${map}|${i.params.spread}|${i.params.start ?? 0}|${w}|${h}|${d}|${c.line}`;
     if (dynCache?.key !== key) {
       g.fillStyle = c.line;
       g.globalAlpha = 0.45;
       for (let px = 0; px < w; px += 1) {
         const k = dynControl(map, px / w);
         for (let n = 40; n < 104; n += 2) for (const ph of [0.7, 2.3]) {
-          const v = dynIterate(map, k, n, i.params.spread, ph);
+          const v = dynIterate(map, k, n, i.params.spread, ph, i.params.start ?? 0);
           if (Number.isFinite(v)) g.fillRect(px, s.y(v), 1, 1);
         }
       }

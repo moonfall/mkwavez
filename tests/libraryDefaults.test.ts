@@ -13,8 +13,14 @@
  * of ~1e-16 does with probability ~1e-10 per sample.
  *
  * Regenerate only for an intended output change: npx vitest run -u tests/libraryDefaults.test.ts
+ *
+ * fixtures/libraryLegacy.json keeps, for every entry whose default output was deliberately
+ * changed since (retuned defaults, new params), its entry as `main` had it: stored recipes
+ * must keep re-rendering exactly as they were made, so those old recipes are checked too.
+ * Add an entry's old record there whenever its record here changes.
  */
 import fixtureText from './fixtures/libraryDefaults.json?raw';
+import legacyText from './fixtures/libraryLegacy.json?raw';
 import { describe, expect, it } from 'vitest';
 import { compileFormula } from '../src/browser/formulaEval';
 import { renderRecipe, SEED_LIBRARY, seedBatch, type SeedEntry, type SeedRequest } from '../src/core/generators';
@@ -163,16 +169,28 @@ describe('library defaults (pinned to main, within 2^-20)', () => {
     await expect(stringify(snapshot())).toMatchFileSnapshot('./fixtures/libraryDefaults.json');
   }, RENDER_ALL_MS);
 
-  it('the stored recipes re-render to the stored hashes', () => {
-    const fixture = JSON.parse(fixtureText) as Record<string, EntryFixture>;
+  const rerender = (text: string, min: number) => {
+    const fixture = JSON.parse(text) as Record<string, EntryFixture>;
     const keys = Object.keys(fixture);
-    expect(keys.length).toBeGreaterThan(40);
+    expect(keys.length).toBeGreaterThan(min);
     for (const k of keys) {
       const { recipes, hashes } = fixture[k];
       // The recipes are those of the first seed's largest batch.
       const want = hashes[`${recipes[0].seed}/${recipes.length}`];
       expect(recipes.length, k).toBe(want.length);
       recipes.forEach((r, i) => expect(hashTable(renderRecipe(r, { compileFormula })), `${k} #${i}`).toBe(want[i]));
+    }
+  };
+
+  it('the stored recipes re-render to the stored hashes', () => rerender(fixtureText, 40), RENDER_ALL_MS);
+
+  it('recipes made before a deliberate default change still re-render as they were made', () => {
+    rerender(legacyText, 0);
+    // Every legacy record is of a current entry, and differs from its current record.
+    const now = JSON.parse(fixtureText) as Record<string, EntryFixture>;
+    for (const [k, old] of Object.entries(JSON.parse(legacyText) as Record<string, EntryFixture>)) {
+      expect(now[k], k).toBeDefined();
+      expect(JSON.stringify(now[k]), k).not.toBe(JSON.stringify(old));
     }
   }, RENDER_ALL_MS);
 });

@@ -28,6 +28,7 @@ export * from './resonance';
 export * from './phaseDistortion';
 export * from './fm';
 export * from './polygon';
+export * from './radial';
 export * from './reactionDiffusion';
 export * from './resample';
 export * from './seed';

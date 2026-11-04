@@ -266,9 +266,9 @@ describe('parameter modes as functions (Part 2)', () => {
       }
   });
 
-  it('Polygon at its defaults renders like the formula preset it replaced', () => {
+  it('Polygon at its defaults, read from the centre, renders like the formula preset it replaced', () => {
     const old = 'cos(PI/(n+3))/cos((p%(2*PI/(n+3)))-PI/(n+3))';
-    const gen = seedBatch(req(seedEntry('polygon')!, { count: 8 }));
+    const gen = seedBatch(req(seedEntry('polygon')!, { count: 8, params: { offset: 0 } }));
     formulaBatch(old, 1, 8).forEach((d, i) => expect(maxDiff(d, gen[i].data), `#${i}`).toBeLessThan(1e-6));
   });
 
@@ -276,11 +276,11 @@ describe('parameter modes as functions (Part 2)', () => {
     const f = (id: string) => modeFormula(seedEntry(id)!, seedParams(seedEntry(id)!));
     expect(f('pulse')).toBe('pulse(p, 0.25+(0.05-0.25)*u)');
     expect(f('supersaw')).toBe('supersaw(p, 7, 2*u, 0.6, 0, 0)');
-    expect(f('polygon')).toBe('polygon(p, 3+n, 1, 0, 0, 0)');
+    expect(f('polygon')).toBe('polygon(p, 3+n, 1, 0, 0, 0, 0.25)');
     expect(f('fm-sweep')).toBe('fm(p, 1, 2, 4*u, 3, 0, 0)');
     expect(f('cz-phase-dist')).toBe('pd(p, 0, 1*u)');
     expect(f('cz-resonance-saw-window')).toBe('resonance(p, 1, 2+(12-2)*u)');
-    expect(f('superformula')).toBe('superformula(p, 6, 2, 2+(8-2)*u, 2+(8-2)*u)');
+    expect(f('superformula')).toBe('superformula(p, 6, 2, 2+(8-2)*u, 2+(8-2)*u, 0.25)');
     expect(f('blancmange')).toBe('fractal(p, 1, 2, 6, 0.4+(0.8-0.4)*u)');
     expect(f('sync-sweep')).toBe('sync(p, 0, 1+(4-1)*u)');
     expect(f('zoom')).toBe('perlin(p, 1+(6-1)*u, 0, 4, 0.5)');
@@ -288,7 +288,7 @@ describe('parameter modes as functions (Part 2)', () => {
     expect(f('pluck-position')).toBe('series(p, 0, 40, 2, 0, 0.05+(0.5-0.05)*u)');
     expect(f('perlin-noise')).toBe('perlin(p, 2, 1.5*u, 4, 0.5)');
     expect(f('cellular-automaton')).toBe('ca(p, 30, 32, n)');
-    expect(f('dynamical-systems')).toBe('dyn(p, 0, 0.6+(1-0.6)*u, 12, 0.8, 0)');
+    expect(f('dynamical-systems')).toBe('dyn(p, 0, 0.6+(1-0.6)*u, 12, 0.8, 0, 1)');
     expect(f('karplus-strong')).toBe('ks(p, pow(1001,u)-1, 0.6, 0.2, 96, 0)');
     expect(f('additive-designer')).toBe('additive(p, 1+(1.6-1)*u, 0, pow(2,1*u), 0, 6, 2, 3, 15, 3, 2)');
     expect(f('number-sequences')).toBe('seq(p, 0, 16, 0, n)');
