@@ -3752,6 +3752,40 @@ async function wavetableEditorChecks(page, tlCount) {
   );
   await page.click('#wte-step-right');
   await page.click('#wte-step-x-dn');
+  // Write window: Part with bounds, Shift-drag redraws it; writes stay inside.
+  await page.click('#wte-win-part');
+  await page.click('#wte-win-x0-up');
+  await page.click('#wte-win-y1-dn');
+  await page.waitForTimeout(100);
+  let ww = await page.getAttribute('#wte-canvas', 'data-window');
+  marks = (await page.getAttribute('#wte-canvas', 'data-writes')).split(' ').slice(0, 4).join(' ');
+  assert(ww === '1,0,3,1' && marks === 'replace:1,0 replace:2,0 replace:3,0 replace:1,1' && (await page.isVisible('#wte-win-y1')), `write window 1,0–3,1: writes wrap inside it (${ww}; ${marks})`);
+  // Shift-drag from cell (0, 1) to cell (1, 2) redraws it (cell geometry from data-cells).
+  const centre = (cx, cy) =>
+    M(
+      ([cx, cy]) => {
+        const s = document.querySelector('#wte-scroll');
+        const r = s.getBoundingClientRect();
+        const [ox, oy, px, py, w, h] = document.querySelector('#wte-canvas').dataset.cells.split(',').map(Number);
+        return { x: r.left + s.clientLeft - s.scrollLeft + ox + cx * px + w / 2, y: r.top + s.clientTop - s.scrollTop + oy + cy * py + h / 2 };
+      },
+      [cx, cy],
+    );
+  const pa = await centre(0, 1);
+  const pb = await centre(1, 2);
+  await page.keyboard.down('Shift');
+  await page.mouse.move(pa.x, pa.y);
+  await page.mouse.down();
+  await page.mouse.move(pb.x, pb.y, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  await page.waitForTimeout(100);
+  ww = await page.getAttribute('#wte-canvas', 'data-window');
+  w2 = await M((id) => window.mkwavez.model.wavetable(id), g2);
+  assert(ww === '0,1,1,2' && w2.head.x >= 0 && w2.head.x <= 1 && w2.head.y >= 1 && w2.head.y <= 2 && (await page.textContent('#wte-slot-info')).startsWith('Click a slot'), `Shift-drag draws the window (${ww}), head moved inside it, no slot selected`);
+  await page.click('#wte-win-whole');
+  await page.waitForTimeout(100);
+  assert((await page.getAttribute('#wte-canvas', 'data-window')) === '' && (await page.isHidden('#wte-win-x0')), 'Whole: no write window');
   await page.click('#wte-frozen');
   w2 = await M((id) => window.mkwavez.model.wavetable(id).write.step, g2);
   assert(w2.x === 1 && w2.y === 0, 'back to a +1 step along X');

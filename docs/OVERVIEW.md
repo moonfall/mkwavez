@@ -14,7 +14,8 @@ as a native plugin (VST3 / AU / CLAP / LV2 / Standalone) whose editor is the sam
   pattern evolving. Voices play windows over those trajectories.
 - **Live wavetables with write heads.** A wavetable can be Live: each new waveform is
   written at a write head that moves by rules (±x/±y or any x/y step, wrap / stop /
-  grow, next row on wrap, replace / insert, new row per batch). Voices pointing at it hear
+  grow, next row on wrap, replace / insert, new row per batch), optionally inside a write
+  window. Voices pointing at it hear
   it change as you work.
 - **Three shapes of wavetable.** 1D (strip or stacked view), 2D (X × Y grid, bilinear
   blend), Rows (rows of different lengths, blended proportionally) — all referencing

@@ -196,7 +196,10 @@ switches (the choice is remembered).
   Replace mode get a **Step** instead of the direction: a pad for ±1 moves including
   diagonals, plus X / Y steppers for any step from −8 to +8 — +2 fills every other slot
   (wrapping keeps the rhythm), (+1, +2) a knight's move; a diagonal wraps each axis on its
-  own. A Live wavetable gets every new
+  own. They also get a **Write window**: Whole, or Part with X / Y bounds (Part starts as
+  the selected voice's window when it plays this wavetable), or Shift-drag across cells to
+  draw it. The head stays inside: edges, wrapping and new rows work on the window, and the
+  cells outside are dimmed and never written. A Live wavetable gets every new
   waveform (Seed / Mutate / Breed adds, Copy to end) at its write head.
   - **Drag** a waveform from the Timeline (mouse: press and move; touch: move up out of
     the strip — sideways still scrolls it, holding still is still the Breed long-press) or

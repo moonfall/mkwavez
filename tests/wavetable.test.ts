@@ -17,6 +17,11 @@ import {
   makeRows,
   normalizeWrite,
   previewWrites,
+  regionOf,
+  resize1D,
+  resize2D,
+  setHead,
+  writeWindowOf,
   setWrite,
   pinnedIds,
   removeTables,
@@ -621,5 +626,66 @@ describe('write head: free steps (fixed shapes, Replace)', () => {
       return [done.rows[y].indexOf(id), y];
     });
     expect(p).toEqual(where);
+  });
+});
+
+describe('write head: write window (fixed shapes, Replace)', () => {
+  const grid = (w: number, h: number, write: Partial<WriteSettings>) =>
+    ({ ...make2D(60, 'g', w, h, [], { write: { edge: 'wrap', onWrap: 'next', mode: 'replace', batch: 'continue', ...write } }), live: true }) as Wavetable;
+  const cells = (wt: Wavetable) => wt.rows.map((r) => r.map((v) => (v === null ? '.' : String(v))).join('')).join('/');
+  const win = { x0: 1, y0: 1, x1: 2, y1: 2 };
+
+  it('is normalized: ordered whole cells, 1D y 0, only on free-stepping shapes', () => {
+    const base: WriteSettings = { dir: '+x', edge: 'wrap', onWrap: 'next', mode: 'replace', batch: 'continue' };
+    expect(normalizeWrite('2d', true, { ...base, window: { x0: 3.2, y0: 2, x1: 1, y1: -4 } }).window).toEqual({ x0: 1, y0: 0, x1: 3, y1: 2 });
+    expect(normalizeWrite('1d', true, { ...base, window: { x0: 2, y0: 3, x1: 4, y1: 5 } }).window).toEqual({ x0: 2, y0: 0, x1: 4, y1: 0 });
+    expect(normalizeWrite('1d', true, { ...base, mode: 'insert', window: win }).window).toBeUndefined();
+    expect(normalizeWrite('1d', false, { ...base, edge: 'grow', window: win }).window).toBeUndefined();
+    expect(normalizeWrite('rows', false, { ...base, window: win }).window).toBeUndefined();
+    expect(normalizeWrite('2d', true, { ...base, window: null }).window).toBeUndefined();
+  });
+
+  it('confines writes: wrap and carry inside the window, the head starting at its corner', () => {
+    const g = setWrite(grid(4, 4, {}), { window: win });
+    expect(g.head).toEqual({ x: 1, y: 1 }); // the old head (0, 0) can't write: restarted at the corner
+    expect(writeWindowOf(g)).toEqual(win);
+    const t = writeAll(g, [1, 2, 3, 4, 5]);
+    expect(cells(t)).toBe('..../.52./.34./....');
+    // A −x step starts at the window's right edge; a step of 2 in a 3-wide window keeps its rhythm.
+    const back = setWrite(grid(5, 3, {}), { window: { x0: 1, y0: 0, x1: 3, y1: 1 }, step: { x: -2, y: 0 }, onWrap: 'same' });
+    expect(back.head).toEqual({ x: 3, y: 0 });
+    expect(writeAll(back, [1, 2, 3]).rows[0]).toEqual([_, 2, 3, 1, _]);
+  });
+
+  it('Stop and New row work on the window', () => {
+    const st = setWrite(grid(4, 3, { edge: 'stop', onWrap: 'same' }), { window: { x0: 1, y0: 0, x1: 2, y1: 2 } });
+    const t = writeAll(st, [1, 2, 3]);
+    expect(cells(t)).toBe('.12./..../....');
+    const nr = setWrite(grid(4, 3, { batch: 'newRow' }), { window: { x0: 1, y0: 1, x1: 3, y1: 2 } });
+    const t2 = writeAll(nr, [1], [2], [3]);
+    expect(cells(t2)).toBe('..../.3../.2..'); // the third new row wraps to the window's first line
+  });
+
+  it('the head is clamped into the window; resizing clamps the window', () => {
+    const g = setWrite(grid(5, 5, {}), { window: { x0: 1, y0: 1, x1: 3, y1: 2 } });
+    expect(setHead(g, 0, 4).head).toEqual({ x: 1, y: 2 });
+    const small = resize2D(g, 3, 2).wt;
+    expect(small.write.window).toEqual({ x0: 1, y0: 1, x1: 2, y1: 1 });
+    expect(writeAll(small, [1, 2, 3]).rows).toEqual([[_, _, _], [_, 3, 2]]);
+    // A 1D line shrunk past the window: it moves in to the last slot.
+    const line = { ...make1D(61, 'l', [_, _, _, _, _, _], { fixed: true, write: { mode: 'replace', edge: 'wrap', window: { x0: 4, y0: 0, x1: 5, y1: 0 } } }), live: true } as Wavetable;
+    expect(line.head).toEqual({ x: 4, y: 0 });
+    const cut = resize1D(line, true, 3).wt;
+    expect(cut.write.window).toEqual({ x0: 2, y0: 0, x1: 2, y1: 0 });
+    expect(writeAll(cut, [7, 8]).rows[0]).toEqual([_, _, 8]);
+    // Back to the whole wavetable.
+    expect(setWrite(g, { window: null }).write.window).toBeUndefined();
+    expect(regionOf(g.rows, { ...g.write, window: null })).toEqual({ x0: 0, y0: 0, x1: 4, y1: 4 });
+  });
+
+  it('previews match what is written inside a window', () => {
+    const g = setWrite(grid(6, 4, { step: { x: 1, y: 1 } }), { window: { x0: 1, y0: 1, x1: 4, y1: 2 } });
+    const p = previewWrites(g, 6).writes.map((w) => [w.x, w.y]);
+    expect(p).toEqual([[1, 1], [2, 2], [3, 1], [4, 2], [1, 1], [2, 2]]);
   });
 });

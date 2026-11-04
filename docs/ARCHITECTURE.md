@@ -270,6 +270,14 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   a one-axis step, the start corner for a diagonal (the corner the step moves away from:
   x1 for a −x step, y1 for −y). Variable 1D, Rows and Insert keep the unit step of `dir`
   (`normalizeWrite`); older sessions without `step` get the unit step of their `dir`.
+- **Write window** (`window {x0, y0, x1, y1} | null`, the same shapes as free steps): the
+  region the free head works in instead of the whole wavetable — start corner, wrap,
+  carry, Stop and New row all use it (`regionOf`, which clamps it into the wavetable;
+  `writeWindowOf(wt)` for the UI). `normalizeWrite` orders and rounds the bounds (1D: y 0)
+  and drops the window on other shapes; `fitWrite` also clamps it to the rows (setWrite,
+  resize1D / resize2D, session decode), so a shrink moves a window off the edge onto the
+  last cells. `setHead` clamps the head into the region; a head outside it restarts at the
+  window's start corner.
 - **Adds** (`AppModel.addTables`): write into every live wavetable, then pin, then evict
   from the timeline, then drop evicted ids from the (non-pinning) wavetables, then voice
   windows follow; one undo snapshot covers all of it (timeline, wavetables, windows).

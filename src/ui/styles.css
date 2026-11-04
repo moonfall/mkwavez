@@ -3787,6 +3787,9 @@ canvas#wte-canvas {
 .wte-key.head {
   border: 2px solid var(--new);
 }
+.wte-key.wwin {
+  border: 1.5px dashed var(--new);
+}
 .wte-key.next {
   width: 12px;
   height: 12px;
@@ -3896,6 +3899,23 @@ canvas#wte-canvas {
   min-width: 2.2em;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+.wte-winrow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.wte-winrow > .wte-ctl-label {
+  width: 1.2em;
+}
+.wte-bound {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.wte-bound button {
+  width: 22px;
+  padding: 0;
 }
 .wte-step-hint {
   font-size: 11px;

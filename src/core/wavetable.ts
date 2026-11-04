@@ -34,6 +34,14 @@ export interface WriteStep {
 /** Largest step on either axis. */
 export const MAX_STEP = 8;
 
+/** Part of a fixed wavetable the write head stays inside (inclusive cell bounds; 1D: y 0). */
+export interface WriteWindow {
+  readonly x0: number;
+  readonly y0: number;
+  readonly x1: number;
+  readonly y1: number;
+}
+
 export interface WriteSettings {
   /**
    * The line direction (variable 1D, Rows, insert): ±1 along it. For fixed shapes replacing,
@@ -46,6 +54,12 @@ export interface WriteSettings {
    * data) = the unit step along `dir`.
    */
   readonly step?: WriteStep;
+  /**
+   * Fixed shapes replacing (as `step`): the write window. The head writes only inside it;
+   * edges, wrapping and new rows work on it. Missing / null = the whole wavetable. Bounds
+   * beyond the wavetable are clamped where it is used (see regionOf, fitWrite).
+   */
+  readonly window?: WriteWindow | null;
   /** What the head does when it runs off the end of its line. */
   readonly edge: WriteEdge;
   /** On wrap: advance to the next row / column, or stay on the same line. */
@@ -54,6 +68,9 @@ export interface WriteSettings {
   /** At the start of each new batch: continue where the head is, or start a new row. */
   readonly batch: WriteBatch;
 }
+
+/** The write settings chosen from a fixed list of values (not the step or window). */
+export type WriteChoice = Exclude<keyof WriteSettings, 'step' | 'window'>;
 
 /**
  * Next write position as cell coordinates (x = slot in the row, y = row). It may sit one
@@ -306,7 +323,28 @@ export function normalizeWrite(shape: WavetableShape, fixed: boolean, s: WriteSe
       dir = dirOf(step);
     }
   }
-  return { dir, step, edge, onWrap: shape === '1d' ? 'same' : s.onWrap, mode, batch: s.batch };
+  // The window: free-stepping shapes only; whole cells, ordered (1D: y 0).
+  let window: WriteWindow | null = null;
+  if (freeStepping(shape, fixed, mode) && s.window && typeof s.window === 'object') {
+    const lim = shape === '1d' ? MAX_USER_SLOTS - 1 : MAX_GRID - 1;
+    const c = (v: unknown) => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(lim, Math.round(Number(v)))) : 0);
+    const [ax, bx] = [c(s.window.x0), c(s.window.x1)];
+    const [ay, by] = shape === '1d' ? [0, 0] : [c(s.window.y0), c(s.window.y1)];
+    window = { x0: Math.min(ax, bx), y0: Math.min(ay, by), x1: Math.max(ax, bx), y1: Math.max(ay, by) };
+  }
+  return { dir, step, ...(window ? { window } : {}), edge, onWrap: shape === '1d' ? 'same' : s.onWrap, mode, batch: s.batch };
+}
+
+/**
+ * normalizeWrite, plus the window clamped into a wavetable of these rows (a window off
+ * the edge after a shrink moves in to the last cells).
+ */
+export function fitWrite(shape: WavetableShape, fixed: boolean, rows: readonly (readonly Slot[])[], s: WriteSettings): WriteSettings {
+  const n = normalizeWrite(shape, fixed, s);
+  if (!n.window) return n;
+  const r = regionOf(rows, n);
+  const { window: _, ...rest } = n;
+  return { ...rest, window: r };
 }
 
 /** The unit step along a direction. */
@@ -325,8 +363,10 @@ export const freeStepping = (shape: WavetableShape, fixed: boolean, mode: WriteM
 export function sameWrite(a: WriteSettings, b: WriteSettings): boolean {
   const sa = stepOf(a);
   const sb = stepOf(b);
-  return a.dir === b.dir && a.edge === b.edge && a.onWrap === b.onWrap && a.mode === b.mode && a.batch === b.batch && sa.x === sb.x && sa.y === sb.y;
+  return a.dir === b.dir && a.edge === b.edge && a.onWrap === b.onWrap && a.mode === b.mode && a.batch === b.batch && sa.x === sb.x && sa.y === sb.y && sameWindow(a.window, b.window);
 }
+const sameWindow = (a: WriteWindow | null | undefined, b: WriteWindow | null | undefined) =>
+  a === b || (!a && !b) || (!!a && !!b && a.x0 === b.x0 && a.y0 === b.y0 && a.x1 === b.x1 && a.y1 === b.y1);
 
 /** Where a head starts on a fresh line: the first slot in the direction of travel. */
 function lineStart(dir: WriteDir, len: number, growReplace: boolean): number {
@@ -335,7 +375,7 @@ function lineStart(dir: WriteDir, len: number, growReplace: boolean): number {
 }
 
 function startHead(shape: WavetableShape, rows: readonly (readonly Slot[])[], s: WriteSettings, fixed = shape === '2d'): WriteHead {
-  if (freeStepping(shape, fixed, s.mode)) return startCorner(stepOf(s), fullRegion(rows));
+  if (freeStepping(shape, fixed, s.mode)) return startCorner(stepOf(s), regionOf(rows, s));
   const grow = s.edge === 'grow' && s.mode === 'replace';
   if (shape === 'rows') {
     // Replacing without growth starts on the first existing row; anything else on a new row.
@@ -484,13 +524,24 @@ const vertical = (dir: WriteDir) => dir === '+y' || dir === '-y';
 // ---- the free-stepping head (fixed shapes, Replace) ----
 
 /** The cells a free-stepping head writes in (inclusive bounds). */
-interface Region {
-  readonly x0: number;
-  readonly y0: number;
-  readonly x1: number;
-  readonly y1: number;
-}
+type Region = WriteWindow;
 const fullRegion = (rows: readonly (readonly Slot[])[]): Region => ({ x0: 0, y0: 0, x1: (rows[0]?.length ?? 0) - 1, y1: rows.length - 1 });
+/**
+ * Where a free-stepping head writes: its window clamped into the wavetable (a window off
+ * the edge moves in to the last cells), or the whole wavetable.
+ */
+export function regionOf(rows: readonly (readonly Slot[])[], s: WriteSettings): Region {
+  const f = fullRegion(rows);
+  const w = s.window;
+  if (!w) return f;
+  const cx = (v: number) => Math.max(f.x0, Math.min(f.x1, v));
+  const cy = (v: number) => Math.max(f.y0, Math.min(f.y1, v));
+  return { x0: cx(w.x0), y0: cy(w.y0), x1: cx(w.x1), y1: cy(w.y1) };
+}
+/** The write window a wavetable's head is confined to (clamped), or null for the whole wavetable. */
+export function writeWindowOf(wt: Wavetable): WriteWindow | null {
+  return wt.write.window && freeStepping(wt.shape, wt.fixed, wt.write.mode) ? regionOf(wt.rows, wt.write) : null;
+}
 const inRegion = (r: Region, x: number, y: number) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
 /** v wrapped into lo..hi (modulo the span, so a step of 3 keeps its rhythm). */
 const wrapInto = (v: number, lo: number, hi: number) => {
@@ -506,7 +557,7 @@ const startCorner = (st: WriteStep, r: Region): WriteHead => ({ x: st.x < 0 ? r.
  */
 function freeStartBatch(w: Work): void {
   const st = stepOf(w.s);
-  const r = fullRegion(w.rows);
+  const r = regionOf(w.rows, w.s);
   const c = startCorner(st, r);
   if (w.wt.shape === '1d' || (st.x !== 0 && st.y !== 0)) {
     w.x = c.x;
@@ -539,7 +590,7 @@ function freeStartBatch(w: Work): void {
  */
 function freeWriteOne(w: Work, id: TableId): boolean {
   const st = stepOf(w.s);
-  const r = fullRegion(w.rows);
+  const r = regionOf(w.rows, w.s);
   if (!inRegion(r, w.x, w.y)) return false;
   w.row(w.y)[w.x] = id;
   const wrap = w.s.edge === 'wrap';
@@ -934,7 +985,7 @@ export function resize2D(wt: Wavetable, W: number, H: number): WavetableEdit {
   if (W === W0 && H === H0) return unchanged(wt);
   const rows = Array.from({ length: H }, (_, y) => Array.from({ length: W }, (_, x) => wt.rows[y]?.[x] ?? null));
   const head = { x: Math.max(0, Math.min(W - 1, wt.head.x)), y: Math.max(0, Math.min(H - 1, wt.head.y)) };
-  return { wt: { ...wt, rows, head }, map: null, reset: false };
+  return { wt: withValidHead({ ...wt, rows, head, write: fitWrite('2d', true, rows, wt.write) }), map: null, reset: false };
 }
 
 /** Filled slots a fixed 1D length of `len` would drop. */
@@ -960,7 +1011,7 @@ export function resize1D(wt: Wavetable, fixed: boolean, len?: number): Wavetable
     w.x = Math.min(w.x, n);
   } else for (let i = L; i < n; i++) w.ins(0, i, null);
   const e = w.done();
-  const write = normalizeWrite('1d', fixed, wt.write);
+  const write = fitWrite('1d', fixed, e.wt.rows, wt.write);
   return { wt: withValidHead({ ...e.wt, fixed, write }), map: e.map, reset: false };
 }
 
@@ -975,19 +1026,26 @@ function withValidHead(wt: Wavetable): Wavetable {
 export function setWrite(wt: Wavetable, patch: Partial<WriteSettings>): Wavetable {
   // A new direction without a step means the unit step along it.
   const p = patch.dir !== undefined && patch.step === undefined ? { ...patch, step: unitStep(patch.dir) } : patch;
-  const write = normalizeWrite(wt.shape, wt.fixed, { ...wt.write, ...p });
+  // window: null in the patch = the whole wavetable.
+  const write = fitWrite(wt.shape, wt.fixed, wt.rows, { ...wt.write, ...p });
   if (sameWrite(wt.write, write) && wt.write.step) return wt;
   return withValidHead({ ...wt, write });
 }
 
 /**
- * Move the write head (clamped: 1D x in −1..length, i.e. one past either end of the line;
- * 2D inside the grid; Rows y up to the row count (= a new row), x within that row ±1).
+ * Move the write head (clamped: fixed 1D / 2D replacing: inside the write window, or the
+ * whole wavetable; other 1D x in −1..length, i.e. one past either end of the line; Rows y
+ * up to the row count (= a new row), x within that row ±1).
  */
 export function setHead(wt: Wavetable, x: number, y: number): Wavetable {
   let hx = Math.round(x);
   let hy = Math.round(y);
-  if (wt.shape === '2d') {
+  if (freeStepping(wt.shape, wt.fixed, wt.write.mode)) {
+    // Inside the region (the write window, or the whole wavetable).
+    const r = regionOf(wt.rows, wt.write);
+    hx = Math.max(r.x0, Math.min(r.x1, hx));
+    hy = Math.max(r.y0, Math.min(r.y1, hy));
+  } else if (wt.shape === '2d') {
     const { w, h } = wavetableDims(wt);
     hx = Math.max(0, Math.min(w - 1, hx));
     hy = Math.max(0, Math.min(h - 1, hy));

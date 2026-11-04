@@ -25,6 +25,7 @@ import {
   shapeLabel,
   stepOf,
   wavetableDims,
+  writeWindowOf,
   wavetableMode,
   type Cell,
   type PendingWrite,
@@ -32,7 +33,9 @@ import {
   type Wavetable,
   type WavetableId,
   type WavetableShape,
+  type WriteChoice,
   type WriteSettings,
+  type WriteWindow,
 } from '../core/wavetable';
 import { Mix } from '../core/wavetablePlayback';
 import { cssColor, drawWave, fit, onThemeChange } from './canvas';
@@ -372,6 +375,8 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     h('span', {}, h('span', { class: 'wte-key head' }), 'write head'),
     h('span', {}, h('span', { class: 'wte-key next' }, '2'), 'next writes'),
   );
+  const legendWin = h('span', { hidden: true }, h('span', { class: 'wte-key wwin' }), 'write window');
+  legend.insertBefore(legendWin, legend.children[2]);
   const viewBox = h('div', { class: 'wte-view' }, scroller, emptyHint, legend);
   watchVisibility(canvas);
 
@@ -397,7 +402,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
   const liveSeg = seg('Live or frozen', [['live', 'Live', 'New waveforms are written at the write head'], ['frozen', 'Frozen', 'Changed by hand only']] as const, 'wte', (v) =>
     model.setWavetableLive(host.current(), v === 'live'),
   );
-  type Ctl = { key: Exclude<keyof WriteSettings, 'step'>; label: string; opts: readonly (readonly [string, string, string?])[] };
+  type Ctl = { key: WriteChoice; label: string; opts: readonly (readonly [string, string, string?])[] };
   const CTLS: Ctl[] = [
     { key: 'dir', label: 'Direction', opts: [['+x', '+x', 'Along the row'], ['-x', '−x', 'Backwards along the row'], ['+y', '+y', 'Down the columns (2D)'], ['-y', '−y', 'Up the columns (2D)']] },
     { key: 'edge', label: 'At the edge', opts: [['wrap', 'Wrap'], ['stop', 'Stop'], ['grow', 'Grow']] },
@@ -457,6 +462,66 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
   );
   const dirCtl = ctlSegs.find((x) => x.c.key === 'dir')!;
 
+  // Write window (fixed 1D and 2D replacing): Whole / Part, the bounds, Shift-drag in the view.
+  const fullWin = (wt: Wavetable): WriteWindow => {
+    const { w, h: hh } = wavetableDims(wt);
+    return { x0: 0, y0: 0, x1: Math.max(0, w - 1), y1: Math.max(0, hh - 1) };
+  };
+  /** Part starts as the selected voice's window when it plays this wavetable, else the whole. */
+  const defaultWin = (wt: Wavetable): WriteWindow => {
+    const v = ctx.ui.voiceId === null ? undefined : model.voice(ctx.ui.voiceId);
+    const f = fullWin(wt);
+    if (!v || v.wavetableId !== wt.id) return f;
+    const cx = (n: number) => Math.max(0, Math.min(f.x1, n));
+    const cy = (n: number) => (wt.shape === '1d' ? 0 : Math.max(0, Math.min(f.y1, n)));
+    return {
+      x0: cx(Math.min(v.windowStart, v.windowEnd)),
+      x1: cx(Math.max(v.windowStart, v.windowEnd)),
+      y0: cy(Math.min(v.windowStartY, v.windowEndY)),
+      y1: cy(Math.max(v.windowStartY, v.windowEndY)),
+    };
+  };
+  const setWin = (w: WriteWindow | null) => model.setWavetableWrite(host.current(), { window: w });
+  const winSeg = seg(
+    'Write window',
+    [
+      ['whole', 'Whole', 'The head writes anywhere in the wavetable'],
+      ['part', 'Part', 'The head stays inside a window: edges, wrapping and new rows work on it'],
+    ] as const,
+    'wte-win',
+    (v) => {
+      const wt = cur();
+      if (v === 'whole') setWin(null);
+      else if (!writeWindowOf(wt)) setWin(defaultWin(wt));
+    },
+  );
+  type Bound = keyof WriteWindow;
+  const bump = (k: Bound, d: number) => {
+    const wt = cur();
+    const w0 = writeWindowOf(wt);
+    if (!w0) return;
+    const f = fullWin(wt);
+    const lim = k[0] === 'x' ? f.x1 : f.y1;
+    const v = Math.max(0, Math.min(lim, w0[k] + d));
+    const w = { ...w0, [k]: v };
+    // Pushing one bound past the other moves both.
+    if (w.x0 > w.x1) w[k === 'x0' ? 'x1' : 'x0'] = v;
+    if (w.y0 > w.y1) w[k === 'y0' ? 'y1' : 'y0'] = v;
+    setWin(w);
+  };
+  const boundEls = new Map<Bound, { val: HTMLElement; dn: HTMLButtonElement; up: HTMLButtonElement }>();
+  const bound = (k: Bound, what: string) => {
+    const val = h('span', { class: 'wte-step-val', id: `wte-win-${k}` });
+    const dn = h('button', { class: 'small', id: `wte-win-${k}-dn`, 'aria-label': `${what} down`, onclick: () => bump(k, -1) }, '−');
+    const up = h('button', { class: 'small', id: `wte-win-${k}-up`, 'aria-label': `${what} up`, onclick: () => bump(k, 1) }, '+');
+    boundEls.set(k, { val, dn, up });
+    return h('span', { class: 'wte-bound' }, dn, val, up);
+  };
+  const winRowX = h('div', { class: 'wte-winrow' }, h('span', { class: 'wte-ctl-label' }, 'X'), bound('x0', 'Window left'), h('span', {}, '–'), bound('x1', 'Window right'));
+  const winRowY = h('div', { class: 'wte-winrow' }, h('span', { class: 'wte-ctl-label' }, 'Y'), bound('y0', 'Window top'), h('span', {}, '–'), bound('y1', 'Window bottom'));
+  const winHint = h('span', { class: 'wte-step-hint', id: 'wte-win-hint' });
+  const winCtl = h('div', { class: 'wte-ctl', id: 'wte-window' }, h('span', { class: 'wte-ctl-label' }, 'Write window'), winSeg.el, winRowX, winRowY, winHint);
+
   const note = h('div', { class: 'wte-note', id: 'wte-note' });
   const side = h(
     'aside',
@@ -464,6 +529,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     h('div', { class: 'wte-side-head' }, h('span', { class: 'wte-side-title' }, 'Write head'), liveSeg.el),
     dirCtl.el,
     stepCtl,
+    winCtl,
     ...ctlSegs.filter((x) => x !== dirCtl).map((x) => x.el),
     note,
   );
@@ -530,7 +596,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     const free = freeStepping(wt.shape, wt.fixed, wt.write.mode);
     const st = stepOf(wt.write);
     const diagonal = st.x !== 0 && st.y !== 0;
-    const off: Record<Exclude<keyof WriteSettings, 'step'>, (v: string) => boolean> = {
+    const off: Record<WriteChoice, (v: string) => boolean> = {
       dir: (v) => !is2d && (v === '+y' || v === '-y'),
       edge: (v) => (v === 'grow' && (is2d || (is1d && wt.fixed))) || (v === 'wrap' && is1d && !wt.fixed) || (rowsReplaceNew && v !== 'grow'),
       onWrap: () => is1d || (free && diagonal),
@@ -544,9 +610,23 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
         return ro || off[c.key](o);
       });
     }
-    // Free-stepping wavetables show the step instead of the four directions.
+    // Free-stepping wavetables show the step instead of the four directions, and the window.
     dirCtl.el.hidden = free;
     stepCtl.hidden = !free;
+    winCtl.hidden = !free;
+    const ww = writeWindowOf(wt);
+    winSeg.set(ww ? 'part' : 'whole', () => ro);
+    winRowX.hidden = !ww;
+    winRowY.hidden = !ww || is1d;
+    if (ww) {
+      const f = fullWin(wt);
+      for (const [k, e] of boundEls) {
+        e.val.textContent = String(ww[k]);
+        e.dn.disabled = ro || ww[k] <= 0;
+        e.up.disabled = ro || ww[k] >= (k[0] === 'x' ? f.x1 : f.y1);
+      }
+    }
+    winHint.textContent = ro ? '' : ww ? 'Shift-drag across cells to redraw it. Cells outside are never written.' : 'Or Shift-drag across cells to draw one.';
     if (free) {
       for (const { dx, dy, b } of padBtns) {
         if (!(b instanceof HTMLButtonElement)) continue;
@@ -573,13 +653,16 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
   };
 
   const headText = (wt: Wavetable, writes: PendingWrite[]): string => {
-    if (!writes.length) return 'The write head has stopped (end of the line): move it (Alt-click a slot) or change “At the edge”.';
+    if (!writes.length)
+      return writeWindowOf(wt)
+        ? 'The write head has stopped at the edge of the write window: move it (Alt-click a cell), use New row or change “At the edge”.'
+        : 'The write head has stopped (end of the line): move it (Alt-click a slot) or change “At the edge”.';
     const { x, y } = wt.head;
     let at: string;
     if (wt.shape === '2d') at = `Head at x ${x}, y ${y}.`;
     else if (wt.shape === '1d') at = x >= (wt.rows[0]?.length ?? 0) ? 'Head after the last slot.' : x < 0 ? 'Head before the first slot.' : `Head at slot ${x + 1}.`;
     else at = y >= wt.rows.length ? 'Head on a new row.' : `Head on row ${y + 1}, slot ${x + 1}.`;
-    return `${at} Green numbers show where the next writes land.`;
+    return `${at} Green numbers show where the next writes land${writeWindowOf(wt) ? ', inside the write window' : ''}.`;
   };
   const noteText = (wt: Wavetable): string => {
     const p = previewWrites(wt, PREVIEW_N);
@@ -810,6 +893,8 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
       }
     };
     const strip = L.kind === 'strip';
+    const wwin = L.kind === 'stack' ? null : writeWindowOf(wt);
+    const outside = (b: SlotBox) => !!wwin && (b.cx < wwin.x0 || b.cx > wwin.x1 || b.cy < wwin.y0 || b.cy > wwin.y1);
 
     if (L.kind === 'stack') drawStack(g, wt, voices, vw, vh);
     // Rows: labels.
@@ -887,6 +972,13 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
         g.fillText(id === null ? `${b.cx + 1} · empty` : `${b.cx + 1} · #${idx + 1}`, b.x + 4, b.y + 12);
       }
       g.globalAlpha = 1;
+      if (outside(b)) {
+        // Outside the write window: dimmed.
+        g.fillStyle = cBg;
+        g.globalAlpha = 0.6;
+        g.fillRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2);
+        g.globalAlpha = 1;
+      }
       const ns = writesAt.get(`${b.cx},${b.cy}`);
       if (ns) {
         if (ns[0] === 1) headMark(b);
@@ -898,6 +990,18 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
         g.lineWidth = 2;
         g.strokeRect(b.x + 2, b.y + 2, b.w - 4, b.h - 4);
       }
+    }
+    // The write window's outline.
+    if (wwin) {
+      const x0 = L.slotLeft(wwin.x0) - 4;
+      const y0 = L.rowTop(wwin.y0) - 4;
+      const x1 = L.slotLeft(wwin.x1) + L.cell.w + 4;
+      const y1 = L.rowTop(wwin.y1) + L.cell.h + 4;
+      g.setLineDash([5, 3]);
+      g.strokeStyle = cNew;
+      g.lineWidth = 1.5;
+      g.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
+      g.setLineDash([]);
     }
     // Next writes: inserts (a bar in the gap) and appended "new" cells.
     for (const [key, ns] of insertsAt) {
@@ -955,6 +1059,10 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     g.restore();
     canvas.dataset.drop = dropAt ? `${dropAt.t.kind}:${'x' in dropAt.t ? dropAt.t.x : ''},${dropAt.t.y}:${dropAt.ok ? 'ok' : 'no'}` : '';
     canvas.dataset.writes = preview.writes.map((w) => `${w.kind}:${w.x},${w.y}`).join(' ');
+    canvas.dataset.window = wwin ? `${wwin.x0},${wwin.y0},${wwin.x1},${wwin.y1}` : '';
+    legendWin.hidden = !wwin;
+    // Cell geometry (content px: origin, pitch x / y, cell size) for tests.
+    canvas.dataset.cells = L.kind === 'stack' ? '' : `${L.slotLeft(0)},${L.rowTop(0)},${L.slotLeft(1) - L.slotLeft(0)},${L.rowTop(1) - L.rowTop(0)},${L.cell.w},${L.cell.h}`;
   };
 
   const drawDrop = (g: CanvasRenderingContext2D, wt: Wavetable, L: Layout, d: NonNullable<typeof dropAt>) => {
@@ -1236,11 +1344,28 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     cancelPending();
     beginDrag({ tableId: id, from: { wtId: host.current(), x: cell.x, y: cell.y } }, e, model.table(id)?.data, scroller);
   };
+  // Shift-drag across cells draws the write window (fixed 1D / 2D replacing, yours).
+  let winDrag: { from: Cell; id: number; pointer: number; moved: boolean } | null = null;
+  let winDragEnded = false;
+  const canDrawWindow = (wt: Wavetable) => !wt.builtin && freeStepping(wt.shape, wt.fixed, wt.write.mode) && lay?.kind !== 'stack';
+  const winTo = (to: Cell) => {
+    if (!winDrag) return;
+    const a = winDrag.from;
+    setWin({ x0: Math.min(a.x, to.x), y0: Math.min(a.y, to.y), x1: Math.max(a.x, to.x), y1: Math.max(a.y, to.y) });
+  };
   scroller.addEventListener('pointerdown', (e) => {
     cancelPending();
+    winDragEnded = false;
     if (e.button !== 0) return;
     const { x, y } = contentPoint(e.clientX, e.clientY);
     const cell = slotAt(x, y);
+    if (e.shiftKey && cell && canDrawWindow(cur())) {
+      e.preventDefault();
+      // The window is set once the drag reaches another cell (a Shift-click still selects).
+      winDrag = { from: cell, id: host.current(), pointer: e.pointerId, moved: false };
+      scroller.setPointerCapture?.(e.pointerId);
+      return;
+    }
     const id = cell ? cellAt(cur(), cell.x, cell.y) : null;
     if (!cell || id === null) return;
     pending = { x: e.clientX, y: e.clientY, cell, id, timer: null };
@@ -1255,18 +1380,38 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     }
   });
   scroller.addEventListener('pointermove', (e) => {
+    if (winDrag && e.pointerId === winDrag.pointer) {
+      const { x, y } = contentPoint(e.clientX, e.clientY);
+      const cell = slotAt(x, y);
+      if (cell && winDrag.id === host.current() && (winDrag.moved || cell.x !== winDrag.from.x || cell.y !== winDrag.from.y)) {
+        winDrag.moved = true;
+        winTo(cell);
+      }
+      return;
+    }
     if (!pending || isDragging()) return;
     const d = Math.hypot(e.clientX - pending.x, e.clientY - pending.y);
     if (e.pointerType === 'mouse') {
       if (d > DRAG_SLOP) startSlotDrag(e);
     } else if (d > TOUCH_SLOP) cancelPending();
   });
-  for (const ev of ['pointerup', 'pointercancel'] as const) scroller.addEventListener(ev, cancelPending);
+  for (const ev of ['pointerup', 'pointercancel'] as const)
+    scroller.addEventListener(ev, (e) => {
+      if (winDrag && e.pointerId === winDrag.pointer) {
+        winDragEnded = winDrag.moved; // the click after a drag doesn't select
+        winDrag = null;
+      }
+      cancelPending();
+    });
   scroller.addEventListener('contextmenu', (e) => {
     if (pending) e.preventDefault();
   });
   scroller.addEventListener('click', (e) => {
     if (consumeDragClick()) return;
+    if (winDragEnded) {
+      winDragEnded = false;
+      return;
+    }
     const wt = cur();
     const { x, y } = contentPoint(e.clientX, e.clientY);
     const cell = slotAt(x, y);
