@@ -1655,6 +1655,14 @@ button.syn-tab[aria-selected='true'] {
 .crow.crow2 {
   grid-template-columns: 66px minmax(0, 1fr) minmax(0, 1fr) 62px;
 }
+/* A select in a row's label column (unison copies, warp mode). */
+.crow > select.crow-head {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  padding: 0 1px;
+  font-size: 11px;
+}
 .crow.crow3 {
   grid-template-columns: 66px repeat(3, minmax(0, 1fr)) 70px;
 }
@@ -1941,6 +1949,27 @@ button.syn-tab[aria-selected='true'] {
   margin-top: 2px;
   padding: 0 2px;
   font-size: 10.5px;
+}
+/* A knob whose label is a select (warp mode): label-sized, still clickable when dense. */
+.synf select.knob-mode {
+  width: 0;
+  min-width: 100%;
+  height: 12px;
+  margin-top: 1px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 10px;
+  text-align: center;
+  text-align-last: center;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.knobs-dense .knob-moded:is(:hover, .active, :focus-within) .knob-val {
+  display: none;
 }
 .synf .knob-cell-choice .knob-label {
   margin-top: 2px;

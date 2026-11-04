@@ -13,12 +13,13 @@ const char* const SUB_WAVES[] = {"sine", "square"};
 const char* const NOISE_TYPES[] = {"white", "pink"};
 const char* const PITCH_TARGETS[] = {"a", "b", "ab"};
 const char* const MOD_MODES[] = {"ad", "adsr"};
+const char* const WARP_MODES[] = {"none", "sync", "formant", "bend", "squeeze", "quantize", "fold"};
 const char* const LFO_SHAPES[] = {"sine", "tri", "saw", "square", "sh", "smooth"};
 const char* const LFO_DIVS[] = {"8/1", "4/1", "2/1", "1/1", "1/2", "1/2D", "1/2T", "1/4", "1/4D", "1/4T", "1/8", "1/8D", "1/8T", "1/16", "1/16T", "1/32"};
 const char* const MOD_SOURCES[] = {"lfo1", "lfo2", "lfo3", "fenv", "penv", "menv", "vel", "wheel", "at", "key", "rand"};
 const char* const MOD_DESTS[] = {"pitchA", "pitchB", "posA", "posYA", "posB", "posYB", "levelA", "levelB", "sub", "noise",
                                  "cutoff", "res", "drive", "amp", "pan", "lfo1Rate", "lfo2Rate", "lfo3Rate",
-                                 "panA", "panB", "fSpread"};
+                                 "panA", "panB", "fSpread", "warpA", "warpB"};
 
 template <size_t N>
 int indexOf(const char* const (&list)[N], const juce::var& v, int fallback) {
@@ -141,6 +142,10 @@ juce::var encode(const SynthParams& s) {
     set(o, "noiseWidth", s.noiseWidth);
     set(o, "filterSpread", s.filterSpread);
     set(o, "poly", s.poly);
+    set(o, "aWarp", WARP_MODES[(int) s.aWarp]);
+    set(o, "aWarpAmt", s.aWarpAmt);
+    set(o, "bWarp", WARP_MODES[(int) s.bWarp]);
+    set(o, "bWarpAmt", s.bWarpAmt);
     return o;
 }
 
@@ -241,6 +246,10 @@ SynthParams decode(const juce::var& o) {
     s.filterSpread = num(o, "filterSpread", d.filterSpread, -1, 1);
     // Saved before polyphony: monophonic, as it was.
     s.poly = (int) num(o, "poly", 1, 1, MAX_POLY, true);
+    s.aWarp = (WarpMode) indexOf(WARP_MODES, o.getProperty("aWarp", {}), (int) d.aWarp);
+    s.aWarpAmt = num(o, "aWarpAmt", d.aWarpAmt, -1, 1);
+    s.bWarp = (WarpMode) indexOf(WARP_MODES, o.getProperty("bWarp", {}), (int) d.bWarp);
+    s.bWarpAmt = num(o, "bWarpAmt", d.bWarpAmt, -1, 1);
     return s;
 }
 

@@ -43,6 +43,26 @@ export type SubWave = 'sine' | 'square';
 export const SUB_WAVES: readonly SubWave[] = ['sine', 'square'];
 export type NoiseType = 'white' | 'pink';
 export const NOISE_TYPES: readonly NoiseType[] = ['white', 'pink'];
+/**
+ * Oscillator warp: how an oscillator reads its table (the table itself is unchanged).
+ * Sync reads the cycle up to WARP_SYNC_MAX times per period; formant does the same under a
+ * smooth window; bend is a smooth phase distortion; squeeze moves the cycle's midpoint
+ * (pulse-width-like); quantize steps the phase (lo-fi); fold wavefolds the output.
+ */
+export type WarpMode = 'none' | 'sync' | 'formant' | 'bend' | 'squeeze' | 'quantize' | 'fold';
+export const WARP_MODES: readonly WarpMode[] = ['none', 'sync', 'formant', 'bend', 'squeeze', 'quantize', 'fold'];
+export const WARP_LABELS: Readonly<Record<WarpMode, string>> = {
+  none: 'Off',
+  sync: 'Sync',
+  formant: 'Formant',
+  bend: 'Bend',
+  squeeze: 'Squeeze',
+  quantize: 'Quantize',
+  fold: 'Fold',
+};
+/** Sync / formant warp at amount ±1: the cycle is read this many times per period. */
+export const WARP_SYNC_MAX = 8;
+
 /** Which oscillator(s) the pitch envelope bends. */
 export type PitchTarget = 'a' | 'b' | 'ab';
 export const PITCH_TARGETS: readonly PitchTarget[] = ['a', 'b', 'ab'];
@@ -160,6 +180,14 @@ export interface SynthParams {
    * priority, legato, glide between held notes). Saved data without it is monophonic.
    */
   readonly poly: number;
+  /**
+   * Warp per oscillator (WarpMode) and its amount −1..1. Sync, formant, quantize and fold
+   * use the magnitude; bend and squeeze use the sign for direction.
+   */
+  readonly aWarp: WarpMode;
+  readonly aWarpAmt: number;
+  readonly bWarp: WarpMode;
+  readonly bWarpAmt: number;
 }
 
 export const MAX_UNISON = 4;
@@ -255,6 +283,10 @@ export const DEFAULT_SYNTH: SynthParams = {
   noiseWidth: 0,
   filterSpread: 0,
   poly: 8,
+  aWarp: 'none',
+  aWarpAmt: 0,
+  bWarp: 'none',
+  bWarpAmt: 0,
 };
 
 /** Amp ADSR of a new Synth voice (Simple voices keep their own defaults). */
@@ -313,6 +345,8 @@ export const SYNTH_RANGES: Readonly<Partial<Record<keyof SynthParams, readonly [
   noiseWidth: [0, 1],
   filterSpread: [-1, 1],
   poly: [1, MAX_POLY, true],
+  aWarpAmt: [-1, 1],
+  bWarpAmt: [-1, 1],
 };
 
 
@@ -330,6 +364,8 @@ const ENUMS: Readonly<Partial<Record<keyof SynthParams, readonly string[]>>> = {
   filterMode: FILTER_MODES,
   pTarget: PITCH_TARGETS,
   mMode: ['ad', 'adsr'],
+  aWarp: WARP_MODES,
+  bWarp: WARP_MODES,
 };
 
 /** One LFO from untrusted data. */

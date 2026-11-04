@@ -10,7 +10,7 @@
 import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
 import { TABLE_SIZE } from '../core/constants';
-import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MAX_POLY, type FilterMode, type OscSource, type SynthParams } from '../core/synth';
+import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MAX_POLY, WARP_LABELS, WARP_MODES, type FilterMode, type OscSource, type SynthParams } from '../core/synth';
 import { isPeriodicShape, LFO_DIVS, LFO_RATE_MAX_HZ, LFO_RATE_MIN_HZ, LFO_SHAPE_LABELS, LFO_SHAPES, type LfoDiv, type LfoParams, type LfoShape } from '../core/modulation';
 import type { VoicePatch, VoiceParams } from '../core/voice';
 import { shapeLabel } from '../core/wavetable';
@@ -254,6 +254,22 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
   };
 
   // ---- mix ----
+  /** An oscillator's warp: the amount knob with the mode select as its label (one cell). */
+  const warpCell = (o: 'a' | 'b') => {
+    const O = o.toUpperCase();
+    const m = `${o}Warp` as const;
+    const a = `${o}WarpAmt` as const;
+    const k = K(`synf-${o}-warp`, `${O} warp`, (v) => v.synth[a], sw(a), linear(-1, 1), (x) => signed(x * 100, 0), {
+      bipolar: true,
+      name: `Osc ${O} warp amount (bend and squeeze use the sign)`,
+      reset: 0,
+      off: (v) => v.synth[m] === 'none',
+    });
+    const mode = sel(`synf-${o}-warp-mode`, `Osc ${O} warp`, WARP_MODES.map((w) => [w, w === 'none' ? `${O} warp` : `${O} ${WARP_LABELS[w].toLowerCase()}`] as const), (v) => v.synth[m], (x) => ({ synth: { [m]: x } }), 'knob-mode');
+    k.el.querySelector('.knob-label')!.replaceWith(mode);
+    k.el.classList.add('knob-moded');
+    return k.el;
+  };
   const mix = group('synf-mix', 'Mix', [
     K('synf-sub', 'Sub', (v) => v.synth.subLevel, sw('subLevel'), linear(0, 1), pct, { name: 'Sub level' }).el,
     C('synf-sub-wave', 'Wave', [['sine', 'Sine'], ['square', 'Sqr']] as const, (v) => v.synth.subWave, (x) => ({ synth: { subWave: x } }), { name: 'Sub waveform' }).el,
@@ -264,6 +280,8 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
     K('synf-ring', 'Ring', (v) => v.synth.ringLevel, sw('ringLevel'), linear(0, 1), pct, { name: 'Ring modulation A × B' }).el,
     K('synf-fm', 'FM', (v) => v.synth.fm, sw('fm'), linear(0, 1), pct, { name: 'FM: osc B modulates osc A’s phase' }).el,
     C('synf-sync', 'Sync B', OFF_ON, (v) => v.synth.sync, (x) => ({ synth: { sync: x } }), { name: 'Hard sync: each cycle of osc B restarts osc A', pressed: (x) => x }).el,
+    warpCell('a'),
+    warpCell('b'),
   ]);
 
   // ---- filter ----

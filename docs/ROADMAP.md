@@ -306,6 +306,9 @@ Open:
   the quietest released, then the oldest. Poly glide from the last note's pitch; sequencer
   steps get a note each (tails overlap). Simple voices stay monophonic. Mix page "Voices",
   full view Output "Voices".
+- Stage 6 (warps): per oscillator sync, formant, bend, squeeze, quantize, fold, amount
+  −1..1 (matrix A warp / B warp); mip levels follow each warp's speed-up. No oversampling
+  yet: hard sync, fold, quantize and drive still alias at high notes.
 
 Decisions / deviations:
 - New voices from "+" are offered as Synth (first in the menu) or Simple; both start on

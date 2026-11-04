@@ -317,7 +317,8 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   osc (copies, detune, spread), filter (mode, cutoff Hz, resonance, drive, key track, env /
   velocity amounts), saturation, filter ADSR, pitch envelope (A, D, ± semitones, target),
   velocity → amp, glide (+ legato only), bend range, polyphony (`poly` 1..8; missing in
-  saved data → 1, like the matrix), pan, width, the stereo controls
+  saved data → 1, like the matrix), oscillator warps (`aWarp` / `bWarp`: none, sync,
+  formant, bend, squeeze, quantize, fold; `aWarpAmt` / `bWarpAmt` −1..1), pan, width, the stereo controls
   (oscillator pan `aPan` / `bPan`, stereo phase `aPhaseSpread` / `bPhaseSpread` 0..½
   cycle, stereo position `aPosSpread` / `bPosSpread`, `noiseWidth`, `filterSpread` ±1),
   three LFOs (each with a stereo phase, `stereo` 0..½), the mod
@@ -493,9 +494,12 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   Stereo controls: each Osc group has its pan, Mix the noise width, Filter the spread, and
   the Output group (level, octave, glide, legato, bend) the stereo image — pan, width, each
   oscillator's stereo phase / position and the three LFOs' stereo phases (kept out of the
-  LFO groups so each stays one dense column). On the pages: Osc has Tune (oct · semi ·
-  fine on one row), Level · pan and Stereo (phase · position); Mix pairs noise level ·
-  width; Filter has Spread; the Mod page's LFO editor has Stereo. The Seed tab fills Generate (library column;
+  LFO groups so each stays one dense column). Warps: Mix has "A warp" / "B warp", each one
+  cell — the amount knob with the mode select as its label (`.knob-mode`). On the pages:
+  Osc has Tune (oct · semi · fine on one row), Level · pan, Unison (the copies as a select
+  in the label column · detune · spread), Stereo (phase · position) and Warp (mode select ·
+  amount); the CPU guard note sits in its header. Mix pairs noise level · width and has
+  Voices; Filter has Spread; the Mod page's LFO editor has Stereo. The Seed tab fills Generate (library column;
   formula row; wave + spectrum flex; batch row + strip), and so does Mutate (library
   column | source + parameters row; wave + spectrum flex; batch row + strip; the batch
   row wraps when the column is narrower than ~700 px, via a container query), and so
@@ -759,6 +763,18 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   them jump (a slow division can take up to about a cycle to lock; only forward wraps start
   a new S&H cycle); LFO-rate modulation multiplies their speed (unlocked while it is non-zero,
   then they glide back into lock). Denormal-range filter / pink state is flushed per block.
+- Oscillator warps (per oscillator; the tables are untouched): every read of a copy (left,
+  right, B as FM source) goes through `warpPhase` (the phase the table is read at) and
+  `warpOut` (a sample-domain part). Sync reads the cycle 1 + 7·|a| times per period;
+  formant does that under a crossfaded raised-cosine window (identity at 0); bend is a
+  smooth phase distortion φ + 0.9a·sin(2πφ)/2π (slope 1 ± 0.9a, ends fixed); squeeze maps
+  the first half of the cycle onto w = 0.5 + 0.45a of the period; quantize floors the phase
+  to round(2^(10 − 8|a|)) steps; fold triangle-folds the output at gain 1 + 4|a|. Amount 0 is
+  the identity in every mode (bit for bit). The amount (+ matrix `warpA` / `warpB`) is
+  smoothed per block and ramped per sample. Mip levels take each warp's highest local
+  speed-up (`warpSpeed`: sync / formant 1 + 7|a|, bend 1 + 0.9|a|, squeeze 0.5 / (1 − w),
+  fold 1 + 4|a|), so sync, formant, bend and squeeze stay band-limited (sync still steps at
+  the window's wrap); quantize aliases on purpose; fold's estimate is approximate.
 - Stereo path: the voice runs two channels (a second filter, which starts from the first
   one's state) while anything makes them differ, and goes back to one once nothing does and
   both filters agree — so a voice without stereo settings costs and sounds as before

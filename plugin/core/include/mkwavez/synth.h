@@ -14,6 +14,10 @@ enum class FilterMode : uint8_t { lp12, lp24, hp, bp, notch };
 enum class SubWave : uint8_t { sine, square };
 enum class NoiseType : uint8_t { white, pink };
 enum class PitchTarget : uint8_t { a, b, ab };
+/** Order = WARP_MODES in TS. */
+enum class WarpMode : uint8_t { none, sync, formant, bend, squeeze, quantize, fold };
+/** Sync / formant warp at amount ±1: the cycle is read this many times per period. */
+inline constexpr double WARP_SYNC_MAX = 8;
 
 inline constexpr int MAX_UNISON = 4;
 /** Most notes one Synth voice plays at once. */
@@ -85,6 +89,11 @@ struct SynthParams {
     double filterSpread = 0;
     /** Polyphony 1..MAX_POLY (1 = monophonic). Saved data without it is monophonic. */
     int poly = 8;
+    /** Oscillator warps and their amounts −1..1. */
+    WarpMode aWarp = WarpMode::none;
+    double aWarpAmt = 0;
+    WarpMode bWarp = WarpMode::none;
+    double bWarpAmt = 0;
 };
 
 /** Semitone offset of an oscillator's tuning. */

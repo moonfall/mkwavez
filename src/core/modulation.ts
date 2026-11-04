@@ -118,6 +118,8 @@ export const MOD_DESTS = [
   'panA',
   'panB',
   'fSpread',
+  'warpA',
+  'warpB',
 ] as const;
 export type ModDest = (typeof MOD_DESTS)[number];
 export const MOD_DEST_LABELS: Readonly<Record<ModDest, string>> = {
@@ -142,6 +144,8 @@ export const MOD_DEST_LABELS: Readonly<Record<ModDest, string>> = {
   panA: 'A pan',
   panB: 'B pan',
   fSpread: 'Filter spread',
+  warpA: 'A warp',
+  warpB: 'B warp',
 };
 
 /**

@@ -27,7 +27,7 @@ import { deriveSeed, Prng } from '../src/core/prng';
 import { emptySteps, STEP_LENGTHS, type StepLength } from '../src/core/sequence';
 import { shape } from '../src/core/shape';
 import { DEFAULT_VOICE, modulatedPosition, type VoiceParams } from '../src/core/voice';
-import { DEFAULT_SYNTH, FILTER_MODES, NOISE_TYPES, PITCH_TARGETS, SUB_WAVES, type SynthParams } from '../src/core/synth';
+import { DEFAULT_SYNTH, FILTER_MODES, NOISE_TYPES, PITCH_TARGETS, SUB_WAVES, WARP_MODES, type SynthParams } from '../src/core/synth';
 import { LFO_DIVS, LFO_SHAPES, MOD_DESTS, MOD_SOURCES, type LfoParams, type ModSlot } from '../src/core/modulation';
 import { PREVIEW_ID_BASE, type WavetableShape } from '../src/core/wavetable';
 import { TIMELINE_CAP } from '../src/core/constants';
@@ -217,7 +217,7 @@ const SYNTH_SCALARS = [
   'glide', 'glideLegato', 'bendRange', 'pan', 'mAttack', 'mDecay', 'mSustain', 'mRelease', 'mMode', 'sync', 'fm',
   'aUnison', 'aDetune', 'aSpread', 'bUnison', 'bDetune', 'bSpread', 'sat', 'width',
   'aPan', 'bPan', 'aPhaseSpread', 'bPhaseSpread', 'aPosSpread', 'bPosSpread', 'noiseWidth', 'filterSpread',
-  'poly',
+  'poly', 'aWarp', 'aWarpAmt', 'bWarp', 'bWarpAmt',
 ] as const;
 const SYNTH_ENUMS: Partial<Record<(typeof SYNTH_SCALARS)[number], readonly string[]>> = {
   subWave: SUB_WAVES,
@@ -225,6 +225,8 @@ const SYNTH_ENUMS: Partial<Record<(typeof SYNTH_SCALARS)[number], readonly strin
   filterMode: FILTER_MODES,
   pTarget: PITCH_TARGETS,
   mMode: ['ad', 'adsr'],
+  aWarp: WARP_MODES,
+  bWarp: WARP_MODES,
 };
 const SOURCE_FIELDS = ['wavetableId', 'windowStart', 'windowEnd', 'windowStartY', 'windowEndY', 'position', 'positionY'] as const;
 
@@ -711,6 +713,60 @@ const SCENARIOS: Scenario[] = [
       [14000, OP.noteOn, 1, 62, 100],
       [15000, OP.allNotesOff, -1],
       [16000, OP.removeVoice, 2],
+    ],
+  },
+  {
+    // Oscillator warps: every mode on A (switched while a note holds) with B under another
+    // warp as A's FM source, amounts modulated by LFOs, unison + stereo phase through the
+    // warp, a Step wavetable, and a polyphonic chord with B's warp moving.
+    name: 'warp',
+    sampleRate: 48000,
+    frames: 22000,
+    ops: [
+      ...WAVES.slice(0, 4).map((_, i): Op => [0, OP.table, i + 1, i]),
+      wavetableOp(0, 0, '1d', 'blend', [[1, 2, 3, 4]]),
+      wavetableOp(0, 1, '1d', 'step', [[3, 2]]),
+      ...(['sync', 'formant', 'bend', 'squeeze', 'quantize', 'fold'] as const).map((aWarp, k): Op =>
+        voiceOp(k * 2500, {
+          id: 1,
+          type: 'synth',
+          windowEnd: 3,
+          position: 0.4,
+          sustain: 0.9,
+          synth: synth({
+            aWarp,
+            aWarpAmt: [0.6, -0.8, 0.7, -0.6, 0.5, 0.9][k],
+            b: { wavetableId: 1, windowEnd: 1, position: 0.5 },
+            bLevel: 0.4,
+            bWarp: (['bend', 'squeeze', 'sync', 'fold', 'formant', 'quantize'] as const)[k],
+            bWarpAmt: 0.5,
+            fm: k % 2 ? 0.2 : 0,
+            aUnison: k % 3 === 0 ? 3 : 1,
+            aSpread: 0.6,
+            aPhaseSpread: k === 2 ? 0.2 : 0,
+            cutoff: 3000,
+            lfos: [{ shape: 'sine', rate: 3 }, { shape: 'tri', rate: 1.7 }],
+            mods: [
+              { src: 'lfo1', dst: 'warpA', amt: 0.3 },
+              { src: 'lfo2', dst: 'warpB', amt: -0.4 },
+            ],
+          }),
+        }),
+      ),
+      voiceOp(0, {
+        id: 2,
+        type: 'synth',
+        windowEnd: 3,
+        position: 0.7,
+        level: 0.5,
+        synth: synth({ poly: 3, bLevel: 0.5, b: { windowEnd: 3, position: 0.2 }, bWarp: 'squeeze', bWarpAmt: -0.7, aWarp: 'formant', aWarpAmt: 0.4, mods: [{ src: 'menv', dst: 'warpB', amt: 0.9 }], mMode: 'ad', mDecay: 0.2 }),
+      }),
+      [20, OP.noteOn, 1, 45, 100],
+      [16000, OP.noteOn, 2, 57, 90],
+      [16050, OP.noteOn, 2, 61, 90],
+      [16100, OP.noteOn, 2, 64, 90],
+      [19000, OP.noteOff, 2, 61],
+      [20000, OP.noteOff, 1, 45],
     ],
   },
   {

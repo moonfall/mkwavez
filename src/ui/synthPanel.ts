@@ -18,9 +18,12 @@ import {
   FILTER_MODES,
   FILTER_SPREAD_OCTAVES,
   MAX_POLY,
+  WARP_LABELS,
+  WARP_MODES,
   type FilterMode,
   type OscSource,
   type SynthParams,
+  type WarpMode,
 } from '../core/synth';
 import {
   EMPTY_SLOT,
@@ -115,7 +118,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     put: (x: number) => VoicePatch,
     taper: Taper,
     fmt: (x: number) => string,
-    o: { step?: number; title?: string; snap?: (x: number) => number } = {},
+    o: { step?: number; title?: string; snap?: (x: number) => number; head?: HTMLElement } = {},
   ): Control & { input: HTMLInputElement } => {
     const step = o.step ?? 0.001;
     const input = h('input', { type: 'range', id, min: 0, max: 1, step, value: 0, 'aria-label': label });
@@ -127,7 +130,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
       set(put(x));
     });
     input.addEventListener('change', commit);
-    const el = h('div', { class: 'crow', title: o.title ?? '' }, h('label', { for: id }, label), input, val);
+    const el = h('div', { class: 'crow', title: o.title ?? '' }, o.head ?? h('label', { for: id }, label), input, val);
     return {
       el,
       input,
@@ -232,7 +235,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     max: (v: VoiceParams) => [number, number],
     step: number,
     fmt: (x: number, y: number) => string,
-    o: { min?: [number, number]; ids?: [string, string]; labels?: [string, string] } = {},
+    o: { min?: [number, number]; ids?: [string, string]; labels?: [string, string]; head?: HTMLElement } = {},
   ): Control & { x: HTMLInputElement } => {
     const val = h('span', { class: 'crow-val' });
     const mk = (axis: string, i: number) =>
@@ -247,7 +250,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
       i.addEventListener('input', onInput);
       i.addEventListener('change', commit);
     }
-    const el = h('div', { class: 'crow crow2' }, h('span', {}, label), x, y, val);
+    const el = h('div', { class: 'crow crow2' }, o.head ?? h('span', {}, label), x, y, val);
     return {
       el,
       x,
@@ -363,7 +366,9 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     { ids: ['syn-oct', 'syn-coarse', 'syn-fine'], labels: ['Octave', 'Coarse (semitones)', 'Fine (cents)'], title: 'Octave · semitones · cents' },
   );
   const sk = (name: 'Unison' | 'Detune' | 'Spread') => `${osc}${name}` as 'aUnison' | 'aDetune' | 'aSpread';
-  const unison = seg<number>('syn-unison', 'Unison copies', [[1, '1'], [2, '2'], [3, '3'], [4, '4']] as const, (v) => v.synth[sk('Unison')], (x) => ({ synth: { [sk('Unison')]: x } }));
+  // Unison: the copies (a select in the label column) · detune · stereo spread on one row.
+  const unison = select<string>('syn-unison', 'Unison copies', [1, 2, 3, 4].map((n) => [String(n), `Uni ×${n}`] as const), (v) => String(v.synth[sk('Unison')]), (x) => ({ synth: { [sk('Unison')]: Number(x) } }));
+  unison.el.classList.add('crow-head');
   const guardNote = h('span', { class: 'syn-guard', id: 'syn-unison-guard', hidden: true, title: 'Too many unison copies sound at once: the CPU guard plays fewer' }, 'CPU guard: reduced');
   const detuneSpread = pair(
     'syn-uni',
@@ -373,8 +378,17 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     () => [50, 1],
     0.01,
     (x, y) => `${Math.round(x)}ct ${Math.round(y * 100)}%`,
-    { ids: ['syn-detune', 'syn-spread'], labels: ['Unison detune (cents)', 'Unison stereo spread'] },
+    { ids: ['syn-detune', 'syn-spread'], labels: ['Unison detune (cents)', 'Unison stereo spread'], head: unison.el },
   );
+  // Warp: the mode (a select in the label column) · amount.
+  const wm = () => `${osc}Warp` as 'aWarp';
+  const wa = () => `${osc}WarpAmt` as 'aWarpAmt';
+  const warpSel = select<WarpMode>('syn-warp', 'Oscillator warp', WARP_MODES.map((m) => [m, m === 'none' ? 'Warp' : m === 'quantize' ? 'Quant' : WARP_LABELS[m]] as const), (v) => v.synth[wm()], (x) => ({ synth: { [wm()]: x } }));
+  warpSel.el.classList.add('crow-head');
+  const warpRow = row('syn-warp-amt', 'Warp amount', (v) => v.synth[wa()], (x) => ({ synth: { [wa()]: x } }), linear(-1, 1), (x) => signed(x * 100, 0, '%'), {
+    head: warpSel.el,
+    title: 'Warp: how the oscillator reads its waveform (sync, formant, bend, squeeze, quantize, fold); bend and squeeze use the sign',
+  });
   const ok = (name: 'Pan' | 'PhaseSpread' | 'PosSpread') => `${osc}${name}` as 'aPan' | 'aPhaseSpread' | 'aPosSpread';
   // Level · stereo pan of the oscillator (before the filter).
   const levelRow = pair(
@@ -416,9 +430,9 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     { class: 'crows' },
     tuneRow.el,
     levelRow.el,
-    lineRow('Unison', unison.el, guardNote),
     detuneSpread.el,
     stereoRow.el,
+    warpRow.el,
     ws.el,
     we.el,
     px.el,
@@ -435,7 +449,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const pageOsc = h(
     'div',
     { class: 'syn-page', id: 'syn-page-osc', role: 'tabpanel' },
-    h('div', { class: 'syn-ctrl' }, h('div', { class: 'syn-head' }, oscSel.el, wtSel), oscRows),
+    h('div', { class: 'syn-ctrl' }, h('div', { class: 'syn-head' }, oscSel.el, wtSel, guardNote), oscRows),
     visOsc,
   );
 
@@ -662,6 +676,8 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     oscSel,
     tuneRow,
     unison,
+    warpSel,
+    warpRow,
     detuneSpread,
     syncChk,
     fmRow,
@@ -759,6 +775,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     const synced = lfo(v).sync;
     lfoRate.el.hidden = synced;
     lfoStereo.input.disabled = !isPeriodicShape(lfo(v).shape);
+    warpRow.input.disabled = v.synth[wm()] === 'none';
     divRow.hidden = !synced;
     mRows[2].el.hidden = mRows[3].el.hidden = v.synth.mMode === 'ad';
     ampBox.hidden = envPage !== 'amp';

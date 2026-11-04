@@ -62,7 +62,8 @@ play up to 8 notes at once (or 1: monophonic, legato and glide between held note
 - **Simple voice** — window + position (1D) or rectangle + X/Y (2D and Rows) over a
   wavetable, position LFO, ADSR.
 - **Synth voice** — two wavetable oscillators (each with its own wavetable window, tuning
-  and unison 1–4; B can hard-sync and FM A), sub, noise, ring; multimode ZDF filter with drive and key
+  and unison 1–4, a warp mode — sync, formant, bend, squeeze, quantize, fold; B can
+  hard-sync and FM A), sub, noise, ring; multimode ZDF filter with drive and key
   tracking; amp / filter / pitch / mod envelopes; three LFOs (tempo-syncable) and an 8-slot
   mod matrix; glide; presets; a full knob view when the panel has room.
 - **Preview and Selection wavetables** — voices can play the Timeline selection, or the

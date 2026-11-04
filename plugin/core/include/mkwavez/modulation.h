@@ -51,9 +51,9 @@ inline constexpr int N_SOURCES = 11;
 enum ModDest : int8_t {
     DST_NONE = -1, DST_PITCH_A, DST_PITCH_B, DST_POS_A, DST_POSY_A, DST_POS_B, DST_POSY_B, DST_LEVEL_A, DST_LEVEL_B, DST_SUB,
     DST_NOISE, DST_CUTOFF, DST_RES, DST_DRIVE, DST_AMP, DST_PAN, DST_LFO1_RATE, DST_LFO2_RATE, DST_LFO3_RATE,
-    DST_PAN_A, DST_PAN_B, DST_F_SPREAD
+    DST_PAN_A, DST_PAN_B, DST_F_SPREAD, DST_WARP_A, DST_WARP_B
 };
-inline constexpr int N_DESTS = 21;
+inline constexpr int N_DESTS = 23;
 
 inline constexpr double MOD_PITCH_SEMIS = 12;
 inline constexpr double MOD_CUTOFF_OCTAVES = 6;

@@ -38,6 +38,58 @@ double polyBlep(double t, double dt) {
     return 0;
 }
 
+double foldWave(double x) {
+    double t = (x + 1) * 0.25;
+    t -= std::floor(t);
+    return 1 - std::abs(4 * t - 2);
+}
+
+/** See warpPhase / warpOut / warpSpeed in synthVoice.ts. */
+double warpPhase(WarpMode mode, double ph, double a) {
+    switch (mode) {
+        case WarpMode::sync:
+        case WarpMode::formant: {
+            const double x = ph * (1 + (WARP_SYNC_MAX - 1) * std::abs(a));
+            return x - std::floor(x);
+        }
+        case WarpMode::bend: return ph + ((0.9 * a) / TWO_PI) * std::sin(TWO_PI * ph);
+        case WarpMode::squeeze: {
+            const double w = 0.5 + 0.45 * a;
+            return ph < w ? (0.5 * ph) / w : 0.5 + (0.5 * (ph - w)) / (1 - w);
+        }
+        case WarpMode::quantize: {
+            const double m = std::abs(a);
+            if (m == 0) return ph;
+            const double n = std::floor(std::pow(2.0, 10 - 8 * m) + 0.5);
+            return std::floor(ph * n) / n;
+        }
+        default: return ph;
+    }
+}
+
+double warpOut(WarpMode mode, double x, double ph, double a) {
+    const double m = std::abs(a);
+    if (mode == WarpMode::formant) return x * (1 - m + m * (0.5 - 0.5 * std::cos(TWO_PI * ph)));
+    if (mode == WarpMode::fold) return m == 0 ? x : foldWave(x * (1 + 4 * m));
+    return x;
+}
+
+double warpSpeed(WarpMode mode, double a) {
+    const double m = std::abs(a);
+    switch (mode) {
+        case WarpMode::sync:
+        case WarpMode::formant: return 1 + (WARP_SYNC_MAX - 1) * m;
+        case WarpMode::bend: return 1 + 0.9 * m;
+        case WarpMode::squeeze: return 0.5 / (1 - (0.5 + 0.45 * m));
+        case WarpMode::fold: return 1 + 4 * m;
+        default: return 1;
+    }
+}
+
+double readWarp(const WtOsc& o, double ph, double t, WarpMode mode, double a) {
+    return mode == WarpMode::none ? o.read(ph, t) : warpOut(mode, o.read(warpPhase(mode, ph, a), t), ph, a);
+}
+
 /** JS Math.round. */
 double jsRound(double x) { return std::floor(x + 0.5); }
 
@@ -140,8 +192,8 @@ void SynthVoice::retune(const VoiceParams& p) {
 void SynthVoice::mips(const SynthParams& s, double incA, double incB) {
     const double sr = sampleRate;
     const int ring = s.ringLevel > 0 || lv1[4] > 1e-4 ? 1 : 0;
-    const double fa = incA * maxRatA * sr;
-    const double fb = incB * maxRatB * sr;
+    const double fa = incA * maxRatA * sr * wsA;
+    const double fb = incB * maxRatB * sr * wsB;
     const double side = s.fm > 0 ? (TWO_PI * FM_DEPTH * s.fm + 1) * fb : 0;
     const double limit = MIP_NYQUIST_FRACTION * sr;
     int la = MIP_LEVELS - 1;
@@ -277,6 +329,18 @@ void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
     incS0 = incS1;
     pitches(p, bend);
     unison(s, c.unisonScale);
+    waA0 = waA1;
+    waB0 = waB1;
+    if (s.aWarp != WarpMode::none) {
+        waA1 = approach(waA1, clamp11(s.aWarpAmt + dst[DST_WARP_A]), smooth);
+        wsA = warpSpeed(s.aWarp, std::max(std::abs(waA0), std::abs(waA1)));
+    } else
+        wsA = 1;
+    if (s.bWarp != WarpMode::none) {
+        waB1 = approach(waB1, clamp11(s.bWarpAmt + dst[DST_WARP_B]), smooth);
+        wsB = warpSpeed(s.bWarp, std::max(std::abs(waB0), std::abs(waB1)));
+    } else
+        wsB = 1;
     mips(s, std::max(incA0, incA1), std::max(incB0, incB1));
     aR.mipLevel = a.mipLevel;
     bR.mipLevel = b.mipLevel;
@@ -466,17 +530,20 @@ double SynthVoice::render(const VoiceParams& p, double e, double blockT, const T
         const bool splitA = stereo && (psA != 0 || rA);
         const WtOsc& oscBR = rB ? bR : b;
         const WtOsc& oscAR = rA ? aR : a;
+        const WarpMode wmA = s.aWarp, wmB = s.bWarp;
+        const double wa = wmA == WarpMode::none ? 0 : waA0 + (waA1 - waA0) * t;
+        const double wb = wmB == WarpMode::none ? 0 : waB0 + (waB1 - waB0) * t;
         double sbL = 0, sbR = 0, b0 = 0;
         if (b.n > 0 && (lb > 0 || lr > 0 || s.fm > 0)) {
-            if (s.fm > 0) b0 = b.read(uB == 1 ? phB[0] : phCB, t);
+            if (s.fm > 0) b0 = readWarp(b, uB == 1 ? phB[0] : phCB, t, wmB, wb);
             for (int i = 0; i < uB; ++i) {
                 const double w = wB0[i] + (wB1[i] - wB0[i]) * t;
-                const double v = b.read(phB[i], t) * w;
+                const double v = readWarp(b, phB[i], t, wmB, wb) * w;
                 sbL += v * gBL[i];
                 if (splitB) {
                     double ph = phB[i] + psB;
                     if (ph >= 1) ph -= 1;
-                    sbR += oscBR.read(ph, t) * w * gBR[i];
+                    sbR += readWarp(oscBR, ph, t, wmB, wb) * w * gBR[i];
                 } else
                     sbR += v * gBR[i];
             }
@@ -488,12 +555,12 @@ double SynthVoice::render(const VoiceParams& p, double e, double blockT, const T
                 double ph = phA[i] + fmOff;
                 ph -= std::floor(ph);
                 const double w = wA0[i] + (wA1[i] - wA0[i]) * t;
-                const double v = a.read(ph, t) * w;
+                const double v = readWarp(a, ph, t, wmA, wa) * w;
                 saL += v * gAL[i];
                 if (splitA) {
                     double phR = ph + psA;
                     if (phR >= 1) phR -= 1;
-                    saR += oscAR.read(phR, t) * w * gAR[i];
+                    saR += readWarp(oscAR, phR, t, wmA, wa) * w * gAR[i];
                 } else
                     saR += v * gAR[i];
             }

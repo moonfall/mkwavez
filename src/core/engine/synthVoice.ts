@@ -42,7 +42,7 @@ import {
   reflect01,
   SRC_INDEX,
 } from '../modulation';
-import { FILTER_ENV_OCTAVES, FILTER_SPREAD_OCTAVES, FILTER_VEL_OCTAVES, FM_DEPTH, MAX_UNISON, oscSemis, type SynthParams } from '../synth';
+import { FILTER_ENV_OCTAVES, FILTER_SPREAD_OCTAVES, FILTER_VEL_OCTAVES, FM_DEPTH, MAX_UNISON, oscSemis, WARP_MODES, WARP_SYNC_MAX, type SynthParams, type WarpMode } from '../synth';
 import type { TableId } from '../table';
 import type { VoiceParams } from '../voice';
 import type { PackedWavetable } from '../wavetablePlayback';
@@ -141,6 +141,85 @@ function polyBlep(t: number, dt: number): number {
     return x * x + x + x + 1;
   }
   return 0;
+}
+
+/** WarpMode → index (WARP_MODES order; the C++ port's WarpMode enum). */
+export const WARP_INDEX: Readonly<Record<WarpMode, number>> = Object.fromEntries(WARP_MODES.map((m, i) => [m, i])) as Record<WarpMode, number>;
+const W_SYNC = 1;
+const W_FORMANT = 2;
+const W_BEND = 3;
+const W_SQUEEZE = 4;
+const W_QUANTIZE = 5;
+const W_FOLD = 6;
+
+/** Triangle wavefold into −1..1 (the identity inside it). */
+export function fold(x: number): number {
+  let t = (x + 1) * 0.25;
+  t -= Math.floor(t);
+  return 1 - Math.abs(4 * t - 2);
+}
+
+/** The phase a warp reads the table at, for phase `ph` (0..1) and amount `a` (−1..1). */
+export function warpPhase(mode: number, ph: number, a: number): number {
+  switch (mode) {
+    case W_SYNC:
+    case W_FORMANT: {
+      const x = ph * (1 + (WARP_SYNC_MAX - 1) * Math.abs(a));
+      return x - Math.floor(x);
+    }
+    case W_BEND:
+      // Slope 1 + 0.9·a·cos(2πφ): monotonic, ends fixed (a > 0: fast ends, slow middle).
+      return ph + ((0.9 * a) / TWO_PI) * Math.sin(TWO_PI * ph);
+    case W_SQUEEZE: {
+      // The first half of the cycle takes w of the period.
+      const w = 0.5 + 0.45 * a;
+      return ph < w ? (0.5 * ph) / w : 0.5 + (0.5 * (ph - w)) / (1 - w);
+    }
+    case W_QUANTIZE: {
+      const m = Math.abs(a);
+      if (m === 0) return ph;
+      const n = Math.round(Math.pow(2, 10 - 8 * m));
+      return Math.floor(ph * n) / n;
+    }
+    default:
+      return ph;
+  }
+}
+
+/** A warp's sample-domain part (formant window, fold) of `x` read at phase `ph`. */
+export function warpOut(mode: number, x: number, ph: number, a: number): number {
+  const m = Math.abs(a);
+  if (mode === W_FORMANT) return x * (1 - m + m * (0.5 - 0.5 * Math.cos(TWO_PI * ph)));
+  if (mode === W_FOLD) return m === 0 ? x : fold(x * (1 + 4 * m));
+  return x;
+}
+
+/**
+ * Highest local speed-up of a warp at amount magnitude `m` (for the mip level, so the
+ * remapped table stays band-limited). Quantize is left to alias (its steps are the point).
+ */
+export function warpSpeed(mode: number, a: number): number {
+  const m = Math.abs(a);
+  switch (mode) {
+    case W_SYNC:
+    case W_FORMANT:
+      return 1 + (WARP_SYNC_MAX - 1) * m;
+    case W_BEND:
+      return 1 + 0.9 * m;
+    case W_SQUEEZE: {
+      const w = 0.5 + 0.45 * m;
+      return 0.5 / (1 - w);
+    }
+    case W_FOLD:
+      return 1 + 4 * m;
+    default:
+      return 1;
+  }
+}
+
+/** Read an oscillator's mix at `ph` through a warp. */
+function readWarp(o: WtOsc, ph: number, t: number, mode: number, a: number): number {
+  return mode === 0 ? o.read(ph, t) : warpOut(mode, o.read(warpPhase(mode, ph, a), t), ph, a);
 }
 
 /** Balance pan: centre = unity on both sides, a side attenuates the other channel. */
@@ -267,6 +346,13 @@ export class SynthVoice {
   private offL1 = 0;
   private offR0 = 0;
   private offR1 = 0;
+  /** Warp amounts (−1..1) of osc A / B at the block start / end, and their speed-ups (mip level). */
+  private waA0 = 0;
+  private waA1 = 0;
+  private waB0 = 0;
+  private waB1 = 0;
+  private wsA = 1;
+  private wsB = 1;
   /** Right minus left level of osc A / B (stereo LFO on a level) at the block start / end. */
   private readonly dLv0 = new Float64Array(2);
   private readonly dLv1 = new Float64Array(2);
@@ -416,8 +502,8 @@ export class SynthVoice {
   private mips(s: SynthParams, incA: number, incB: number): void {
     const sr = this.sampleRate;
     const ring = s.ringLevel > 0 || this.lv1[4] > 1e-4 ? 1 : 0;
-    const fa = incA * this.maxRatA * sr;
-    const fb = incB * this.maxRatB * sr;
+    const fa = incA * this.maxRatA * sr * this.wsA;
+    const fb = incB * this.maxRatB * sr * this.wsB;
     // FM (Carson's rule): sidebands reach (β + 1)·f_B past each harmonic of A, β = 2π·FM_DEPTH·fm.
     const side = s.fm > 0 ? (TWO_PI * FM_DEPTH * s.fm + 1) * fb : 0;
     const limit = MIP_NYQUIST_FRACTION * sr;
@@ -586,6 +672,17 @@ export class SynthVoice {
     this.incS0 = this.incS1;
     this.pitches(p, bend);
     this.unison(s, c.unisonScale);
+    // Warp amounts (smoothed: a jump would be a step in the read phase) and speed-ups.
+    this.waA0 = this.waA1;
+    this.waB0 = this.waB1;
+    if (s.aWarp !== 'none') {
+      this.waA1 = approach(this.waA1, clamp11(s.aWarpAmt + dst[D.warpA]), this.smooth);
+      this.wsA = warpSpeed(WARP_INDEX[s.aWarp], Math.max(Math.abs(this.waA0), Math.abs(this.waA1)));
+    } else this.wsA = 1;
+    if (s.bWarp !== 'none') {
+      this.waB1 = approach(this.waB1, clamp11(s.bWarpAmt + dst[D.warpB]), this.smooth);
+      this.wsB = warpSpeed(WARP_INDEX[s.bWarp], Math.max(Math.abs(this.waB0), Math.abs(this.waB1)));
+    } else this.wsB = 1;
     this.mips(s, Math.max(this.incA0, this.incA1), Math.max(this.incB0, this.incB1));
     this.aR.mipLevel = this.a.mipLevel;
     this.bR.mipLevel = this.b.mipLevel;
@@ -842,21 +939,25 @@ export class SynthVoice {
       const splitA = stereo && (psA !== 0 || this.rA);
       const oscBR = this.rB ? this.bR : this.b;
       const oscAR = this.rA ? this.aR : this.a;
+      const wmA = WARP_INDEX[s.aWarp];
+      const wmB = WARP_INDEX[s.bWarp];
+      const wa = wmA === 0 ? 0 : this.waA0 + (this.waA1 - this.waA0) * t;
+      const wb = wmB === 0 ? 0 : this.waB0 + (this.waB1 - this.waB0) * t;
       // Osc B first (it may modulate A's phase).
       let sbL = 0;
       let sbR = 0;
       let b0 = 0;
       if (this.b.n > 0 && (lb > 0 || lr > 0 || s.fm > 0)) {
         // FM source: B at its centre pitch (with one copy, that copy).
-        if (s.fm > 0) b0 = this.b.read(this.uB === 1 ? this.phB[0] : this.phCB, t);
+        if (s.fm > 0) b0 = readWarp(this.b, this.uB === 1 ? this.phB[0] : this.phCB, t, wmB, wb);
         for (let i = 0; i < this.uB; i++) {
           const w = this.wB0[i] + (this.wB1[i] - this.wB0[i]) * t;
-          const v = this.b.read(this.phB[i], t) * w;
+          const v = readWarp(this.b, this.phB[i], t, wmB, wb) * w;
           sbL += v * this.gBL[i];
           if (splitB) {
             let ph = this.phB[i] + psB;
             if (ph >= 1) ph -= 1;
-            sbR += oscBR.read(ph, t) * w * this.gBR[i];
+            sbR += readWarp(oscBR, ph, t, wmB, wb) * w * this.gBR[i];
           } else sbR += v * this.gBR[i];
         }
       }
@@ -868,12 +969,12 @@ export class SynthVoice {
           let ph = this.phA[i] + fmOff;
           ph -= Math.floor(ph);
           const w = this.wA0[i] + (this.wA1[i] - this.wA0[i]) * t;
-          const v = this.a.read(ph, t) * w;
+          const v = readWarp(this.a, ph, t, wmA, wa) * w;
           saL += v * this.gAL[i];
           if (splitA) {
             let phR = ph + psA;
             if (phR >= 1) phR -= 1;
-            saR += oscAR.read(phR, t) * w * this.gAR[i];
+            saR += readWarp(oscAR, phR, t, wmA, wa) * w * this.gAR[i];
           } else saR += v * this.gAR[i];
         }
       }
