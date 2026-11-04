@@ -33,6 +33,7 @@ import {
   FIRST_USER_WAVETABLE_ID,
   MAX_GRID,
   MAX_USER_SLOTS,
+  normalizeWrite,
   pinnedIds,
   removeTables,
   TIMELINE_WAVETABLE_ID,
@@ -500,7 +501,7 @@ function decodeSamples(
 }
 
 const SHAPES = new Set(['1d', '2d', 'rows']);
-const WRITE_VALUES: Record<keyof WriteSettings, readonly string[]> = {
+const WRITE_VALUES: Record<Exclude<keyof WriteSettings, 'step'>, readonly string[]> = {
   dir: ['+x', '-x', '+y', '-y'],
   edge: ['wrap', 'stop', 'grow'],
   onWrap: ['next', 'same'],
@@ -530,9 +531,11 @@ function decodeWavetable(raw: unknown, live: ReadonlySet<TableId>, fresh: readon
   }
   const defWrite = base?.write ?? DEFAULT_WRITE;
   const rw = isObj(raw.write) ? raw.write : {};
-  const write = Object.fromEntries(
-    (Object.keys(WRITE_VALUES) as (keyof WriteSettings)[]).map((k) => [k, WRITE_VALUES[k].includes(rw[k] as string) ? rw[k] : defWrite[k]]),
+  const named = Object.fromEntries(
+    (Object.keys(WRITE_VALUES) as (keyof typeof WRITE_VALUES)[]).map((k) => [k, WRITE_VALUES[k].includes(rw[k] as string) ? rw[k] : defWrite[k]]),
   ) as unknown as WriteSettings;
+  // The step (free-stepping fixed shapes) is validated by normalizeWrite below.
+  const rawWrite: WriteSettings = isObj(rw.step) ? { ...named, step: { x: Number(rw.step.x), y: Number(rw.step.y) } } : named;
   const rh = isObj(raw.head) ? raw.head : {};
   const head = { x: isInt(rh.x) ? rh.x : 0, y: isInt(rh.y) ? rh.y : 0 };
   let wt: Wavetable = {
@@ -544,7 +547,7 @@ function decodeWavetable(raw: unknown, live: ReadonlySet<TableId>, fresh: readon
     fixed: shape === '2d' ? true : shape === 'rows' ? false : typeof raw.fixed === 'boolean' ? raw.fixed : (base?.fixed ?? false),
     interp: raw.interp === 'step' ? 'step' : 'blend',
     live: typeof raw.live === 'boolean' ? raw.live : (base?.live ?? false),
-    write,
+    write: normalizeWrite(shape, shape === '2d' ? true : shape === 'rows' ? false : typeof raw.fixed === 'boolean' ? raw.fixed : (base?.fixed ?? false), rawWrite),
     head,
     pins: typeof raw.pins === 'boolean' ? raw.pins : (base?.pins ?? true),
     ...(base ? { builtin: base.builtin } : {}),

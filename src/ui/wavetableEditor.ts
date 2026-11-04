@@ -16,11 +16,14 @@ import {
   changesByItself,
   isFull,
   findSlot,
+  freeStepping,
   MAX_GRID,
+  MAX_STEP,
   MAX_USER_SLOTS,
   moveSlot,
   previewWrites,
   shapeLabel,
+  stepOf,
   wavetableDims,
   wavetableMode,
   type Cell,
@@ -394,7 +397,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
   const liveSeg = seg('Live or frozen', [['live', 'Live', 'New waveforms are written at the write head'], ['frozen', 'Frozen', 'Changed by hand only']] as const, 'wte', (v) =>
     model.setWavetableLive(host.current(), v === 'live'),
   );
-  type Ctl = { key: keyof WriteSettings; label: string; opts: readonly (readonly [string, string, string?])[] };
+  type Ctl = { key: Exclude<keyof WriteSettings, 'step'>; label: string; opts: readonly (readonly [string, string, string?])[] };
   const CTLS: Ctl[] = [
     { key: 'dir', label: 'Direction', opts: [['+x', '+x', 'Along the row'], ['-x', '−x', 'Backwards along the row'], ['+y', '+y', 'Down the columns (2D)'], ['-y', '−y', 'Up the columns (2D)']] },
     { key: 'edge', label: 'At the edge', opts: [['wrap', 'Wrap'], ['stop', 'Stop'], ['grow', 'Grow']] },
@@ -410,12 +413,58 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     });
     return { c, s, el: h('div', { class: 'wte-ctl' }, h('span', { class: 'wte-ctl-label' }, c.label), s.el) };
   });
+  // Step (fixed 1D and 2D in Replace mode): a pad for ±1 moves plus X / Y steppers.
+  const sgn = (v: number) => (v > 0 ? 1 : v < 0 ? -1 : 0);
+  const fmtStep = (v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${-v}` : '0');
+  const setStep = (x: number, y: number) => model.setWavetableWrite(host.current(), { step: { x, y } });
+  const STEP_PAD = [['↖', -1, -1], ['↑', 0, -1], ['↗', 1, -1], ['←', -1, 0], ['', 0, 0], ['→', 1, 0], ['↙', -1, 1], ['↓', 0, 1], ['↘', 1, 1]] as const;
+  const NAMES: Record<string, string> = { '-1,-1': 'up-left', '0,-1': 'up', '1,-1': 'up-right', '-1,0': 'left', '1,0': 'right', '-1,1': 'down-left', '0,1': 'down', '1,1': 'down-right' };
+  const padBtns = STEP_PAD.map(([t, dx, dy]) => {
+    if (!dx && !dy) return { dx, dy, b: h('span', { class: 'wte-pad-mid', 'aria-hidden': 'true' }) as HTMLElement };
+    const b = h('button', { class: 'small', id: `wte-step-${NAMES[`${dx},${dy}`]}`, 'aria-label': `Step ${NAMES[`${dx},${dy}`]}`, title: `Step ${NAMES[`${dx},${dy}`]}`, 'aria-pressed': 'false' }, t);
+    b.onclick = () => {
+      const st = stepOf(cur().write);
+      const stride = Math.max(Math.abs(st.x), Math.abs(st.y)) || 1;
+      setStep(dx * stride, dy * stride);
+    };
+    return { dx, dy, b };
+  });
+  const pad = h('div', { class: 'wte-pad', role: 'group', 'aria-label': 'Step direction' }, ...padBtns.map((p) => p.b));
+  const stepper = (ax: 'x' | 'y') => {
+    const val = h('span', { class: 'wte-step-val', id: `wte-step-${ax}` });
+    const bump = (d: number) => {
+      const st = stepOf(cur().write);
+      let v = Math.max(-MAX_STEP, Math.min(MAX_STEP, st[ax] + d));
+      const other = ax === 'x' ? st.y : st.x;
+      if (v === 0 && other === 0) v += d; // never both 0
+      if (Math.abs(v) > MAX_STEP) return;
+      setStep(ax === 'x' ? v : st.x, ax === 'y' ? v : st.y);
+    };
+    const dn = h('button', { class: 'small', id: `wte-step-${ax}-dn`, 'aria-label': `${ax.toUpperCase()} step down`, onclick: () => bump(-1) }, '−');
+    const up = h('button', { class: 'small', id: `wte-step-${ax}-up`, 'aria-label': `${ax.toUpperCase()} step up`, onclick: () => bump(1) }, '+');
+    const el = h('div', { class: 'wte-stepper' }, h('span', { class: 'wte-ctl-label' }, ax.toUpperCase()), dn, val, up);
+    return { el, val, dn, up };
+  };
+  const sx = stepper('x');
+  const sy = stepper('y');
+  const stepHint = h('span', { class: 'wte-step-hint', id: 'wte-step-hint' });
+  const stepCtl = h(
+    'div',
+    { class: 'wte-ctl', id: 'wte-step' },
+    h('span', { class: 'wte-ctl-label' }, 'Step'),
+    h('div', { class: 'wte-stepbox' }, pad, h('div', { class: 'wte-stepxy' }, sx.el, sy.el)),
+    stepHint,
+  );
+  const dirCtl = ctlSegs.find((x) => x.c.key === 'dir')!;
+
   const note = h('div', { class: 'wte-note', id: 'wte-note' });
   const side = h(
     'aside',
     { class: 'wte-side', id: 'wte-side', 'aria-label': 'Write head' },
     h('div', { class: 'wte-side-head' }, h('span', { class: 'wte-side-title' }, 'Write head'), liveSeg.el),
-    ...ctlSegs.map((x) => x.el),
+    dirCtl.el,
+    stepCtl,
+    ...ctlSegs.filter((x) => x !== dirCtl).map((x) => x.el),
     note,
   );
 
@@ -478,10 +527,13 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     const is1d = wt.shape === '1d';
     const is2d = wt.shape === '2d';
     const rowsReplaceNew = wt.shape === 'rows' && wt.write.mode === 'replace' && wt.write.batch === 'newRow';
-    const off: Record<keyof WriteSettings, (v: string) => boolean> = {
+    const free = freeStepping(wt.shape, wt.fixed, wt.write.mode);
+    const st = stepOf(wt.write);
+    const diagonal = st.x !== 0 && st.y !== 0;
+    const off: Record<Exclude<keyof WriteSettings, 'step'>, (v: string) => boolean> = {
       dir: (v) => !is2d && (v === '+y' || v === '-y'),
       edge: (v) => (v === 'grow' && (is2d || (is1d && wt.fixed))) || (v === 'wrap' && is1d && !wt.fixed) || (rowsReplaceNew && v !== 'grow'),
-      onWrap: () => is1d,
+      onWrap: () => is1d || (free && diagonal),
       mode: (v) => v === 'insert' && is2d,
       batch: () => false,
     };
@@ -491,6 +543,31 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
         const o = c.opts.find(([x]) => valueId(x) === v)![0];
         return ro || off[c.key](o);
       });
+    }
+    // Free-stepping wavetables show the step instead of the four directions.
+    dirCtl.el.hidden = free;
+    stepCtl.hidden = !free;
+    if (free) {
+      for (const { dx, dy, b } of padBtns) {
+        if (!(b instanceof HTMLButtonElement)) continue;
+        const on = sgn(st.x) === dx && sgn(st.y) === dy;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', String(on));
+        b.disabled = ro || (is1d && dy !== 0);
+      }
+      sx.val.textContent = fmtStep(st.x);
+      sy.val.textContent = fmtStep(st.y);
+      sx.dn.disabled = ro || st.x <= -MAX_STEP;
+      sx.up.disabled = ro || st.x >= MAX_STEP;
+      sy.el.hidden = is1d;
+      sy.dn.disabled = ro || st.y <= -MAX_STEP;
+      sy.up.disabled = ro || st.y >= MAX_STEP;
+      const n = Math.abs(st.x || st.y);
+      stepHint.textContent = diagonal
+        ? 'Diagonal: each axis wraps on its own (On wrap is off).'
+        : n > 1
+          ? `Every ${n}${n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'} slot; wrapping keeps the rhythm.`
+          : 'One slot at a time.';
     }
     note.textContent = noteText(wt);
   };

@@ -65,7 +65,7 @@ function richModel(): AppModel {
   const user: Wavetable[] = [
     { ...make1D(16, 'Fixed line', [ids[0], null, ids[2], ids[3]], { fixed: true, live: true, interp: 'step', write: { dir: '-x', mode: 'replace', edge: 'wrap' } }), color: 'teal' } as Wavetable,
     make1D(17, 'Free line', [ids[4], ids[5]], { live: false }),
-    make2D(18, 'Pad', 3, 2, [ids[0], ids[1], null, ids[6], ids[7], ids[8]], { live: true, write: { dir: '+y', edge: 'stop', onWrap: 'next', mode: 'replace' }, head: { x: 1, y: 1 } }),
+    make2D(18, 'Pad', 3, 2, [ids[0], ids[1], null, ids[6], ids[7], ids[8]], { live: true, write: { dir: '+y', step: { x: 1, y: 2 }, edge: 'stop', onWrap: 'next', mode: 'replace' }, head: { x: 1, y: 1 } }),
     makeRows(19, 'Rows', [[ids[0], ids[1]], [ids[2]], []], { live: true, write: { dir: '-x', edge: 'grow', mode: 'insert', batch: 'newRow' } }),
   ];
   m.loadState({ ...state, wavetables: [...state.wavetables, ...user] });
@@ -367,6 +367,8 @@ describe('session corrupt-data handling', () => {
     meta.sequences[1].voiceId = 77;
     meta.wavetables[2] = { id: 2, builtin: 'batches', shape: 'blob' };
     meta.wavetables.push({ id: 40, shape: '2d', rows: [[1, 'x'], [2]], write: { dir: 'up' } });
+    meta.wavetables.push({ id: 41, shape: '2d', rows: [[1, 2], [3, 4]], write: { dir: '-x', step: { x: 'a', y: 99 } } });
+    meta.wavetables.push({ id: 42, shape: '1d', fixed: false, rows: [[1, 2]], write: { dir: '+x', mode: 'insert', edge: 'grow', step: { x: 3, y: 0 } } });
     meta.bpm = 'fast';
     meta.selectedId = 999;
     meta.ui = 'bad';
@@ -381,6 +383,9 @@ describe('session corrupt-data handling', () => {
     const w40 = state.model.wavetables.find((w) => w.id === 40)!;
     expect(w40.rows).toEqual([[1, null], [2, null]]);
     expect(w40.write.dir).toBe('+x');
+    // Bad step values: a non-number axis is 0, the rest clamped; variable lines keep ±1.
+    expect(state.model.wavetables.find((w) => w.id === 41)!.write).toMatchObject({ dir: '+y', step: { x: 0, y: 8 } });
+    expect(state.model.wavetables.find((w) => w.id === 42)!.write.step).toEqual({ x: 1, y: 0 });
     expect(state.model.bpm).toBe(132);
     expect(state.model.selectedId).toBe(st.timeline.at(-1)!.id);
     expect(state.ui).toEqual({});

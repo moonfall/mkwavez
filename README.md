@@ -192,7 +192,11 @@ switches (the choice is remembered).
   view with voice windows, the write head (green, “W”) and green numbers where the next
   writes land, then the selected slot's actions. Right: Live / Frozen and the write head
   settings (direction, at the edge, on wrap, replace / insert, each new batch; options a
-  shape can't use are disabled; built-ins are read-only). A Live wavetable gets every new
+  shape can't use are disabled; built-ins are read-only). Fixed 1D and 2D wavetables in
+  Replace mode get a **Step** instead of the direction: a pad for ±1 moves including
+  diagonals, plus X / Y steppers for any step from −8 to +8 — +2 fills every other slot
+  (wrapping keeps the rhythm), (+1, +2) a knight's move; a diagonal wraps each axis on its
+  own. A Live wavetable gets every new
   waveform (Seed / Mutate / Breed adds, Copy to end) at its write head.
   - **Drag** a waveform from the Timeline (mouse: press and move; touch: move up out of
     the strip — sideways still scrolls it, holding still is still the Breed long-press) or

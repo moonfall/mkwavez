@@ -261,6 +261,15 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   drops out). Stop + on-wrap "next" moves on line by line and stops at the end of the
   grid / the last row. Rows replace + wrap / stop + new row is coerced to grow (an empty
   new row can only be grown). Unit-tested for every combination.
+- **Free steps** (`step {x, y}`, fixed 1D and 2D in Replace mode, `freeStepping`): after
+  each write the head moves by the step, −8…+8 per axis, not both 0 (1D: x only); `dir`
+  follows the step's main axis. Wrap is modulo the region (a +3 step keeps its rhythm);
+  on-wrap "next" applies to steps along one axis only — a diagonal wraps each axis on its
+  own (a torus). Stop leaves the head outside (dropping writes), except Stop + next, which
+  moves to the next line start and stops past the last. New row: the next line start for
+  a one-axis step, the start corner for a diagonal (the corner the step moves away from:
+  x1 for a −x step, y1 for −y). Variable 1D, Rows and Insert keep the unit step of `dir`
+  (`normalizeWrite`); older sessions without `step` get the unit step of their `dir`.
 - **Adds** (`AppModel.addTables`): write into every live wavetable, then pin, then evict
   from the timeline, then drop evicted ids from the (non-pinning) wavetables, then voice
   windows follow; one undo snapshot covers all of it (timeline, wavetables, windows).

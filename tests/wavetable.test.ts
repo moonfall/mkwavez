@@ -16,6 +16,8 @@ import {
   make2D,
   makeRows,
   normalizeWrite,
+  previewWrites,
+  setWrite,
   pinnedIds,
   removeTables,
   shapeLabel,
@@ -97,9 +99,9 @@ describe('wavetable slots', () => {
 describe('write settings per shape', () => {
   it('coerces invalid combinations', () => {
     const s: WriteSettings = { dir: '+y', edge: 'wrap', onWrap: 'next', mode: 'insert', batch: 'newRow' };
-    expect(normalizeWrite('1d', false, s)).toEqual({ dir: '+x', edge: 'grow', onWrap: 'same', mode: 'insert', batch: 'newRow' });
+    expect(normalizeWrite('1d', false, s)).toEqual({ dir: '+x', step: { x: 1, y: 0 }, edge: 'grow', onWrap: 'same', mode: 'insert', batch: 'newRow' });
     expect(normalizeWrite('1d', true, { ...s, edge: 'grow' })).toMatchObject({ dir: '+x', edge: 'wrap' });
-    expect(normalizeWrite('2d', true, { ...s, edge: 'grow' })).toEqual({ dir: '+y', edge: 'wrap', onWrap: 'next', mode: 'replace', batch: 'newRow' });
+    expect(normalizeWrite('2d', true, { ...s, edge: 'grow' })).toEqual({ dir: '+y', step: { x: 0, y: 1 }, edge: 'wrap', onWrap: 'next', mode: 'replace', batch: 'newRow' });
     expect(normalizeWrite('rows', false, { ...s, dir: '-y' })).toMatchObject({ dir: '-x', edge: 'wrap', mode: 'insert' });
   });
 });
@@ -558,5 +560,66 @@ describe('playback mapping', () => {
     expect(windowIds(g, { x0: 1, x1: 2, y0: 0, y1: 1 })).toEqual([2, 3, 5, 6]);
     expect(windowIds(make1D(1, 't', [1, 2, 2, 3]), { x0: 1, x1: 3, y0: 5, y1: 5 })).toEqual([2, 3]);
     expect(windowIds(makeRows(1, 'r', [[1], [2, 3], [4]]), { x0: 9, x1: 9, y0: 1, y1: 2 })).toEqual([2, 3, 4]);
+  });
+});
+
+describe('write head: free steps (fixed shapes, Replace)', () => {
+  const grid = (w: number, h: number, write: Partial<WriteSettings>, head = { x: 0, y: 0 }) =>
+    ({ ...make2D(50, 'g', w, h, [], { write: { edge: 'wrap', onWrap: 'next', mode: 'replace', batch: 'continue', ...write } }), live: true, head }) as Wavetable;
+  const cells = (wt: Wavetable) => wt.rows.map((r) => r.map((v) => (v === null ? '.' : String(v))).join('')).join('/');
+
+  it('normalizes steps: clamped, 1D x only, not both 0; variable lines and inserts keep the unit step', () => {
+    const base: WriteSettings = { dir: '+x', edge: 'wrap', onWrap: 'next', mode: 'replace', batch: 'continue' };
+    expect(normalizeWrite('2d', true, { ...base, step: { x: 20, y: -3 } }).step).toEqual({ x: 8, y: -3 });
+    expect(normalizeWrite('2d', true, { ...base, step: { x: 1, y: -3 } }).dir).toBe('-y');
+    expect(normalizeWrite('1d', true, { ...base, step: { x: -3, y: 2 } }).step).toEqual({ x: -3, y: 0 });
+    expect(normalizeWrite('2d', true, { ...base, step: { x: 0, y: 0 } }).step).toEqual({ x: 1, y: 0 });
+    expect(normalizeWrite('1d', false, { ...base, edge: 'grow', step: { x: 3, y: 0 } }).step).toEqual({ x: 1, y: 0 });
+    expect(normalizeWrite('1d', true, { ...base, mode: 'insert', step: { x: 3, y: 0 } }).step).toEqual({ x: 1, y: 0 });
+    expect(normalizeWrite('rows', false, { ...base, step: { x: 2, y: 0 } }).step).toEqual({ x: 1, y: 0 });
+    // A new direction without a step resets the step to the unit one.
+    const g = setWrite(grid(4, 2, { step: { x: 2, y: 0 } }), { dir: '-x' });
+    expect(g.write.step).toEqual({ x: -1, y: 0 });
+  });
+
+  it('a step of 2 fills every other slot, wrapping by its rhythm onto the next row', () => {
+    const t = writeAll(grid(4, 2, { step: { x: 2, y: 0 } }), [1, 2, 3, 4]);
+    expect(cells(t)).toBe('1.2./3.4.');
+    expect(t.head).toEqual({ x: 0, y: 0 }); // wrapped round to the start
+    // Odd step in an odd width visits every slot once before repeating.
+    const odd = writeAll({ ...make1D(51, 'l', [null, null, null, null, null], { fixed: true, write: { mode: 'replace', edge: 'wrap' } }), live: true, write: normalizeWrite('1d', true, { dir: '+x', step: { x: 3, y: 0 }, edge: 'wrap', onWrap: 'same', mode: 'replace', batch: 'continue' }) } as Wavetable, [1, 2, 3, 4, 5]);
+    expect(odd.rows[0]).toEqual([1, 3, 5, 2, 4]);
+  });
+
+  it('a diagonal wraps each axis on its own; Stop stops when it leaves; New row restarts at the corner', () => {
+    const t = writeAll(grid(3, 3, { step: { x: 1, y: 1 } }), [1, 2, 3, 4]);
+    expect(cells(t)).toBe('4../.2./..3'); // back at the start on a 3×3 torus
+    const knight = writeAll(grid(4, 4, { step: { x: 1, y: 2 } }), [1, 2, 3, 4]);
+    expect(cells(knight)).toBe('1.3./..../.2.4/....');
+    const st = writeAll(grid(3, 3, { step: { x: 1, y: 1 }, edge: 'stop' }), [1, 2, 3, 4]);
+    expect(cells(st)).toBe('1../.2./..3');
+    expect(writeTables(st, [9]).wt).toBe(st);
+    const nr = writeAll(grid(3, 3, { step: { x: 1, y: 1 }, batch: 'newRow' }, { x: 2, y: 0 }), [1], [2]);
+    expect(cells(nr)).toBe('2../.../...');
+    expect(nr.head).toEqual({ x: 1, y: 1 });
+    // A step towards −x −y starts at the far corner.
+    const back = { ...make2D(52, 'b', 3, 2, [], { write: { step: { x: -1, y: -1 } } }), live: true } as Wavetable;
+    expect(back.head).toEqual({ x: 2, y: 1 });
+    expect(writeAll(back, [1, 2]).rows).toEqual([[_, 2, _], [_, _, 1]]);
+    const back1 = make1D(53, 'b', [_, _, _], { fixed: true, write: { mode: 'replace', step: { x: -2, y: 0 } } });
+    expect(back1.head).toEqual({ x: 2, y: 0 });
+    // Changing the step keeps a head that is still valid.
+    expect(setWrite(grid(3, 2, {}, { x: 1, y: 1 }), { step: { x: -1, y: -1 } }).head).toEqual({ x: 1, y: 1 });
+  });
+
+  it('previews match what is written, and the step survives a session round trip', () => {
+    const g = grid(5, 3, { step: { x: 2, y: 1 } });
+    const p = previewWrites(g, 6).writes.map((w) => [w.x, w.y]);
+    const done = writeAll(g, [1, 2, 3, 4, 5, 6]);
+    const where = [1, 2, 3, 4, 5, 6].map((id) => {
+      const y = done.rows.findIndex((r) => r.includes(id));
+      return [done.rows[y].indexOf(id), y];
+    });
+    expect(p).toEqual(where);
   });
 });

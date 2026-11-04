@@ -3851,6 +3851,56 @@ canvas#wte-canvas {
   flex: 1 1 0;
   padding: 0 4px;
 }
+.wte-stepbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wte-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 24px);
+  grid-auto-rows: 22px;
+  gap: 2px;
+}
+.wte-pad button {
+  width: 24px;
+  height: 22px;
+  min-height: 0;
+  padding: 0;
+  font-size: 12px;
+}
+.wte-pad button.on {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.wte-pad-mid {
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+}
+.wte-stepxy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wte-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.wte-stepper button {
+  width: 22px;
+  padding: 0;
+}
+.wte-step-val {
+  min-width: 2.2em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.wte-step-hint {
+  font-size: 11px;
+  color: var(--text-2);
+}
 .wte-note {
   margin-top: auto;
   padding-top: 4px;

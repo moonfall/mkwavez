@@ -3733,6 +3733,28 @@ async function wavetableEditorChecks(page, tlCount) {
   await page.press('#wte-h', 'Tab');
   const dims = await M((id) => window.mkwavez.model.wavetable(id).rows.map((r) => r.length).join(), g2);
   assert(dims === '4,4,4', `2D resized to 4 × 3 (${dims})`);
+  // Live 2D: the step pad and X / Y steppers replace the four directions.
+  await page.click('#wte-live');
+  await page.waitForTimeout(100);
+  assert((await page.isVisible('#wte-step')) && (await page.isHidden('#wte-dir-px')), 'Live 2D: Step pad shown instead of Direction');
+  await page.click('#wte-step-x-up');
+  await page.waitForTimeout(100);
+  let w2 = await M((id) => window.mkwavez.model.wavetable(id).write, g2);
+  let marks = (await page.getAttribute('#wte-canvas', 'data-writes')).split(' ').slice(0, 3).join(' ');
+  assert(w2.step.x === 2 && w2.step.y === 0 && (await page.textContent('#wte-step-x')) === '+2' && marks === 'replace:0,0 replace:2,0 replace:0,1', `X step +2: every other cell (${marks})`);
+  await page.click('#wte-step-down-right');
+  await page.waitForTimeout(100);
+  w2 = await M((id) => window.mkwavez.model.wavetable(id).write, g2);
+  marks = (await page.getAttribute('#wte-canvas', 'data-writes')).split(' ').slice(0, 3).join(' ');
+  assert(
+    w2.step.x === 2 && w2.step.y === 2 && (await page.getAttribute('#wte-step-down-right', 'aria-pressed')) === 'true' && (await page.isDisabled('#wte-onWrap-next')) && marks === 'replace:0,0 replace:2,2 replace:0,1',
+    `diagonal pad keeps the stride; each axis wraps on its own, On wrap off (${marks})`,
+  );
+  await page.click('#wte-step-right');
+  await page.click('#wte-step-x-dn');
+  await page.click('#wte-frozen');
+  w2 = await M((id) => window.mkwavez.model.wavetable(id).write.step, g2);
+  assert(w2.x === 1 && w2.y === 0, 'back to a +1 step along X');
 
   // Duplicate a built-in (the primary action there), then rename it.
   await page.click('#wte-item-3');
