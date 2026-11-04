@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { KMAX, TABLE_SIZE } from '../src/core/constants';
 import { drawingSpan, drawingValue, drawingWeight, lerpDrawing, MAX_DRAW_POINTS, normalizeDrawing, resampleStroke, StrokeBuffer, type Drawing } from '../src/core/drawing';
 import { basicWave, generateBasic, renderRecipe } from '../src/core/generators';
-import { mutate } from '../src/core/mutations';
+import { mutate, MUTATION_REV } from '../src/core/mutations';
 import { shape } from '../src/core/shape';
 import {
   applyChain,
@@ -173,6 +173,18 @@ describe('steps', () => {
     const mu = applyStep(step('mutation', { mutation: 'fold' }), x, 0.6, 3);
     expect(peak(mu)).toBeCloseTo(0.5, 6);
     expect(maxDiff(mu.map((v) => v / 0.5), mutate('fold', Float32Array.from(x, (v) => v / 0.5), 0.6, 3))).toBeLessThan(1e-6);
+  });
+
+  it('mutation steps record their revision; steps saved without one keep revision 1', () => {
+    expect((step('mutation') as { rev?: number }).rev).toBe(MUTATION_REV);
+    const old = normalizeStep({ id: 'x', op: 'mutation', on: true, amount: 0.5, mutation: 'reverse' }, 'x')!;
+    expect('rev' in old).toBe(false);
+    expect(normalizeStep(old, 'x')).toEqual(old); // idempotent, no revision added
+    const cur = step('mutation', { mutation: 'reverse', amount: 0.5 });
+    const x = Float64Array.from(saw);
+    // Reverse at ½ on a saw: silent at revision 1, the saw's magnitudes at revision 2.
+    expect(peak(applyStep(old, x, 0.5, 0))).toBe(0);
+    expect(peak(applyStep(cur, x, 0.5, 0))).toBeCloseTo(1, 3);
   });
 });
 

@@ -94,6 +94,23 @@ describe('mutations (core port)', () => {
     const rv = mags(mutate('reverse', src, 1, 0));
     const s0 = mags(src);
     for (const k of [1, 2, 3, 7]) expect(rv[k] / rv[1]).toBeCloseTo(s0[k] / s0[1], 4);
+    // Reverse morphs the phases: magnitudes kept at every amount, never silent (even on a
+    // sine-phase saw, where the old blend cancelled at ½), the reversed cycle at 1.
+    for (const x of [src, saw])
+      for (const a of [0.1, 0.25, 0.5, 0.75]) {
+        const m = mags(mutate('reverse', x, a, 0));
+        const m0 = mags(x);
+        for (const k of [1, 2, 5, 11]) expect(m[k] / m[1], `a ${a} h${k}`).toBeCloseTo(m0[k] / m0[1], 4);
+      }
+    const reversed = Float32Array.from(src, (_, i) => src[(src.length - i) % src.length]);
+    expect(maxDiff(mutate('reverse', src, 1, 0), mutate('reverse', reversed, 0, 0))).toBeLessThan(1e-4);
+    // The waveform moves away from the source from the start, continuously (no jumps).
+    for (let a = 0.05; a <= 1; a += 0.05) {
+      expect(maxDiff(mutate('reverse', src, a, 0), src), `a ${a}`).toBeGreaterThan(1e-2);
+      expect(maxDiff(mutate('reverse', src, a, 0), mutate('reverse', src, a - 0.01, 0)), `a ${a}`).toBeLessThan(0.1);
+    }
+    // Revision 1 (stored recipes): the old blend.
+    expect(mutate('reverse', saw, 0.5, 0, {}, 1).every((v) => v === 0)).toBe(true);
     // Slew limit at a = 1 removes the saw's jump: much less high-harmonic energy.
     const sl = mags(mutate('slew', saw, 1, 0));
     expect(sl[20] / sl[1]).toBeLessThan(0.5 * (1 / 20));

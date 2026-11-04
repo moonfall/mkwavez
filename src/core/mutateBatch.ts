@@ -9,14 +9,15 @@
  * whole batch via mutateBatchTable() and adds it (or one table of it) unchanged.
  *
  * Recipe (op 'mutate'):
- *   params  { mutation, amount (this table's), batchAmount (A), mode }
+ *   params  { mutation, amount (this table's), batchAmount (A), mode, rev (MUTATION_REV;
+ *             absent in recipes made before revisions: 1) }
  *   seed    the Apply's seed
  *   parents [sourceId] or [sourceId, mateId] for 'breed'
  *   batch   { index, count }
  * A chain table at index i is i+1 compounding steps from the source, so it re-renders
  * from the source alone (no intermediate tables needed).
  */
-import { mutate, sweepAmounts, type MutationId, type SweepMode } from './mutations';
+import { mutate, MUTATION_REV, sweepAmounts, type MutationId, type SweepMode } from './mutations';
 import { deriveSeed, Prng } from './prng';
 import type { GeneratedTable, Recipe, TableId, WaveTable } from './table';
 
@@ -79,7 +80,7 @@ export function mutateBatchTable(
   }
   const recipe: Recipe = {
     op: 'mutate',
-    params: { mutation: req.mutation, amount, batchAmount: req.amount, mode: req.mode },
+    params: { mutation: req.mutation, amount, batchAmount: req.amount, mode: req.mode, rev: MUTATION_REV },
     seed,
     parents,
     batch: { index: i, count },
@@ -109,11 +110,13 @@ export function renderMutateRecipe(r: Recipe, resolve: (id: TableId) => Float32A
     ctx = { breedPool: [mate] };
   }
   const amount = Number(r.params.amount);
+  // The mutation revision the recipe was made at (recipes from before revisions: 1).
+  const rev = r.params.rev === undefined ? 1 : Number(r.params.rev);
   if (r.params.mode === 'chain') {
     let x = src;
     const steps = (r.batch?.index ?? 0) + 1;
-    for (let j = 0; j < steps; j++) x = mutate(mutation, x, amount, chainStepSeed(r.seed, j), ctx);
+    for (let j = 0; j < steps; j++) x = mutate(mutation, x, amount, chainStepSeed(r.seed, j), ctx, rev);
     return x;
   }
-  return mutate(mutation, src, amount, r.seed, ctx);
+  return mutate(mutation, src, amount, r.seed, ctx, rev);
 }

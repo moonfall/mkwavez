@@ -7,7 +7,7 @@
 import { KMAX, TABLE_SIZE } from './constants';
 import { lerpDrawing, normalizeDrawing, drawingValue, drawingWeight, type Drawing } from './drawing';
 import { fft } from './fft';
-import { MUTATION_CHOICES, mutate, mutationUsesSeed, type MutationId } from './mutations';
+import { MUTATION_CHOICES, MUTATION_REV, mutate, mutationUsesSeed, type MutationId } from './mutations';
 import { Prng } from './prng';
 
 const N = TABLE_SIZE;
@@ -53,7 +53,8 @@ export type ShapeStep = StepBase &
       }
     | { readonly op: 'harmMod'; readonly kind: HarmModKind; readonly value: number; readonly range: readonly [number, number] }
     | { readonly op: 'harmLimit'; readonly mode: LimitMode; readonly draw: Drawing }
-    | { readonly op: 'mutation'; readonly mutation: MutationId }
+    // rev: the mutation revision (mutations.ts MUTATION_REV); steps saved without one are revision 1.
+    | { readonly op: 'mutation'; readonly mutation: MutationId; readonly rev?: number }
     | { readonly op: 'gain' | 'rotate'; readonly value: number }
     | { readonly op: 'invert' | 'reverse' }
   );
@@ -138,7 +139,7 @@ export function newStep(op: StepOp, id: string): ShapeStep {
     case 'harmLimit':
       return { ...base, op, mode: 'limit', draw: DEFAULT_LIMIT_DRAW };
     case 'mutation':
-      return { ...base, op, mutation: 'smooth', amount: 0.4 };
+      return { ...base, op, mutation: 'smooth', amount: 0.4, rev: MUTATION_REV };
     case 'gain':
       return { ...base, op, value: 2 };
     case 'rotate':
@@ -255,7 +256,8 @@ export function normalizeStep(raw: unknown, id: string): ShapeStep | null {
     }
     case 'mutation': {
       const ids = MUTATION_CHOICES.map((m) => m.id);
-      return { ...base, op, mutation: pick(o.mutation, ids, 'smooth') };
+      const rev = typeof o.rev === 'number' && o.rev >= 2 ? { rev: Math.min(MUTATION_REV, Math.round(o.rev)) } : {};
+      return { ...base, op, mutation: pick(o.mutation, ids, 'smooth'), ...rev };
     }
     case 'gain':
       return { ...base, op, value: num(o.value, GAIN_RANGE[0], GAIN_RANGE[1], 2) };
@@ -620,7 +622,7 @@ export function applyStep(s: ShapeStep, x: Float64Array, a: number, seed: number
       if (p < 1e-12) return Float64Array.from(x);
       const d = alignDelta(x);
       const aligned = rotate(x, d);
-      const y = mutate(s.mutation, Float32Array.from(aligned, (v) => v / p), a, seed);
+      const y = mutate(s.mutation, Float32Array.from(aligned, (v) => v / p), a, seed, {}, s.rev ?? 1);
       return rotate(Float64Array.from(y, (v) => v * p), -d);
     }
     default:

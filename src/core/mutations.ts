@@ -2,9 +2,15 @@
  * Mutations ported from the prototype (UI: ui/mutate.ts). Each maps amount a in [0,1]
  * onto a source table; a = 0 returns the source unchanged (up to shape() rounding).
  * All randomness comes from `seed`.
+ *
+ * Revisions: a mutation whose mapping was changed keeps its old behaviour at the old
+ * revision, so stored recipes re-render as they were made. Recipes and Shape steps record
+ * the revision they were made at (`rev`); those without one are revision 1.
+ *  - 2: Reverse morphs the harmonic phases (never silent); Hard sync caps its read ratio
+ *       on high-only sources (chains stay audible).
  */
 import { KMAX, TABLE_SIZE } from './constants';
-import { fft } from './fft';
+import { fft, harmonicMagnitudes } from './fft';
 import { additive, sawAmp, squareAmp, triAmp } from './generators/basic';
 import { noiseCycle, noiseField } from './perlin';
 import { Prng } from './prng';
@@ -26,14 +32,24 @@ export const MUTATIONS = [
   { group: 'Waveshape', id: 'foldSmooth', label: 'Fold + smooth', hint: 'Fold at gain 1 + 3a, then Smooth at a/2' },
   { group: 'Waveshape', id: 'fold', label: 'Fold', hint: 'Triangle folder, gain 1 + 3a' },
   { group: 'Waveshape', id: 'pm', label: 'Self phase mod', hint: 'Read x at i + 0.3·a·N·x[i]' },
-  { group: 'Waveshape', id: 'sync', label: 'Hard sync', hint: 'Read x at i·(1 + 3a) mod N' },
+  {
+    group: 'Waveshape',
+    id: 'sync',
+    label: 'Hard sync',
+    hint: 'Read x at i·r mod N, r = 1 + 3a (capped so the lowest harmonic stays below h36: chains stay audible)',
+  },
   { group: 'Waveshape', id: 'ring', label: 'Ring mod', hint: '× (1−a) + a·sin(m·p), m = 2–7 seeded', seeded: true },
   { group: 'Waveshape', id: 'rect', label: 'Rectify', hint: 'Blend toward 2·|x| − 1' },
   { group: 'Waveshape', id: 'crush', label: 'Crush', hint: 'Quantise to 2 + 62·(1−a)³ levels' },
   { group: 'Waveshape', id: 'warp', label: 'Phase warp', hint: 'Read offset by 0.12·a·N·sin(p)' },
   { group: 'Waveshape', id: 'nwarp', label: 'Noise warp', hint: 'Read offset by 0.25·a·N·seeded noise', seeded: true },
   { group: 'Time', id: 'palindrome', label: 'Palindrome', hint: 'Blend toward the cycle at double speed, then reversed' },
-  { group: 'Time', id: 'reverse', label: 'Reverse', hint: 'Blend (1−a)·x + a·x reversed' },
+  {
+    group: 'Time',
+    id: 'reverse',
+    label: 'Reverse',
+    hint: 'Harmonic phases morph toward the reversed cycle’s (a = 1: reversed); magnitudes kept. A sine-phase wave (saw, square, any sum of sines) reversed is the same sound',
+  },
   { group: 'Time', id: 'halfSwap', label: 'Half-cycle swap', hint: 'Blend toward −x(t+½): halves swapped and inverted (even harmonics flip)' },
   { group: 'Time', id: 'repeat', label: 'Window & repeat', hint: 'First 1/n repeated n times, n = 1 + 7a (blended between whole n)' },
   { group: 'Time', id: 'slew', label: 'Slew limit', hint: 'Step per sample limited to 0.03^a × the source’s steepest step' },
@@ -87,6 +103,14 @@ export const MUTATIONS = [
 export const MUTATION_CHOICES = MUTATIONS.filter((m) => !('legacy' in m));
 
 export type MutationId = (typeof MUTATIONS)[number]['id'];
+
+/** The current mutation revision (new recipes and Shape steps record it; see the header). */
+export const MUTATION_REV = 2;
+
+/** Hard sync (rev ≥ 2): the result's lowest harmonic stays at or below this (non-integer: a sync edge stays). */
+const SYNC_CAP = 36.5;
+/** Hard sync: harmonics below this fraction of the strongest don't count as the lowest. */
+const SYNC_FLOOR = 1e-3;
 export type MutationInfo = (typeof MUTATIONS)[number];
 
 /** True if the mutation's result depends on the seed. */
@@ -278,6 +302,7 @@ export function mutate(
   a: number,
   seed: number,
   ctx: MutationContext = {},
+  rev: number = MUTATION_REV,
 ): Float32Array {
   const rand = new Prng(seed);
   const R = () => rand.bipolar();
@@ -305,7 +330,18 @@ export function mutate(
     case 'pm':
       return shapeFrom((i) => lerpAt(x, i + a * N * 0.3 * x[i]));
     case 'sync': {
-      const r = 1 + a * 3;
+      let r = 1 + a * 3;
+      if (rev >= 2 && r > 1) {
+        // Reading a source whose lowest harmonic is L at ratio r puts it at L·r: a chain at
+        // a = 1 (r = 4 per step) left the band (silence) from the 4th step. Capped so L·r
+        // stays at SYNC_CAP — not an integer, so the restart leaves a sync edge, which
+        // brings the low harmonics back for the next step.
+        const m = harmonicMagnitudes(x, KMAX);
+        const floor = Math.max(...m) * SYNC_FLOOR;
+        let L = 1;
+        while (L < KMAX && !(m[L] >= floor)) L++;
+        if (L * r > SYNC_CAP) r = Math.max(1, SYNC_CAP / L);
+      }
       return shapeFrom((i) => lerpAt(x, (i * r) % N));
     }
     case 'ring': {
@@ -328,7 +364,23 @@ export function mutate(
     case 'palindrome':
       return shapeFrom((i) => (1 - a) * x[i] + a * (i < N / 2 ? x[2 * i] : x[2 * (N - 1 - i) + 1]));
     case 'reverse':
-      return shapeFrom((i) => (1 - a) * x[i] + a * x[(N - i) % N]);
+      // Rev 1: a time-domain blend with the reversed cycle. A sine-phase source reversed is
+      // −x, so the blend was (1 − 2a)·x: unchanged below ½, silent at ½.
+      if (rev < 2) return shapeFrom((i) => (1 - a) * x[i] + a * x[(N - i) % N]);
+      // The reversed cycle, half a cycle on (x(½ − t)), has harmonic k at phase kπ − φ_k:
+      // the fundamental of a shaped (sine-phase) table stays where it is, so nothing drifts
+      // when shape() re-aligns. Each phase moves along the shorter arc to its target,
+      // magnitudes kept, so the morph is smooth and never goes silent.
+      if (a <= 0) return shape(x);
+      return viaSpec(x, (re, im) => {
+        for (let k = 1; k < N / 2; k++) {
+          const m = Math.hypot(re[k], im[k]);
+          const ph = Math.atan2(im[k], re[k]);
+          const p = ph + a * wrapPi(k * Math.PI - 2 * ph);
+          re[k] = m * Math.cos(p);
+          im[k] = m * Math.sin(p);
+        }
+      });
     case 'halfSwap':
       return shapeFrom((i) => (1 - a) * x[i] - a * x[(i + N / 2) % N]);
     case 'repeat': {

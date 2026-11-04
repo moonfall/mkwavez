@@ -13,7 +13,7 @@
 import { KMAX } from '../core/constants';
 import { harmonicMagnitudes } from '../core/fft';
 import { drawingSpan, drawingValue, StrokeBuffer, type Drawing, type DrawTool, type Pt } from '../core/drawing';
-import { MUTATION_CHOICES } from '../core/mutations';
+import { MUTATION_CHOICES, MUTATION_REV } from '../core/mutations';
 import { randomSeed } from '../core/prng';
 import {
   applyChain,
@@ -901,7 +901,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
           'Mutation',
           MUTATION_CHOICES.map((m) => [m.id, `${m.group} › ${m.label}`] as const),
           (x) => (x.op === 'mutation' ? x.mutation : 'smooth'),
-          (mutation, x) => ({ ...x, mutation }) as Step,
+          // Picking a mutation takes its current revision (a step saved before keeps its own until then).
+          (mutation, x) => ({ ...x, mutation, rev: MUTATION_REV }) as Step,
         ),
         note('Amount is the mutation’s amount'),
       );

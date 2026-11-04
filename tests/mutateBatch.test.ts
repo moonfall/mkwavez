@@ -3,7 +3,7 @@ import { LAST_BATCH_WAVETABLE_ID } from '../src/core/wavetable';
 import { AppModel } from '../src/app/model';
 import { DEFAULT_PERLIN, generateBasic, generatePerlin, renderRecipe } from '../src/core/generators';
 import { chainStepSeed, mutateBatch, mutateBatchTable, pickMateIndex, type MutateMode } from '../src/core/mutateBatch';
-import { mutate, MUTATIONS } from '../src/core/mutations';
+import { mutate, MUTATION_REV, MUTATIONS } from '../src/core/mutations';
 import { makeTable, type WaveTable } from '../src/core/table';
 
 const src = makeTable(10, generatePerlin(DEFAULT_PERLIN, 4242, 1)[0]);
@@ -23,11 +23,35 @@ describe('mutateBatch', () => {
     expect(same(t.data, mutate('jitter', src.data, 0.4, 77))).toBe(true);
     expect(t.recipe).toEqual({
       op: 'mutate',
-      params: { mutation: 'jitter', amount: 0.4, batchAmount: 0.4, mode: 'single' },
+      params: { mutation: 'jitter', amount: 0.4, batchAmount: 0.4, mode: 'single', rev: MUTATION_REV },
       seed: 77,
       parents: [10],
       batch: { index: 0, count: 1 },
     });
+  });
+
+  it('recipes made before mutation revisions re-render at revision 1 (Reverse, Hard sync chain)', () => {
+    const saw = makeTable(12, generateBasic('saw', 0));
+    const resolve = (id: number) => (id === 12 ? saw.data : undefined);
+    // Reverse at ½ on a saw: revision 1 (a blend with −x) is silent, revision 2 is not.
+    const [rv] = mutateBatch({ mutation: 'reverse', amount: 0.5, seed: 1, mode: 'single', count: 1 }, saw);
+    expect(rv.recipe.params.rev).toBe(2);
+    expect(same(renderRecipe(rv.recipe, { resolveTable: resolve }), rv.data)).toBe(true);
+    expect(Math.max(...rv.data.map(Math.abs))).toBeGreaterThan(0.5);
+    const { rev: _, ...oldParams } = rv.recipe.params;
+    const old = renderRecipe({ ...rv.recipe, params: oldParams }, { resolveTable: resolve });
+    expect(old.every((v) => v === 0)).toBe(true);
+    expect(same(old, mutate('reverse', saw.data, 0.5, 1, {}, 1))).toBe(true);
+    // Hard sync chained at 1: revision 1 goes silent from the 4th step, revision 2 never.
+    const chain = mutateBatch({ mutation: 'sync', amount: 1, seed: 3, mode: 'chain', count: 8 }, saw);
+    const { tables, resolve: res } = realize(chain);
+    for (const t of tables) {
+      expect(Math.max(...t.data.map(Math.abs)), `step ${t.recipe.batch!.index + 1}`).toBeGreaterThan(0.5);
+      expect(same(renderRecipe(t.recipe, { resolveTable: (id) => (id === 12 ? saw.data : res(id)) }), t.data)).toBe(true);
+      const { rev: __, ...p } = t.recipe.params;
+      const v1 = renderRecipe({ ...t.recipe, params: p }, { resolveTable: (id) => (id === 12 ? saw.data : res(id)) });
+      expect(v1.every((v) => v === 0), `rev 1 step ${t.recipe.batch!.index + 1}`).toBe(t.recipe.batch!.index >= 3);
+    }
   });
 
   it('linear sweep uses A·i/N with one shared seed; last table equals the preview', () => {
