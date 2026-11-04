@@ -379,3 +379,8 @@ viz('nested-fm', {
   axis: (i) => ['0', `φ = ${f2(0.5 + 2 * i.u)}·sin(2p + 2 sin 3p)`, '2π'],
   draw: (g, w, h, i, c) => modulator(g, w, h, c, (p) => (0.5 + 2 * i.u) * Math.sin(2 * p + 2 * Math.sin(3 * p)), 2.6),
 });
+
+viz('cross-pm', {
+  axis: (i) => ['0', `φ = ${f2(2 * i.u)}·sin p·sin 3p`, '2π'],
+  draw: (g, w, h, i, c) => modulator(g, w, h, c, (p) => 2 * i.u * Math.sin(p) * Math.sin(3 * p), 2.1),
+});
