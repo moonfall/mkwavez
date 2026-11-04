@@ -188,7 +188,17 @@ export interface SynthParams {
   readonly aWarpAmt: number;
   readonly bWarp: WarpMode;
   readonly bWarpAmt: number;
+  /**
+   * Macros 0..1: matrix sources (Macro 1–4) set by hand, MIDI CC or host automation — one
+   * knob can drive several destinations.
+   */
+  readonly macro1: number;
+  readonly macro2: number;
+  readonly macro3: number;
+  readonly macro4: number;
 }
+
+export const MACRO_KEYS = ['macro1', 'macro2', 'macro3', 'macro4'] as const;
 
 export const MAX_UNISON = 4;
 /** Most notes one Synth voice plays at once. */
@@ -287,6 +297,10 @@ export const DEFAULT_SYNTH: SynthParams = {
   aWarpAmt: 0,
   bWarp: 'none',
   bWarpAmt: 0,
+  macro1: 0,
+  macro2: 0,
+  macro3: 0,
+  macro4: 0,
 };
 
 /** Amp ADSR of a new Synth voice (Simple voices keep their own defaults). */
@@ -347,6 +361,10 @@ export const SYNTH_RANGES: Readonly<Partial<Record<keyof SynthParams, readonly [
   poly: [1, MAX_POLY, true],
   aWarpAmt: [-1, 1],
   bWarpAmt: [-1, 1],
+  macro1: [0, 1],
+  macro2: [0, 1],
+  macro3: [0, 1],
+  macro4: [0, 1],
 };
 
 

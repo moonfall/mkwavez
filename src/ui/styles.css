@@ -1950,6 +1950,28 @@ button.syn-tab[aria-selected='true'] {
   padding: 0 2px;
   font-size: 10.5px;
 }
+/* Macro sliders under the mod matrix (one line: fits the dense view's spare height). */
+.synf-macros {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  height: 16px;
+  margin-top: 2px;
+}
+.synf-macro {
+  display: flex;
+  flex: 1;
+  gap: 3px;
+  align-items: center;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-2);
+}
+.synf-macro input {
+  flex: 1;
+  min-width: 0;
+  height: 14px;
+}
 /* A knob whose label is a select (warp mode): label-sized, still clickable when dense. */
 .synf select.knob-mode {
   width: 0;

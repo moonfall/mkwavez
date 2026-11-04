@@ -149,6 +149,13 @@ describe('PluginHost (plugin mode)', () => {
     model.setTransport({ playing: false });
     await flush();
     expect(backend.ops().filter((o) => o.type === 'transport').length).toBe(1);
+    // Synth parameter automation (macros, cutoff, …): only the automated synth fields apply.
+    const before = model.voice(1)!.synth;
+    backend.reply({ type: 'voice/params', id: 1, patch: { synth: { macro2: 0.25, cutoff: 900, poly: 2, aWarp: 'fold' } } as never });
+    await flush();
+    const after = model.voice(1)!.synth;
+    expect([after.macro2, after.cutoff]).toEqual([0.25, 900]);
+    expect([after.poly, after.aWarp]).toEqual([before.poly, before.aWarp]);
   });
 
   it('applies the host parameter values sent with init over the saved session', async () => {

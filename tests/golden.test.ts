@@ -217,7 +217,7 @@ const SYNTH_SCALARS = [
   'glide', 'glideLegato', 'bendRange', 'pan', 'mAttack', 'mDecay', 'mSustain', 'mRelease', 'mMode', 'sync', 'fm',
   'aUnison', 'aDetune', 'aSpread', 'bUnison', 'bDetune', 'bSpread', 'sat', 'width',
   'aPan', 'bPan', 'aPhaseSpread', 'bPhaseSpread', 'aPosSpread', 'bPosSpread', 'noiseWidth', 'filterSpread',
-  'poly', 'aWarp', 'aWarpAmt', 'bWarp', 'bWarpAmt',
+  'poly', 'aWarp', 'aWarpAmt', 'bWarp', 'bWarpAmt', 'macro1', 'macro2', 'macro3', 'macro4',
 ] as const;
 const SYNTH_ENUMS: Partial<Record<(typeof SYNTH_SCALARS)[number], readonly string[]>> = {
   subWave: SUB_WAVES,
@@ -767,6 +767,46 @@ const SCENARIOS: Scenario[] = [
       [16100, OP.noteOn, 2, 64, 90],
       [19000, OP.noteOff, 2, 61],
       [20000, OP.noteOff, 1, 45],
+    ],
+  },
+  {
+    // Macros as matrix sources: macro 1 drives cutoff and warp, macro 2 B's level (and
+    // also A's position), macro 3 / 4 pan and amp; values change while a chord holds.
+    name: 'macros',
+    sampleRate: 44100,
+    frames: 12000,
+    ops: [
+      ...WAVES.slice(0, 4).map((_, i): Op => [0, OP.table, i + 1, i]),
+      wavetableOp(0, 0, '1d', 'blend', [[1, 2, 3, 4]]),
+      ...[0, 0.4, 1].map((m, k): Op =>
+        voiceOp(k * 4000, {
+          id: 1,
+          type: 'synth',
+          windowEnd: 3,
+          position: 0.2,
+          synth: synth({
+            poly: 3,
+            bLevel: 0.2,
+            aWarp: 'bend',
+            macro1: m,
+            macro2: 1 - m,
+            macro3: m * 0.5,
+            macro4: m,
+            mods: [
+              { src: 'macro1', dst: 'cutoff', amt: 0.6 },
+              { src: 'macro1', dst: 'warpA', amt: 0.8 },
+              { src: 'macro2', dst: 'levelB', amt: 0.7 },
+              { src: 'macro2', dst: 'posA', amt: 0.5 },
+              { src: 'macro3', dst: 'pan', amt: -1 },
+              { src: 'macro4', dst: 'amp', amt: -0.5 },
+            ],
+          }),
+        }),
+      ),
+      [10, OP.noteOn, 1, 48, 100],
+      [10, OP.noteOn, 1, 55, 100],
+      [10, OP.noteOn, 1, 63, 100],
+      [10000, OP.allNotesOff, -1],
     ],
   },
   {

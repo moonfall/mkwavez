@@ -80,7 +80,7 @@ export function lfoRateHz(l: LfoParams, bpm: number): number {
 /** Mod envelope: AD (attack, then decay to 0; ignores the gate) or ADSR (follows the gate). */
 export type ModEnvMode = 'ad' | 'adsr';
 
-export const MOD_SOURCES = ['lfo1', 'lfo2', 'lfo3', 'fenv', 'penv', 'menv', 'vel', 'wheel', 'at', 'key', 'rand'] as const;
+export const MOD_SOURCES = ['lfo1', 'lfo2', 'lfo3', 'fenv', 'penv', 'menv', 'vel', 'wheel', 'at', 'key', 'rand', 'macro1', 'macro2', 'macro3', 'macro4'] as const;
 export type ModSource = (typeof MOD_SOURCES)[number];
 export const MOD_SOURCE_LABELS: Readonly<Record<ModSource, string>> = {
   lfo1: 'LFO 1',
@@ -94,6 +94,10 @@ export const MOD_SOURCE_LABELS: Readonly<Record<ModSource, string>> = {
   at: 'Aftertouch',
   key: 'Key',
   rand: 'Random',
+  macro1: 'Macro 1',
+  macro2: 'Macro 2',
+  macro3: 'Macro 3',
+  macro4: 'Macro 4',
 };
 
 export const MOD_DESTS = [
@@ -165,7 +169,7 @@ export const MOD_CUTOFF_OCTAVES = 6;
 export const MOD_LFO_RATE_OCTAVES = 4;
 
 /** Unipolar (0..1) sources; the others are bipolar (−1..1). */
-export const UNIPOLAR_SOURCES: ReadonlySet<ModSource> = new Set(['fenv', 'penv', 'menv', 'vel', 'wheel', 'at']);
+export const UNIPOLAR_SOURCES: ReadonlySet<ModSource> = new Set(['fenv', 'penv', 'menv', 'vel', 'wheel', 'at', 'macro1', 'macro2', 'macro3', 'macro4']);
 
 export interface ModSlot {
   readonly src: ModSource | 'none';

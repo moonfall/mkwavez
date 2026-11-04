@@ -14,6 +14,13 @@ const char* const fieldLabels[VOICE_FIELD_COUNT] = {
     "Position X", "Position Y", "LFO depth X", "LFO rate X", "LFO depth Y", "LFO rate Y", "Octave", "Level", "Mute",
     "Attack", "Decay", "Sustain", "Release"};
 
+const char* const synthIds[SYNTH_FIELD_COUNT] = {
+    "macro1", "macro2", "macro3", "macro4", "cutoff", "resonance", "envAmount", "drive", "aLevel", "bLevel", "aWarpAmt", "bWarpAmt", "fm", "pan", "width", "glide"};
+
+const char* const synthLabels[SYNTH_FIELD_COUNT] = {
+    "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Cutoff", "Resonance", "Filter env", "Drive", "Osc A level", "Osc B level", "Osc A warp", "Osc B warp",
+    "FM B to A", "Pan", "Width", "Glide"};
+
 /** Start values per slot, as the web app's start state (src/main.ts); V4 is extra (muted). */
 struct SlotDefaults {
     float position, lfoDepth, lfoRate, octave;
@@ -63,6 +70,51 @@ double fieldValue(const mkwavez::VoiceParams& v, VoiceField f) {
 }
 
 juce::String voiceId(int slot, VoiceField f) { return "v" + juce::String(slot + 1) + "_" + fieldIds[f]; }
+juce::String synthId(int slot, SynthField f) { return "v" + juce::String(slot + 1) + "_" + synthIds[f]; }
+
+const char* synthKey(SynthField f) { return synthIds[f]; }
+
+double synthValue(const mkwavez::SynthParams& s, SynthField f) {
+    switch (f) {
+        case macro1: return s.macro1;
+        case macro2: return s.macro2;
+        case macro3: return s.macro3;
+        case macro4: return s.macro4;
+        case cutoff: return s.cutoff;
+        case resonance: return s.resonance;
+        case envAmount: return s.envAmount;
+        case drive: return s.drive;
+        case aLevel: return s.aLevel;
+        case bLevel: return s.bLevel;
+        case aWarpAmt: return s.aWarpAmt;
+        case bWarpAmt: return s.bWarpAmt;
+        case fm: return s.fm;
+        case pan: return s.pan;
+        case width: return s.width;
+        case glide: return s.glide;
+        case SYNTH_FIELD_COUNT: break;
+    }
+    return 0;
+}
+
+void applySynthFields(mkwavez::SynthParams& s, const std::array<float, SYNTH_FIELD_COUNT>& x) {
+    s.macro1 = x[macro1];
+    s.macro2 = x[macro2];
+    s.macro3 = x[macro3];
+    s.macro4 = x[macro4];
+    s.cutoff = x[cutoff];
+    s.resonance = x[resonance];
+    s.envAmount = x[envAmount];
+    s.drive = x[drive];
+    s.aLevel = x[aLevel];
+    s.bLevel = x[bLevel];
+    s.aWarpAmt = x[aWarpAmt];
+    s.bWarpAmt = x[bWarpAmt];
+    s.fm = x[fm];
+    s.pan = x[pan];
+    s.width = x[width];
+    s.glide = x[glide];
+}
 juce::String voiceLabel(VoiceField f) { return fieldLabels[f]; }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
@@ -111,6 +163,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
         g->addChild(time(decay, 0.005f, 4, d.decay));
         g->addChild(unit(sustain, (float) d.sustain));
         g->addChild(time(release, 0.005f, 4, d.release));
+        // Synth voice params (the synth block; a Simple voice keeps them for when it becomes Synth).
+        const mkwavez::SynthParams ds;
+        auto sid = [&](SynthField f) { return ParameterID{synthId(s, f), 1}; };
+        auto slbl = [&](SynthField f) { return name + " " + synthLabels[f]; };
+        auto lin = [&](SynthField f, float lo, float hi, double def, juce::String (*fmt)(float, int)) {
+            return std::make_unique<AudioParameterFloat>(sid(f), slbl(f), NormalisableRange<float>(lo, hi), (float) def,
+                                                         AudioParameterFloatAttributes().withStringFromValueFunction(fmt));
+        };
+        g->addChild(lin(macro1, 0, 1, ds.macro1, pct));
+        g->addChild(lin(macro2, 0, 1, ds.macro2, pct));
+        g->addChild(lin(macro3, 0, 1, ds.macro3, pct));
+        g->addChild(lin(macro4, 0, 1, ds.macro4, pct));
+        g->addChild(std::make_unique<AudioParameterFloat>(sid(cutoff), slbl(cutoff), expRange((float) mkwavez::CUTOFF_MIN, (float) mkwavez::CUTOFF_MAX),
+                                                          (float) ds.cutoff, AudioParameterFloatAttributes().withStringFromValueFunction(hz)));
+        g->addChild(lin(resonance, 0, 1, ds.resonance, pct));
+        g->addChild(lin(envAmount, -1, 1, ds.envAmount, pct));
+        g->addChild(lin(drive, 0, 1, ds.drive, pct));
+        g->addChild(lin(aLevel, 0, 1, ds.aLevel, pct));
+        g->addChild(lin(bLevel, 0, 1, ds.bLevel, pct));
+        g->addChild(lin(aWarpAmt, -1, 1, ds.aWarpAmt, pct));
+        g->addChild(lin(bWarpAmt, -1, 1, ds.bWarpAmt, pct));
+        g->addChild(lin(fm, 0, 1, ds.fm, pct));
+        g->addChild(lin(pan, -1, 1, ds.pan, pct));
+        g->addChild(lin(width, 0, 2, ds.width, pct));
+        g->addChild(std::make_unique<AudioParameterFloat>(sid(glide), slbl(glide), NormalisableRange<float>(0, 5, 0, 0.35f), (float) ds.glide,
+                                                          AudioParameterFloatAttributes().withStringFromValueFunction(seconds)));
         layout.add(std::move(g));
     }
     return layout;
@@ -119,6 +197,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
 Pointers::Pointers(juce::AudioProcessorValueTreeState& s) {
     for (int slot = 0; slot < VOICE_SLOTS; ++slot)
         for (int f = 0; f < VOICE_FIELD_COUNT; ++f) voice[(size_t) slot][(size_t) f] = s.getRawParameterValue(voiceId(slot, (VoiceField) f));
+    for (int slot = 0; slot < VOICE_SLOTS; ++slot)
+        for (int f = 0; f < SYNTH_FIELD_COUNT; ++f) synth[(size_t) slot][(size_t) f] = s.getRawParameterValue(synthId(slot, (SynthField) f));
     play = s.getRawParameterValue(params::play);
     hostSync = s.getRawParameterValue(params::hostSync);
     bpm = s.getRawParameterValue(params::bpm);

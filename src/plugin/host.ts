@@ -20,7 +20,7 @@ import type { AppModel } from '../app/model';
 import type { RestoreStore } from '../app/restore';
 import type { SessionMeta, WaveformRecord } from '../core/session';
 import type { TableId } from '../core/table';
-import type { VoiceParams } from '../core/voice';
+import type { VoicePatch, VoiceParams } from '../core/voice';
 
 /** Inside the plugin, MIDI comes from the host: on by default, Omni (any channel → selected voice). */
 const DEFAULT_PLUGIN_MIDI = JSON.stringify({ input: 'all', inputName: '', omni: true });
@@ -305,14 +305,23 @@ export class PluginHost {
     const v = this.model.voice(id);
     if (!v) return;
     const patch: Record<string, unknown> = {};
+    // Parameters are float32: ignore differences below their precision.
+    const same = (x: unknown, cur: unknown) => x === cur || (typeof x === 'number' && typeof cur === 'number' && Math.abs(x - cur) <= 1e-6 * Math.max(1, Math.abs(cur)));
     for (const [k, x] of Object.entries(raw)) {
       if (!AUTOMATED.has(k)) continue;
       const cur = (v as unknown as Record<string, unknown>)[k];
-      // Parameters are float32: ignore differences below their precision.
-      if (typeof x === 'number' && typeof cur === 'number' && Math.abs(x - cur) <= 1e-6 * Math.max(1, Math.abs(cur))) continue;
-      if (x !== cur) patch[k] = x;
+      if (!same(x, cur)) patch[k] = x;
     }
-    if (Object.keys(patch).length) this.model.updateVoice(id, patch as Partial<VoiceParams>);
+    const synth: Record<string, unknown> = {};
+    const rawSynth = (raw as { synth?: Record<string, unknown> }).synth;
+    if (rawSynth && typeof rawSynth === 'object') {
+      for (const [k, x] of Object.entries(rawSynth)) {
+        if (!SYNTH_AUTOMATED.has(k) || typeof x !== 'number' || !Number.isFinite(x)) continue;
+        if (!same(x, (v.synth as unknown as Record<string, unknown>)[k])) synth[k] = x;
+      }
+    }
+    if (Object.keys(synth).length) patch.synth = synth;
+    if (Object.keys(patch).length) this.model.updateVoice(id, patch as VoicePatch);
   }
 
   /** `hello` → `init` (+ record chunks). Null if the native side doesn't answer in time. */
@@ -364,6 +373,14 @@ export class PluginHost {
 type FileReply =
   | { type: 'file/saved'; name: string; path?: string; error?: string }
   | { type: 'file/opened'; id: number; name?: string; data?: string | null; error?: string };
+
+/**
+ * Synth fields the plugin exposes as host parameters (plugin/source/Parameters.h SynthField):
+ * the four macros, then the main sound controls.
+ */
+const SYNTH_AUTOMATED = new Set<string>([
+  'macro1', 'macro2', 'macro3', 'macro4', 'cutoff', 'resonance', 'envAmount', 'drive', 'aLevel', 'bLevel', 'aWarpAmt', 'bWarpAmt', 'fm', 'pan', 'width', 'glide',
+]);
 
 /** Voice fields the plugin exposes as host parameters (window / wavetable stay in the UI). */
 const AUTOMATED = new Set<string>([

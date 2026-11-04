@@ -86,6 +86,7 @@ juce::var obj(std::initializer_list<std::pair<const char*, juce::var>> props) {
 
 WebLink::WebLink(MkwavezProcessor& p) : proc(p) {
     for (auto& s : sentVoice) s.fill(std::numeric_limits<float>::quiet_NaN());
+    for (auto& s : sentSynth) s.fill(std::numeric_limits<float>::quiet_NaN());
 }
 
 void WebLink::handle(const juce::var& m, const Emit& emit) {
@@ -154,6 +155,13 @@ void WebLink::sendInit(const Emit& emit) {
             else
                 patch->setProperty(params::fieldKey((params::VoiceField) f), v);
         }
+        auto* synth = new juce::DynamicObject();
+        for (int f = 0; f < params::SYNTH_FIELD_COUNT; ++f) {
+            const float v = s.getRawParameterValue(params::synthId(slot, (params::SynthField) f))->load();
+            sentSynth[(size_t) slot][(size_t) f] = v;
+            synth->setProperty(params::synthKey((params::SynthField) f), v);
+        }
+        patch->setProperty("synth", juce::var(synth));
         voices.add(obj({{"id", slot + 1}, {"patch", juce::var(patch)}}));
     }
     const auto& st = proc.liveStatus();
@@ -206,6 +214,11 @@ void WebLink::setVoiceParams(const VoiceParams& v) {
         setParam(params::voiceId(slot, field), value);
         // Remember the parameter's actual (snapped / clamped) value so it isn't echoed back.
         sentVoice[(size_t) slot][(size_t) f] = proc.parameters().getRawParameterValue(params::voiceId(slot, field))->load();
+    }
+    for (int f = 0; f < params::SYNTH_FIELD_COUNT; ++f) {
+        const auto field = (params::SynthField) f;
+        setParam(params::synthId(slot, field), (float) params::synthValue(v.synth, field));
+        sentSynth[(size_t) slot][(size_t) f] = proc.parameters().getRawParameterValue(params::synthId(slot, field))->load();
     }
 }
 
@@ -286,7 +299,8 @@ void WebLink::applyBatch(const juce::var& ops) {
             // Order = CC_PARAMS (src/core/midi.ts) = mkwavez::CcParam.
             const char* keys[CC_PARAM_COUNT] = {"position", "positionY", "lfoDepth", "lfoRate", "level", "cutoff", "resonance",
                                                 "drive", "filterEnv", "oscMix", "subLevel", "noiseLevel", "glide", "lfo1Rate",
-                                                "lfo1Depth", "lfo2Rate", "lfo2Depth", "lfo3Rate", "lfo3Depth"};
+                                                "lfo1Depth", "lfo2Rate", "lfo2Depth", "lfo3Rate", "lfo3Depth",
+                                                "macro1", "macro2", "macro3", "macro4"};
             for (int i = 0; i < CC_PARAM_COUNT; ++i) ms.cc[(size_t) i] = (int) num(cc, keys[i], -1);
         }
         // 'midi' / 'voice/patch': the page doesn't send them in plugin mode (host MIDI is routed natively).
@@ -350,6 +364,19 @@ void WebLink::poll(const Emit& emit) {
                 patch->setProperty(params::fieldKey((params::VoiceField) f), v >= 0.5f);
             else
                 patch->setProperty(params::fieldKey((params::VoiceField) f), v);
+        }
+        juce::DynamicObject::Ptr synth;
+        for (int f = 0; f < params::SYNTH_FIELD_COUNT; ++f) {
+            const float v = s.getRawParameterValue(params::synthId(slot, (params::SynthField) f))->load();
+            float& sent = sentSynth[(size_t) slot][(size_t) f];
+            if (std::abs(v - sent) <= 0.0f) continue;
+            sent = v;
+            if (!synth) synth = new juce::DynamicObject();
+            synth->setProperty(params::synthKey((params::SynthField) f), v);
+        }
+        if (synth) {
+            if (!patch) patch = new juce::DynamicObject();
+            patch->setProperty("synth", juce::var(synth.get()));
         }
         if (patch) emit(obj({{"type", "voice/params"}, {"id", slot + 1}, {"patch", juce::var(patch.get())}}));
     }

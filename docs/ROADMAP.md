@@ -311,6 +311,11 @@ Open:
 - Stage 6 (warps): per oscillator sync, formant, bend, squeeze, quantize, fold, amount
   −1..1 (matrix A warp / B warp); mip levels follow each warp's speed-up. No oversampling
   yet: hard sync, fold, quantize and drive still alias at high notes.
+- Stage 7 (macros, host automation): four macros per voice (matrix sources, CC targets);
+  the plugin exposes per slot, besides the voice fields, 16 Synth parameters — the macros,
+  cutoff, resonance, filter env, drive, A / B levels, A / B warp, FM, pan, width, glide.
+  A project saved before they existed takes their values from its document (not their
+  defaults).
 
 Decisions / deviations:
 - New voices from "+" are offered as Synth (first in the menu) or Simple; both start on

@@ -73,7 +73,7 @@ plugin/
                             memory ownership / retirement
     PluginProcessor         processBlock: commands, parameter overlay, host transport,
                             sample-accurate MIDI; state save / load
-    Parameters              APVTS layout (4 voice slots × 13 params + globals)
+    Parameters              APVTS layout (4 voice slots × (13 voice + 16 Synth params) + globals)
     State                   Document ⇄ ValueTree (binary table data)
     SynthJson               SynthParams ⇄ JSON (the TS field names; page voices + state)
     WebEditor               the editor: WebBrowserComponent + the zipped web build
@@ -123,8 +123,8 @@ src/plugin/host.ts          plugin mode: PluginSessionStore (the session backend
   reach the engine only while a voice plays the Preview / Preview batch wavetable, as in
   the browser, and are left out of the saved state (`state::toValueTree`): after a restore
   those slots stay silent until the editor shows a preview again.
-- **Host integration.** Voice slots V1–V4 (voice ids 1–4) expose 13 automatable
-  parameters each; the page's voice edits set them, and automation flows back to the
+- **Host integration.** Voice slots V1–V4 (voice ids 1–4) expose 29 automatable
+  parameters each (13 voice fields, 16 Synth: the macros first); the page's voice edits set them, and automation flows back to the
   page's model (polled at 30 Hz, so nothing touches the web view from the audio thread).
   The init message carries the current values, so automation made while the editor was
   closed wins over the saved project. Play / BPM work the same way; with Host sync the
@@ -217,10 +217,14 @@ for the plugin; `plugin/core` stays the audio engine (and a base for hardware la
 
 ## Known gaps
 
-- Host parameters cover the Simple voice fields of voices 1–4 (on a Synth voice those
-  are osc A's position, the LFO-less amp settings, level, mute, octave); Synth voice
-  settings (oscillators, filter, envelopes, LFOs, matrix) change from the page or from
-  mapped MIDI CCs, not from host automation yet.
+- Host parameters cover voices 1–4: the Simple voice fields (on a Synth voice: osc A's
+  position, the amp settings, level, mute, octave) and 16 Synth parameters — Macro 1–4,
+  cutoff, resonance, filter env, drive, osc A / B level, A / B warp, FM, pan, width, glide
+  (`params::SynthField`; the page receives them as a nested `synth` patch). Everything else
+  (tunings, windows, envelopes, LFOs, the matrix, modes) changes from the page or mapped
+  MIDI CCs — or from host automation through a macro routed in the matrix. Restoring a
+  project saved before the Synth parameters existed sets them from its document, so the
+  saved sound isn't replaced by their defaults.
 
 - Only voices 1–4 have host parameters (the page allows 8 voices; 5–8 play and save but
   can't be automated). Window, wavetable and interpolation aren't parameters.

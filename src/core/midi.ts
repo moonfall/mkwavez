@@ -358,6 +358,10 @@ export const CC_PARAMS = [
   'lfo2Depth',
   'lfo3Rate',
   'lfo3Depth',
+  'macro1',
+  'macro2',
+  'macro3',
+  'macro4',
 ] as const;
 export type CcParam = (typeof CC_PARAMS)[number];
 
@@ -381,6 +385,10 @@ export const CC_PARAM_LABELS: Readonly<Record<CcParam, string>> = {
   lfo2Depth: 'LFO 2 depth',
   lfo3Rate: 'LFO 3 rate',
   lfo3Depth: 'LFO 3 depth',
+  macro1: 'Macro 1',
+  macro2: 'Macro 2',
+  macro3: 'Macro 3',
+  macro4: 'Macro 4',
 };
 
 /** Targets that only Synth voices hear (the MIDI popover groups them). */
@@ -399,6 +407,10 @@ export const CC_SYNTH_PARAMS: ReadonlySet<CcParam> = new Set([
   'lfo2Depth',
   'lfo3Rate',
   'lfo3Depth',
+  'macro1',
+  'macro2',
+  'macro3',
+  'macro4',
 ]);
 
 /** Synth LFO rate range a controller sweeps (Hz, exponential). */

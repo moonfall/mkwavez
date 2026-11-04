@@ -312,6 +312,10 @@ void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
     src[SRC_AT] = c.pressure;
     src[SRC_KEY] = (pitch - 60) / 24;
     src[SRC_RAND] = noteRand;
+    src[SRC_MACRO1] = s.macro1;
+    src[SRC_MACRO2] = s.macro2;
+    src[SRC_MACRO3] = s.macro3;
+    src[SRC_MACRO4] = s.macro4;
     applyMatrix(s.mods, src, dst);
     const double* dR = dst;
     if (lfoStereo) {

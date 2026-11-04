@@ -124,6 +124,7 @@ private:
 
     // Audio-thread caches.
     std::array<std::array<float, params::VOICE_FIELD_COUNT>, params::VOICE_SLOTS> lastVoice{};
+    std::array<std::array<float, params::SYNTH_FIELD_COUNT>, params::VOICE_SLOTS> lastSynth{};
     bool lastPlaying = false;
     double lastBpm = 0;
     juce::SmoothedValue<float> outGain{1.0f};

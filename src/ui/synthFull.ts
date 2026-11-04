@@ -10,7 +10,7 @@
 import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
 import { TABLE_SIZE } from '../core/constants';
-import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MAX_POLY, WARP_LABELS, WARP_MODES, type FilterMode, type OscSource, type SynthParams } from '../core/synth';
+import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MACRO_KEYS, MAX_POLY, WARP_LABELS, WARP_MODES, type FilterMode, type OscSource, type SynthParams } from '../core/synth';
 import { isPeriodicShape, LFO_DIVS, LFO_RATE_MAX_HZ, LFO_RATE_MIN_HZ, LFO_SHAPE_LABELS, LFO_SHAPES, type LfoDiv, type LfoParams, type LfoShape } from '../core/modulation';
 import type { VoicePatch, VoiceParams } from '../core/voice';
 import { shapeLabel } from '../core/wavetable';
@@ -99,6 +99,8 @@ export interface SynthFull {
   /** The side column's top row and matrix slot (synthPanel moves the presets / matrix here). */
   readonly sideTop: HTMLElement;
   readonly side: HTMLElement;
+  /** The macro sliders (a strip under the mod matrix). */
+  readonly macros: HTMLElement;
   readonly guard: HTMLElement;
   sync(v: VoiceParams): void;
   frame(v: VoiceParams, dirty: boolean, playing: boolean): boolean;
@@ -428,6 +430,27 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
     lfoStereo(2),
   ]);
 
+  // ---- macros: one slider each, under the mod matrix ----
+  const macros = h(
+    'div',
+    { class: 'synf-macros', role: 'group', 'aria-label': 'Macros' },
+    ...MACRO_KEYS.map((key, i) => {
+      const name = `Macro ${i + 1}`;
+      const input = h('input', { type: 'range', id: `synf-macro-${i}`, min: 0, max: 1, step: 0.001, value: 0, 'aria-label': name });
+      input.addEventListener('input', () => set({ synth: { [key]: Number(input.value) } }));
+      input.addEventListener('change', commit);
+      const cell = h('label', { class: 'synf-macro' }, h('span', {}, `M${i + 1}`), input);
+      synced.push({
+        sync(v) {
+          const x = v.synth[key];
+          if (document.activeElement !== input || Number(input.value) !== x) input.value = String(x);
+          cell.title = `${name}: ${pct(x)} (a matrix source)`;
+        },
+      });
+      return cell;
+    }),
+  );
+
   const guard = h('span', { class: 'syn-guard', id: 'synf-guard', hidden: true, title: 'Too many unison copies sound at once: the CPU guard plays fewer' }, 'CPU guard: reduced');
   const sideTop = h('div', { class: 'synf-side-top' });
   const side = h('section', { class: 'synf-side', 'aria-label': 'Presets and mod matrix' }, sideTop, h('div', { class: 'synf-head synf-matrix-head' }, h('h3', {}, 'Mod matrix'), guard));
@@ -438,6 +461,7 @@ export function buildSynthFull(model: AppModel, bridge: AudioBridge, set: (p: Vo
     el,
     sideTop,
     side,
+    macros,
     guard,
     sync(v) {
       for (const s of synced) s.sync(v);

@@ -651,6 +651,10 @@ export class SynthVoice {
     src[S.at] = c.pressure;
     src[S.key] = (this.pitch - 60) / 24;
     src[S.rand] = this.noteRand;
+    src[S.macro1] = s.macro1;
+    src[S.macro2] = s.macro2;
+    src[S.macro3] = s.macro3;
+    src[S.macro4] = s.macro4;
     applyMatrix(s.mods, src, this.dst);
     const dst = this.dst;
     // The right channel's destinations: the matrix again with the LFOs' right-channel

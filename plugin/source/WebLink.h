@@ -48,6 +48,7 @@ private:
     int helloGen = -1;
     /** What the page last heard (or said) per voice slot field / transport, to send only changes. */
     std::array<std::array<float, params::VOICE_FIELD_COUNT>, params::VOICE_SLOTS> sentVoice{};
+    std::array<std::array<float, params::SYNTH_FIELD_COUNT>, params::VOICE_SLOTS> sentSynth{};
     bool sentPlaying = false;
     double sentBpm = 0;
 };

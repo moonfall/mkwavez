@@ -13,6 +13,7 @@ MkwavezProcessor::MkwavezProcessor()
       apvts(*this, nullptr, "params", params::createLayout()),
       ptr(apvts) {
     for (auto& v : lastVoice) v.fill(std::numeric_limits<float>::quiet_NaN());
+    for (auto& v : lastSynth) v.fill(std::numeric_limits<float>::quiet_NaN());
     startTimerHz(20);
 }
 
@@ -28,6 +29,7 @@ void MkwavezProcessor::prepareToPlay(double sampleRate, int) {
     status.sampleRate = sampleRate;
     router.reset();
     for (auto& v : lastVoice) v.fill(std::numeric_limits<float>::quiet_NaN());
+    for (auto& v : lastSynth) v.fill(std::numeric_limits<float>::quiet_NaN());
     lastPlaying = false;
     lastBpm = 0;
     outGain.reset(sampleRate, 0.02);
@@ -53,13 +55,18 @@ void MkwavezProcessor::applyParameters(SynthEngine& e, bool force) {
     for (int s = 0; s < params::VOICE_SLOTS; ++s) {
         std::array<float, params::VOICE_FIELD_COUNT> now{};
         for (int f = 0; f < params::VOICE_FIELD_COUNT; ++f) now[(size_t) f] = ptr.voice[(size_t) s][(size_t) f]->load(std::memory_order_relaxed);
+        std::array<float, params::SYNTH_FIELD_COUNT> nowS{};
+        for (int f = 0; f < params::SYNTH_FIELD_COUNT; ++f) nowS[(size_t) f] = ptr.synth[(size_t) s][(size_t) f]->load(std::memory_order_relaxed);
         auto& last = lastVoice[(size_t) s];
-        if (!force && now == last) continue;
+        auto& lastS = lastSynth[(size_t) s];
+        if (!force && now == last && nowS == lastS) continue;
         last = now;
+        lastS = nowS;
         const VoiceParams* cur = e.voiceParams(s + 1);
         if (!cur) continue;
         VoiceParams v = *cur;
         params::applyVoiceFields(v, now);
+        params::applySynthFields(v.synth, nowS);
         e.setVoice(v);
     }
 }
@@ -195,10 +202,26 @@ void MkwavezProcessor::getStateInformation(juce::MemoryBlock& destData) {
 void MkwavezProcessor::setStateInformation(const void* data, int sizeInBytes) {
     const auto root = juce::ValueTree::readFromData(data, (size_t) sizeInBytes);
     if (!root.hasType("mkwavez")) return;
-    if (const auto p = root.getChildWithName(apvts.state.getType()); p.isValid()) apvts.replaceState(p);
+    const auto saved = root.getChildWithName(apvts.state.getType());
+    if (saved.isValid()) apvts.replaceState(saved);
     Document doc;
     const bool ok = state::fromValueTree(root.getChildWithName("document"), doc);
-    if (ok) engineHost.load(std::move(doc));
+    if (ok) {
+        // Synth parameters a project saved before they existed would start at their defaults
+        // and overwrite the voice's saved values: those follow the document instead.
+        for (int slot = 0; slot < params::VOICE_SLOTS; ++slot) {
+            const VoiceParams* v = nullptr;
+            for (const auto& x : doc.voices)
+                if (x.id == slot + 1) v = &x;
+            if (!v) continue;
+            for (int f = 0; f < params::SYNTH_FIELD_COUNT; ++f) {
+                const auto id = params::synthId(slot, (params::SynthField) f);
+                if (saved.isValid() && saved.getChildWithProperty("id", id).isValid()) continue;
+                if (auto* prm = apvts.getParameter(id)) prm->setValueNotifyingHost(prm->convertTo0to1((float) params::synthValue(v->synth, (params::SynthField) f)));
+            }
+        }
+        engineHost.load(std::move(doc));
+    }
     withSession([&](Session& s) {
         s = {};
         const auto t = root.getChildWithName("session");

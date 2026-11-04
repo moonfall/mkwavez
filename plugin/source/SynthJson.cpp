@@ -16,7 +16,8 @@ const char* const MOD_MODES[] = {"ad", "adsr"};
 const char* const WARP_MODES[] = {"none", "sync", "formant", "bend", "squeeze", "quantize", "fold"};
 const char* const LFO_SHAPES[] = {"sine", "tri", "saw", "square", "sh", "smooth"};
 const char* const LFO_DIVS[] = {"8/1", "4/1", "2/1", "1/1", "1/2", "1/2D", "1/2T", "1/4", "1/4D", "1/4T", "1/8", "1/8D", "1/8T", "1/16", "1/16T", "1/32"};
-const char* const MOD_SOURCES[] = {"lfo1", "lfo2", "lfo3", "fenv", "penv", "menv", "vel", "wheel", "at", "key", "rand"};
+const char* const MOD_SOURCES[] = {"lfo1", "lfo2", "lfo3", "fenv", "penv", "menv", "vel", "wheel", "at", "key", "rand",
+                                   "macro1", "macro2", "macro3", "macro4"};
 const char* const MOD_DESTS[] = {"pitchA", "pitchB", "posA", "posYA", "posB", "posYB", "levelA", "levelB", "sub", "noise",
                                  "cutoff", "res", "drive", "amp", "pan", "lfo1Rate", "lfo2Rate", "lfo3Rate",
                                  "panA", "panB", "fSpread", "warpA", "warpB"};
@@ -146,6 +147,10 @@ juce::var encode(const SynthParams& s) {
     set(o, "aWarpAmt", s.aWarpAmt);
     set(o, "bWarp", WARP_MODES[(int) s.bWarp]);
     set(o, "bWarpAmt", s.bWarpAmt);
+    set(o, "macro1", s.macro1);
+    set(o, "macro2", s.macro2);
+    set(o, "macro3", s.macro3);
+    set(o, "macro4", s.macro4);
     return o;
 }
 
@@ -250,6 +255,10 @@ SynthParams decode(const juce::var& o) {
     s.aWarpAmt = num(o, "aWarpAmt", d.aWarpAmt, -1, 1);
     s.bWarp = (WarpMode) indexOf(WARP_MODES, o.getProperty("bWarp", {}), (int) d.bWarp);
     s.bWarpAmt = num(o, "bWarpAmt", d.bWarpAmt, -1, 1);
+    s.macro1 = num(o, "macro1", d.macro1, 0, 1);
+    s.macro2 = num(o, "macro2", d.macro2, 0, 1);
+    s.macro3 = num(o, "macro3", d.macro3, 0, 1);
+    s.macro4 = num(o, "macro4", d.macro4, 0, 1);
     return s;
 }
 

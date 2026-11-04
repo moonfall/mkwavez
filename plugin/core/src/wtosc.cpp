@@ -117,4 +117,46 @@ void WtOsc::wrapped(const TableMap& tables) {
 }
 
 
+void WtOsc::copyFrom(const WtOsc& o) {
+    phase = o.phase;
+    mipLevel = o.mipLevel;
+    step = o.step;
+    index = o.index;
+    indexY = o.indexY;
+    n = o.n;
+    for (int k = 0; k < MAX_LIVE; ++k) {
+        ids[k] = o.ids[k];
+        tabs[k] = o.tabs[k];
+        w0[k] = o.w0[k];
+        w1[k] = o.w1[k];
+    }
+    win = o.win;
+    heldId = o.heldId;
+    heldTable = o.heldTable;
+    targetId = o.targetId;
+}
+
+bool WtOsc::sameMix(const WtOsc& o) const {
+    if (step != o.step) return false;
+    if (step) return n == o.n && heldId == o.heldId && targetId == o.targetId && (n == 0 || tabs[0] == o.tabs[0]);
+    int live = 0;
+    for (int k = 0; k < n; ++k) {
+        if (w0[k] == 0 && w1[k] == 0) continue;
+        ++live;
+        bool found = false;
+        for (int j = 0; j < o.n; ++j) {
+            if (o.ids[j] == ids[k]) {
+                if (o.tabs[j] != tabs[k] || o.w0[j] != w0[k] || o.w1[j] != w1[k]) return false;
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    int liveO = 0;
+    for (int j = 0; j < o.n; ++j)
+        if (o.w0[j] != 0 || o.w1[j] != 0) ++liveO;
+    return live == liveO;
+}
+
 } // namespace mkwavez

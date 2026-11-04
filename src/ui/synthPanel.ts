@@ -17,6 +17,7 @@ import {
   FILTER_MODE_LABELS,
   FILTER_MODES,
   FILTER_SPREAD_OCTAVES,
+  MACRO_KEYS,
   MAX_POLY,
   WARP_LABELS,
   WARP_MODES,
@@ -67,7 +68,7 @@ const PAGES: readonly [SynthPage, string][] = [
 ];
 type EnvPage = 'amp' | 'filter' | 'pitch';
 /** What the Mod page's left column edits: an LFO (0..2) or the mod envelope. */
-type ModEdit = 0 | 1 | 2 | 'env';
+type ModEdit = 0 | 1 | 2 | 'env' | 'macros';
 
 /** Full view densities: values under the knobs, or (dense) only while hovered / focused / dragged. */
 type Density = 'roomy' | 'dense';
@@ -105,7 +106,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   let page: SynthPage = ui.pref<SynthPage>('synthPage', 'osc', (x) => PAGES.some(([p]) => p === x));
   let osc: 'a' | 'b' = ui.pref<'a' | 'b'>('synthOsc', 'a', (x) => x === 'a' || x === 'b');
   let envPage: EnvPage = ui.pref<EnvPage>('synthEnv', 'amp', (x) => x === 'amp' || x === 'filter' || x === 'pitch');
-  let modEdit: ModEdit = ui.pref<ModEdit>('synthMod', 0, (x) => x === 0 || x === 1 || x === 2 || x === 'env');
+  let modEdit: ModEdit = ui.pref<ModEdit>('synthMod', 0, (x) => x === 0 || x === 1 || x === 2 || x === 'env' || x === 'macros');
   let dirty = true;
 
   // ---- building blocks ----
@@ -573,6 +574,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
       [1, 'LFO 2'],
       [2, 'LFO 3'],
       ['env', 'Env'],
+      ['macros', 'Macros'],
     ],
     () => modEdit,
     (x) => {
@@ -582,7 +584,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
       return null;
     },
   );
-  const lfoN = () => (modEdit === 'env' ? 0 : modEdit);
+  const lfoN = () => (typeof modEdit === 'number' ? modEdit : 0);
   const lfo = (v: VoiceParams) => v.synth.lfos[lfoN()];
   const putLfo = (patch: Partial<LfoParams>): VoicePatch => ({ synth: { lfos: voice!.synth.lfos.map((l, i) => (i === lfoN() ? { ...l, ...patch } : l)) } });
   const lfoShape = select<LfoShape>('syn-lfo-shape', 'LFO shape', LFO_SHAPES.map((s) => [s, LFO_SHAPE_LABELS[s]] as const), (v) => lfo(v).shape, (x) => putLfo({ shape: x }));
@@ -617,6 +619,9 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     row('syn-m-r', 'Release', (v) => v.synth.mRelease, sw('mRelease'), T, secs),
   ];
   const menvBox = h('div', { class: 'crows', id: 'syn-menv' }, lineRow('Mode', mMode.el), ...mRows.map((r) => r.el));
+  // Macros: matrix sources set by hand, MIDI CC or host automation.
+  const macroRows = MACRO_KEYS.map((key, i) => row(`syn-macro-${i}`, `Macro ${i + 1}`, (v) => v.synth[key], sw(key), linear(0, 1), pct, { title: 'A matrix source: route it in the matrix; MIDI CC and host automation can move it' }));
+  const macroBox = h('div', { class: 'crows', id: 'syn-macros' }, ...macroRows.map((r) => r.el));
   // Matrix: MOD_SLOTS rows of source → destination · amount.
   const slots = Array.from({ length: MOD_SLOTS }, (_, i) => {
     const slot = (v: VoiceParams) => v.synth.mods[i] ?? EMPTY_SLOT;
@@ -654,7 +659,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
   const pageMod = h(
     'div',
     { class: 'syn-page syn-page-mod', id: 'syn-page-mod', role: 'tabpanel' },
-    h('div', { class: 'syn-ctrl' }, h('div', { class: 'syn-head' }, modSel.el), lfoBox, menvBox),
+    h('div', { class: 'syn-ctrl' }, h('div', { class: 'syn-head' }, modSel.el), lfoBox, menvBox, macroBox),
     matrix,
   );
 
@@ -732,6 +737,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     lfoPhase,
     mMode,
     ...mRows,
+    ...macroRows,
     ...slots,
   ];
 
@@ -770,8 +776,9 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     pad.canvas.hidden = shape === '1d';
     scope.hidden = shape !== '1d';
     pageOsc.dataset.shape = shape;
-    lfoBox.hidden = modEdit === 'env';
+    lfoBox.hidden = typeof modEdit !== 'number';
     menvBox.hidden = modEdit !== 'env';
+    macroBox.hidden = modEdit !== 'macros';
     const synced = lfo(v).sync;
     lfoRate.el.hidden = synced;
     lfoStereo.input.disabled = !isPeriodicShape(lfo(v).shape);
@@ -899,7 +906,7 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     full.el.hidden = next !== 'full';
     if (next === 'full') {
       full.sideTop.append(presets.pick, presets.menuBtn, presets.file, typeSlot);
-      full.side.append(matrix);
+      full.side.append(matrix, full.macros);
     } else {
       top.append(presets.pick, presets.menuBtn, presets.file, typeSlot);
       pageMod.append(matrix);

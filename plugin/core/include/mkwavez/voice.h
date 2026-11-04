@@ -43,9 +43,9 @@ struct VoiceParams {
  */
 enum class CcParam : uint8_t {
     position, positionY, lfoDepth, lfoRate, level, cutoff, resonance, drive, filterEnv, oscMix, subLevel, noiseLevel, glide,
-    lfo1Rate, lfo1Depth, lfo2Rate, lfo2Depth, lfo3Rate, lfo3Depth
+    lfo1Rate, lfo1Depth, lfo2Rate, lfo2Depth, lfo3Rate, lfo3Depth, macro1, macro2, macro3, macro4
 };
-inline constexpr int CC_PARAM_COUNT = 19;
+inline constexpr int CC_PARAM_COUNT = 23;
 
 /** Parameter changes (values already mapped from 7-bit, see ccValue), applied as src/core/midi.ts targetPatch does. */
 struct VoicePatch {
@@ -94,6 +94,10 @@ struct VoicePatch {
                 case CcParam::lfo1Depth:
                 case CcParam::lfo2Depth:
                 case CcParam::lfo3Depth: s.lfos[(size_t) ((i - (int) CcParam::lfo1Depth) / 2)].depth = x; break;
+                case CcParam::macro1: s.macro1 = x; break;
+                case CcParam::macro2: s.macro2 = x; break;
+                case CcParam::macro3: s.macro3 = x; break;
+                case CcParam::macro4: s.macro4 = x; break;
             }
         }
     }

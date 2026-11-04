@@ -1057,12 +1057,15 @@ async function synthVoiceChecks(page) {
   await page.fill('#syn-filter-spread', '0.75'); // slider position: −1..1 → +0.5
   await page.click('#syn-tab-mod');
   await page.fill('#syn-lfo-stereo', '0.5'); // slider position: 0..½ cycle → ¼
+  await page.click('#syn-mod-sel-macros');
+  await page.fill('#syn-macro-1', '0.5');
+  await page.click('#syn-mod-sel-0');
   {
     const s = (await v()).synth;
-    assert(s.bPan === -0.5 && s.bPhaseSpread === 0.25 && s.noiseWidth === 0.6 && s.filterSpread === 0.5 && s.lfos[0].stereo === 0.25 && s.aPan === 0 && s.poly === 3 && s.bWarp === 'fold' && s.bWarpAmt === 0.5, `stereo controls + voices + warp: osc B pan / stereo phase, noise width, filter spread, LFO 1 stereo phase (${JSON.stringify([s.bPan, s.bPhaseSpread, s.noiseWidth, s.filterSpread, s.lfos[0].stereo])})`);
-    for (let i = 0; i < 8; i++) await M(() => window.mkwavez.model.undo());
+    assert(s.bPan === -0.5 && s.bPhaseSpread === 0.25 && s.noiseWidth === 0.6 && s.filterSpread === 0.5 && s.lfos[0].stereo === 0.25 && s.aPan === 0 && s.poly === 3 && s.bWarp === 'fold' && s.bWarpAmt === 0.5 && s.macro2 === 0.5, `stereo controls + voices + warp + macro: osc B pan / stereo phase, noise width, filter spread, LFO 1 stereo phase (${JSON.stringify([s.bPan, s.bPhaseSpread, s.noiseWidth, s.filterSpread, s.lfos[0].stereo])})`);
+    for (let i = 0; i < 9; i++) await M(() => window.mkwavez.model.undo());
     const u = (await v()).synth;
-    assert(u.bPan === 0 && u.bPhaseSpread === 0 && u.noiseWidth === 0 && u.filterSpread === 0 && u.lfos[0].stereo === 0 && u.poly === 8 && u.bWarp === 'none' && u.bWarpAmt === 0, 'stereo / voices / warp edits undo');
+    assert(u.bPan === 0 && u.bPhaseSpread === 0 && u.noiseWidth === 0 && u.filterSpread === 0 && u.lfos[0].stereo === 0 && u.poly === 8 && u.bWarp === 'none' && u.bWarpAmt === 0 && u.macro2 === 0, 'stereo / voices / warp / macro edits undo');
   }
   await page.click('#syn-tab-osc');
   // Fit: every page at both laptop sizes.
@@ -4325,7 +4328,7 @@ async function layoutChecks(label, url, browser) {
   await settle();
   assert((await page.getAttribute('#synth-panel', 'data-view')) === 'pages' && (await page.isVisible('#syn-tab-osc')), 'Synth voice beside the Sequence panel: section tabs');
   await page.click('#sec-sequences .panel-collapse');
-  const groups = ['#synf-osc-a', '#synf-osc-b', '#synf-mix', '#synf-filter', '#synf-env', '#synf-lfo0', '#synf-lfo1', '#synf-lfo2', '#synf-out', '#syn-matrix', '#syn-preset', '#voice-type'];
+  const groups = ['#synf-osc-a', '#synf-osc-b', '#synf-mix', '#synf-filter', '#synf-env', '#synf-lfo0', '#synf-lfo1', '#synf-lfo2', '#synf-out', '#syn-matrix', '#syn-preset', '#voice-type', '#synf-macro-0', '#synf-macro-3'];
   const fullFits = () =>
     M((groups) => {
       const b = document.querySelector('#sec-voices-body');

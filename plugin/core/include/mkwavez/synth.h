@@ -94,6 +94,8 @@ struct SynthParams {
     double aWarpAmt = 0;
     WarpMode bWarp = WarpMode::none;
     double bWarpAmt = 0;
+    /** Macros 0..1 (matrix sources Macro 1–4). */
+    double macro1 = 0, macro2 = 0, macro3 = 0, macro4 = 0;
 };
 
 /** Semitone offset of an oscillator's tuning. */

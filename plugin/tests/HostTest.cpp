@@ -143,9 +143,19 @@ int main(int argc, char** argv) {
         render(*p, 12000, 512, {{0, juce::MidiMessage::allNotesOff(1)}});
     }
 
-    // State round-trip: change a parameter, save, restore into a fresh instance, compare output.
-    for (auto* prm : p->getParameters())
+    // Synth voice parameters (macros first) per slot.
+    int synthParams = 0;
+    for (auto* prm : p->getParameters()) {
+        const auto n = prm->getName(64);
+        synthParams += n == "V1 Macro 1" || n == "V4 Macro 4" || n == "V2 Cutoff" || n == "V3 Osc B warp" || n == "V1 Glide";
+    }
+    check(synthParams == 5, "Synth voice parameters (macros, cutoff, warp, glide) per slot");
+
+    // State round-trip: change parameters, save, restore into a fresh instance, compare output.
+    for (auto* prm : p->getParameters()) {
         if (prm->getName(64) == "V1 Position X") prm->setValueNotifyingHost(0.9f);
+        if (prm->getName(64) == "V1 Macro 2") prm->setValueNotifyingHost(0.6f);
+    }
     juce::MemoryBlock state;
     p->getStateInformation(state);
     check(state.getSize() > 5 * 2048 * 4, "state holds the tables (" + juce::String((int) state.getSize()) + " bytes)");
@@ -167,6 +177,10 @@ int main(int argc, char** argv) {
         for (auto* prm : q->getParameters())
             if (prm->getName(64) == "V1 Position X") qpos = prm->getValue();
         check(std::abs(qpos - 0.9f) < 1e-4f, "parameter restored");
+        float qmacro = -1;
+        for (auto* prm : q->getParameters())
+            if (prm->getName(64) == "V1 Macro 2") qmacro = prm->getValue();
+        check(std::abs(qmacro - 0.6f) < 1e-4f, "synth parameter restored");
         // Garbage state is ignored.
         const char junk[] = "not a state";
         q->setStateInformation(junk, sizeof junk);

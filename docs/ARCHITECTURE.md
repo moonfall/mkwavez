@@ -321,7 +321,9 @@ scripts/harmonics/      harmonic-interest evaluation (npm run eval:harmonics; ru
   velocity amounts), saturation, filter ADSR, pitch envelope (A, D, ± semitones, target),
   velocity → amp, glide (+ legato only), bend range, polyphony (`poly` 1..8; missing in
   saved data → 1, like the matrix), oscillator warps (`aWarp` / `bWarp`: none, sync,
-  formant, bend, squeeze, quantize, fold; `aWarpAmt` / `bWarpAmt` −1..1), pan, width, the stereo controls
+  formant, bend, squeeze, quantize, fold; `aWarpAmt` / `bWarpAmt` −1..1), macros
+  (`macro1`..`macro4` 0..1: unipolar matrix sources Macro 1–4, MIDI CC targets and host
+  parameters), pan, width, the stereo controls
   (oscillator pan `aPan` / `bPan`, stereo phase `aPhaseSpread` / `bPhaseSpread` 0..½
   cycle, stereo position `aPosSpread` / `bPosSpread`, `noiseWidth`, `filterSpread` ±1),
   three LFOs (each with a stereo phase, `stereo` 0..½), the mod
@@ -502,7 +504,9 @@ scripts/harmonics/      harmonic-interest evaluation (npm run eval:harmonics; ru
   Osc has Tune (oct · semi · fine on one row), Level · pan, Unison (the copies as a select
   in the label column · detune · spread), Stereo (phase · position) and Warp (mode select ·
   amount); the CPU guard note sits in its header. Mix pairs noise level · width and has
-  Voices; Filter has Spread; the Mod page's LFO editor has Stereo. The Seed tab fills Generate (library column;
+  Voices; Filter has Spread; the Mod page's LFO editor has Stereo, and its editor select a
+  Macros page (four sliders). In the full view the macros are a one-line strip of sliders
+  under the matrix (`.synf-macros`, 16 px: it fits the dense view's spare height at 1180×820). The Seed tab fills Generate (library column;
   formula row; wave + spectrum flex; batch row + strip), and so does Mutate (library
   column | source + parameters row; wave + spectrum flex; batch row + strip; the batch
   row wraps when the column is narrower than ~700 px, via a container query), and so
