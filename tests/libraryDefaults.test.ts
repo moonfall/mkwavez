@@ -1,9 +1,16 @@
 /**
  * Locks every Seed library entry's default output: the hashes of each entry's default
  * batch (several seeds and batch sizes), of random-parameter batches of every parameter
- * entry, and their recipes, generated from `main` before
- * the formula waveform functions were added. A change to any library entry's default
- * waveforms, or to how a stored recipe re-renders, fails here.
+ * entry, and their recipes, pinned to `main`'s output from before the formula waveform
+ * functions were added. A change to any library entry's default waveforms, or to how a
+ * stored recipe re-renders, fails here.
+ *
+ * The hashes are of the samples rounded to a 2^-20 grid (≈ 1e-6, −120 dB), not of their
+ * exact bits: V8's Math.sin / Math.pow & co. differ in the last bit between Node versions
+ * (Node 22 vs 24 moved a few near-zero samples by ~3e-17), which an exact hash would turn
+ * into a failure. A sample moving by 2^-20 or more always changes its rounded value (so
+ * its table's hash); a smaller move only when it crosses a rounding boundary, which noise
+ * of ~1e-16 does with probability ~1e-10 per sample.
  *
  * Regenerate only for an intended output change: npx vitest run -u tests/libraryDefaults.test.ts
  */
@@ -22,14 +29,31 @@ const GLYPH_INPUTS: Record<string, ParamValue>[] = [
   { glyph: 'c', contour: '0.300,0.100 0.700,0.150 0.900,0.500 0.650,0.880 0.250,0.850 0.120,0.450' },
 ];
 
-/** cyrb53-style 64-bit hash of the samples' bits, as 14 hex digits. */
+/** Hash grid: samples are rounded to multiples of 1 / HASH_GRID before hashing. */
+export const HASH_GRID = 2 ** 20;
+
+/**
+ * cyrb53-style 64-bit hash of the samples rounded to the 1 / HASH_GRID grid, as 14 hex
+ * digits. Last-bit float differences (other Node versions) round to the same values;
+ * -0 and 0 hash alike, and non-finite samples hash apart from every finite one.
+ */
 export function hashTable(x: Float32Array): string {
-  const w = new Uint32Array(x.buffer, x.byteOffset, x.length);
   let h1 = 0xdeadbeef;
   let h2 = 0x41c6ce57;
-  for (let i = 0; i < w.length; i++) {
-    h1 = Math.imul(h1 ^ w[i], 2654435761);
-    h2 = Math.imul(h2 ^ w[i], 1597334677);
+  for (let i = 0; i < x.length; i++) {
+    const v = x[i];
+    let lo: number;
+    let hi: number;
+    if (Number.isFinite(v)) {
+      const q = Math.round(v * HASH_GRID);
+      lo = q | 0; // q's two 32-bit halves (|samples| ≤ 1 in practice, so hi is 0 or -1)
+      hi = Math.floor(q / 4294967296) | 0;
+    } else {
+      lo = v > 0 ? 1 : v < 0 ? -1 : 2; // +∞, −∞, NaN
+      hi = 0x7ff00000;
+    }
+    h1 = Math.imul(Math.imul(h1 ^ lo, 2654435761) ^ hi, 2654435761);
+    h2 = Math.imul(Math.imul(h2 ^ lo, 1597334677) ^ hi, 1597334677);
   }
   h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
@@ -130,7 +154,7 @@ const stringify = (fx: Record<string, EntryFixture>) =>
     .join(',\n') +
   '\n}\n';
 
-describe('library defaults (fixture from main)', () => {
+describe('library defaults (pinned to main, within 2^-20)', () => {
   it("every library entry's default batches are unchanged", async () => {
     await expect(stringify(snapshot())).toMatchFileSnapshot('./fixtures/libraryDefaults.json');
   });
