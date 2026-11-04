@@ -646,3 +646,8 @@ viz('perlin-noise', {
   axis: (i) => ['', `circle r ${f2(i.params.freq)} · z ${f2(i.params.z + i.params.zDrift * i.u)}`, ''],
   draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, i.params.freq, i.params.z + i.params.zDrift * i.u, i.params.octaves, i.params.persistence),
 });
+
+viz('drift', {
+  axis: (i) => ['', `circle r 2 · z ${f2(1.5 * i.u)}`, ''],
+  draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, 2, 1.5 * i.u, 4, 0.5),
+});
