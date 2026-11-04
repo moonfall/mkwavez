@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { defaultSessionState } from '../src/app/defaultSession';
 import { AppModel } from '../src/app/model';
 import { basicWave } from '../src/core/generators';
@@ -34,6 +34,12 @@ describe('Shape chain in the model', () => {
   });
 
   it('save / overwrite / delete / import; names unique; the list is capped', () => {
+    // Every id below is minted in the same millisecond (as on a fast CI runner): the counter
+    // alone must keep them apart.
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
     const m = model();
     const a = m.saveShapeChain('  Warm  ')!;
     expect(a.chain.name).toBe('Warm');
@@ -54,6 +60,7 @@ describe('Shape chain in the model', () => {
     m.deleteShapeChain(gone);
     const again = m.saveShapeChain('Fresh')!;
     expect(again.id).not.toBe(gone);
+    expect([a.id, gone]).not.toContain(again.id);
     expect(normalizeSavedChains(m.shapeChains).map((c) => c.id)).toEqual(m.shapeChains.map((c) => c.id));
     expect(m.importShapeChains(Array.from({ length: 100 }, () => DEFAULT_CHAIN))).toBe(MAX_SAVED_CHAINS - 2);
     const long = 'x'.repeat(60);

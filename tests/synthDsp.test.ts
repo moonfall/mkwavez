@@ -105,13 +105,14 @@ describe('multimode filter', () => {
                 if (first < 0) first = en;
               }
               expect(Number.isFinite(en) && en <= first * 1.0001 + 1e-30).toBe(true);
-
             }
           }
         }
       }
     }
-  });
+    // An exhaustive sweep (~50M filter steps, mostly the long low-cutoff ring-downs): ~3.5 s on a
+    // fast machine, so the 5 s default is too tight for a loaded CI runner.
+  }, 30_000);
 
   it('per-sample cutoff sweeps (audio-rate modulation) stay finite', () => {
     const flt = new MultiFilter();

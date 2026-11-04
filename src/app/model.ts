@@ -556,7 +556,7 @@ export class AppModel {
       const n = normalizeChain(c);
       const name = uniqueName(n.name, names);
       names.add(name);
-      added.push({ id: this.chainId(added.length), chain: { ...n, name } });
+      added.push({ id: this.chainId(), chain: { ...n, name } });
     }
     if (!added.length) return 0;
     this.shapeChains = [...this.shapeChains, ...added];
@@ -566,12 +566,14 @@ export class AppModel {
 
   /**
    * A saved-chain id never used before (not even by a deleted chain: a Shape chip that
-   * pointed at a deleted chain must not pick up a new one): time-based plus a counter.
+   * pointed at a deleted chain must not pick up a new one): time-based plus a counter that
+   * only ever goes up, so ids minted within one millisecond still differ. The timestamp is a
+   * fixed 8 base-36 digits (1973–2059), so timestamp + counter never reads ambiguously.
    */
-  private chainId(offset = 0): string {
+  private chainId(): string {
     const used = new Set(this.shapeChains.map((c) => c.id));
     for (;;) {
-      const id = `chain-${Date.now().toString(36)}${(this.chainSeq++ + offset).toString(36)}`;
+      const id = `chain-${Date.now().toString(36)}${(this.chainSeq++).toString(36)}`;
       if (!used.has(id)) return id;
     }
   }
