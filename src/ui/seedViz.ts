@@ -316,3 +316,12 @@ viz('soft-clip', {
     transfer(g, w, h, c, (x) => Math.tanh(d * x) / Math.tanh(d));
   },
 });
+
+// Superellipse: sign(x)·|x|^e, e = 0.05 + 0.95u.
+viz('superellipse', {
+  axis: (i) => ['−1', `sign(x)·|x|^${f2(0.05 + 0.95 * i.u)}`, '1'],
+  draw: (g, w, h, i, c) => {
+    const e = 0.05 + 0.95 * i.u;
+    transfer(g, w, h, c, (x) => Math.sign(x) * Math.pow(Math.abs(x), e));
+  },
+});
