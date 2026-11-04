@@ -19,6 +19,9 @@ import {
   ksExcite,
   ksPasses,
   LIFE_RULES,
+  PD_SHAPES,
+  pdAmount,
+  pdMap,
   lifeBoard,
   rdState,
   SEQ_SOURCES,
@@ -37,6 +40,7 @@ import {
   type Board,
   type FmParams,
   type LifeParams,
+  type PdParams,
   type PolygonParams,
   type ShaperParams,
   type RdParams,
@@ -405,16 +409,15 @@ viz('superformula', {
   },
 });
 
-// CZ phase distortion: the phase map t → φ(t), knee at t = d = 0.5 − 0.45u (φ = 0.5).
-viz('cz-phase-dist', {
-  axis: (i) => ['t 0', `phase map · knee at t ${f2(0.5 - 0.45 * i.u)}`, '1'],
+// Phase distortion (CZ phase dist, …): the phase map t → φ at the shown amount (identity dashed).
+viz('mode:pd', {
+  axis: (i) => ['t 0', `${PD_SHAPES[Math.round(i.params.shape)] ?? ''} phase map · amount ${f2(pdAmount(i.params as unknown as PdParams, i.index, i.count))}`, '1'],
   draw: (g, w, h, i, c) => {
-    const d = 0.5 - 0.45 * i.u;
+    const f = pdMap(i.params.shape, pdAmount(i.params as unknown as PdParams, i.index, i.count));
     const s = scale(w, h, 0, 1, 0, 1);
-    rules(g, s, w, h, [0.5], [0.5], c.grid);
+    rules(g, s, w, h, [0.5], [0.25, 0.5, 0.75], c.grid);
     plot(g, s, (t) => t, 0, 1, c.muted, 1, 2, [3, 3]);
-    plot(g, s, (t) => (t < d ? t / (2 * d) : 0.5 + (t - d) / (2 * (1 - d))), 0, 1, c.accent, 1.8, 400);
-    dot(g, s.x(d), s.y(0.5), 3, c.line);
+    plot(g, s, f, 0, 1, c.accent, 1.8, 600);
   },
 });
 

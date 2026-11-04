@@ -90,6 +90,8 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
       return `shaper(p, ${lit(p.shaper)}, ${lerpExpr(p.amount, p.amountEnd)}, ${lerpExpr(p.bias, p.biasEnd)}, ${lit(p.level)}, ${lit(p.input)})`;
     case 'fm':
       return `fm(p, ${lit(p.carrier)}, ${lit(p.ratio)}, ${lerpExpr(p.index, p.indexEnd)}, ${lit(p.ratio2)}, ${lit(p.amount2)}, ${lit(p.routing)})`;
+    case 'pd':
+      return `pd(p, ${lit(p.shape)}, ${lerpExpr(p.amount, p.amountEnd)})`;
     case 'perlin': {
       const z = p.zDrift === 0 ? lit(p.z) : p.z === 0 ? `${lit(p.zDrift)}*u` : `${lit(p.z)}+${lit(p.zDrift)}*u`;
       return `perlin(p, ${lit(p.freq)}, ${z}, ${lit(p.octaves)}, ${lit(p.persistence)})`;

@@ -16,6 +16,7 @@ import { DEFAULT_SPLINE as SP, splineTable, type SplineParams } from './spline';
 import { DEFAULT_POLYGON as PG, POLYGON_BATCHES, POLYGON_READS, polygonTable, type PolygonParams } from './polygon';
 import { DEFAULT_SHAPER as SH, SHAPER_INPUTS, SHAPERS, shaperTable, type ShaperParams } from './shaper';
 import { DEFAULT_FM as FMD, FM_ROUTINGS, fmTable, type FmParams } from './fm';
+import { DEFAULT_PD as PDD, PD_SHAPES, pdTable, type PdParams } from './phaseDistortion';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
@@ -78,6 +79,23 @@ function nums<T extends object>(p: ModeParams, defaults: T): T {
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
 export const PARAM_MODES = [
+  {
+    mode: 'pd',
+    id: 'phase-distortion',
+    cat: 'Phase',
+    name: 'Phase distortion',
+    about:
+      'A sine read through a bent phase (Casio CZ style): Saw bends it at a knee, Square holds the peak and the trough, ' +
+      'Half square the peak only. Amount 0 is the plain sine; the batch sweeps it.',
+    params: [
+      { key: 'shape', label: 'Shape', min: 0, max: PD_SHAPES.length - 1, step: 1, value: PDD.shape, options: opts(PD_SHAPES) },
+      { key: 'amount', label: 'Amount', min: 0, max: 1, step: 0.01, value: PDD.amount },
+      { key: 'amountEnd', label: 'Batch → amount', min: 0, max: 1, step: 0.01, value: PDD.amountEnd },
+    ],
+    variants: [{ id: 'cz-phase-dist', values: {} }],
+    seeded: () => false,
+    render: (p, _seed, index, count) => pdTable(nums<PdParams>(p, PDD), index, count),
+  },
   {
     mode: 'fm',
     id: 'fm-pm',
