@@ -307,3 +307,12 @@ viz('chebyshev', {
   axis: (i) => ['−1', `T${sub(i.index + 2)}(x) on 0.95·sin p`, '1'],
   draw: (g, w, h, i, c) => transfer(g, w, h, c, (x) => Math.cos((i.index + 2) * Math.acos(clamp(x, -1, 1))), 0.95),
 });
+
+// Soft clip: tanh(d·x) / tanh(d), d = 1 + 5u.
+viz('soft-clip', {
+  axis: (i) => ['−1', `tanh(${(1 + 5 * i.u).toFixed(1)}·x) / tanh(${(1 + 5 * i.u).toFixed(1)})`, '1'],
+  draw: (g, w, h, i, c) => {
+    const d = 1 + 5 * i.u;
+    transfer(g, w, h, c, (x) => Math.tanh(d * x) / Math.tanh(d));
+  },
+});
