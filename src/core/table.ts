@@ -92,6 +92,8 @@ function describeOp(r: Recipe): string {
       return `pulse ${Math.round(Number(p.width) * 100)}→${Math.round(Number(p.widthEnd) * 100)}%${b}`;
     case 'perlin':
       return `perlin${b} seed ${r.seed}`;
+    case 'sample':
+      return `${String(p.mode ?? 'sample')}${b} of “${String(p.take ?? 'take')}” at ${String(p.at)} s · ${String(p.freq)} Hz`;
     case 'ca':
       return `CA rule ${String(p.rule)} gen ${String(p.generation)}`;
     case 'mutate': {
