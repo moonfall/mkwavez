@@ -12,6 +12,8 @@ import { caRows } from '../core/generators';
 import { DYN_MAP_LABELS, dynControl, dynIterate } from '../core/generators';
 import { KS_MAX_PASS, ksExcite, ksPasses } from '../core/generators';
 import { KMAX } from '../core/constants';
+import { SEQ_SOURCES, sequenceValues } from '../core/generators';
+import type { SequenceParams } from '../core/generators';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -782,5 +784,15 @@ viz('additive-designer', {
     g.stroke();
     plot(g, s, (k) => boost(k) / maxBoost, 1, KMAX, c.accent, 1.6, 400);
     for (const [cc, , gg] of formants) if (gg > 0 && cc * move <= KMAX) dot(g, s.x(cc * move), s.y(boost(cc * move) / maxBoost), 2.5, c.accent);
+  },
+});
+
+// Number sequences: the window's values (Euclidean: the rhythm circle).
+viz('number-sequences', {
+  axis: (i) => ['', `${SEQ_SOURCES[Math.round(i.params.source)] ?? ''} · window ${i.index + 1}`, ''],
+  draw: (g, w, h, i, c) => {
+    const v = sequenceValues(i.params as unknown as SequenceParams, i.index);
+    if (Math.round(i.params.source) === 4) rhythmCircle(g, w, h, c, v);
+    else valueCells(g, w, h, c, v);
   },
 });
