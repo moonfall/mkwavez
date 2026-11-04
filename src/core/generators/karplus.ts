@@ -40,8 +40,8 @@ const LN_RESIDUE = Math.log(1e-9);
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
-/** The excited buffer before any pass (its mean is irrelevant: DC is dropped). */
-function excite(p: Pick<KsParams, 'excite' | 'position'>, L: number, seed: number): Float64Array {
+/** The excited buffer before any pass (its mean is irrelevant: DC is dropped). Exported for display (Seed's basis plot). */
+export function ksExcite(p: Pick<KsParams, 'excite' | 'position'>, L: number, seed: number): Float64Array {
   const buf = new Float64Array(L);
   const pos = clamp(p.position, 0.02, 0.5);
   if (Math.round(p.excite) === 1) {
@@ -121,7 +121,7 @@ export function ksRaw(buf: ArrayLike<number>, damping: number, n: number): Float
 /** Table `index` of a batch of `count`: the string after ksPasses(start, end, u) round trips. */
 export function karplusTable(p: KsParams, seed: number, index: number, count: number): Float32Array {
   const L = clamp(Math.round(p.length), 16, 512);
-  return ksString(excite(p, L, seed >>> 0), p.damping, ksPasses(p.start, p.end, batchU(index, count)));
+  return ksString(ksExcite(p, L, seed >>> 0), p.damping, ksPasses(p.start, p.end, batchU(index, count)));
 }
 
 /** The raw cycle (before shape()) of the string after `passes` round trips. */
@@ -131,5 +131,5 @@ export function karplusRaw(
   seed: number,
 ): Float64Array {
   const L = clamp(Math.round(p.length), 16, 512);
-  return ksRaw(excite(p, L, seed >>> 0), p.damping, passes);
+  return ksRaw(ksExcite(p, L, seed >>> 0), p.damping, passes);
 }

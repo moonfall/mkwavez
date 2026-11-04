@@ -10,6 +10,7 @@ import { parseColor } from './canvas';
 import { fbm, noiseField } from '../core/perlin';
 import { caRows } from '../core/generators';
 import { DYN_MAP_LABELS, dynControl, dynIterate } from '../core/generators';
+import { KS_MAX_PASS, ksExcite, ksPasses } from '../core/generators';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -720,5 +721,34 @@ viz('dynamical-systems', {
     g.fillRect(s.x(a), 0, Math.max(1, s.x(b) - s.x(a)), h);
     g.globalAlpha = 1;
     rules(g, s, w, h, [i.params.control + (i.params.controlEnd - i.params.control) * i.u], [], c.accent);
+  },
+});
+
+// Karplus-Strong: the excited buffer (pass 0) and where each batch snapshot falls on a log pass scale.
+viz('karplus-strong', {
+  axis: (i) => ['pass 0', `excitation · pass ${Math.round(ksPasses(i.params.start, i.params.end, i.u))}`, String(KS_MAX_PASS)],
+  draw: (g, w, h, i, c) => {
+    const L = clamp(Math.round(i.params.length), 16, 512);
+    const buf = ksExcite({ excite: i.params.excite, position: i.params.position }, L, i.seed >>> 0);
+    const m = Math.max(1e-9, ...buf.map(Math.abs));
+    const bh = h - 16;
+    const s = scale(w, bh, 0, L - 1, -1.05, 1.05, 4);
+    rules(g, s, w, bh, [], [0], c.grid);
+    plot(g, s, (x) => buf[Math.round(x)] / m, 0, L - 1, c.line, 1.2, Math.min(L - 1, Math.ceil(w)));
+    // Pass scale: log(1 + passes).
+    const px = (n: number) => 4 + (Math.log1p(n) / Math.log1p(KS_MAX_PASS)) * (w - 8);
+    const y = h - 7;
+    g.strokeStyle = c.axis;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(4, y + 0.5);
+    g.lineTo(w - 4, y + 0.5);
+    g.stroke();
+    for (let k = 0; k < i.count; k++) {
+      const u = i.count > 1 ? k / (i.count - 1) : 0;
+      const x = px(ksPasses(i.params.start, i.params.end, u));
+      g.fillStyle = k === i.index ? c.accent : c.muted;
+      g.fillRect(x - (k === i.index ? 1.5 : 0.5), y - (k === i.index ? 6 : 3), k === i.index ? 3 : 1, k === i.index ? 12 : 6);
+    }
   },
 });
