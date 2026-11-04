@@ -1,5 +1,5 @@
 import type { VoiceParams } from '../core/voice';
-import { isFull, MAX_USER_SLOTS, shapeLabel, type Wavetable, type WavetableId } from '../core/wavetable';
+import { changesByItself, isFull, MAX_USER_SLOTS, shapeLabel, wavetableMode, type Wavetable, type WavetableId } from '../core/wavetable';
 import { Mix } from '../core/wavetablePlayback';
 import { cssColor, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
@@ -131,10 +131,10 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
             role: 'option',
             id: `wt-chip-${w.id}`,
             'aria-selected': String(w.id === current),
-            title: `${w.name} · ${shapeLabel(w)} · ${w.live ? 'Live' : 'Frozen'}${isFull(w) ? ` · full (${MAX_USER_SLOTS} slots): new waveforms aren't added` : ''}`,
+            title: `${w.name} · ${shapeLabel(w)} · ${wavetableMode(w)}${isFull(w) ? ` · full (${MAX_USER_SLOTS} slots): new waveforms aren't added` : ''}`,
             onclick: () => pick(w.id),
           },
-          h('span', { class: `wt-dot${w.live ? ' live' : ''}` }),
+          h('span', { class: `wt-dot${changesByItself(w) ? ' live' : ''}` }),
           w.name,
           isFull(w) ? h('span', { class: 'wt-full' }, 'full') : null,
         ),
@@ -182,8 +182,8 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
       b.classList.toggle('seg-on', on);
       b.setAttribute('aria-pressed', String(on));
     }
-    liveDot.classList.toggle('live', wt.live);
-    liveLabel.textContent = wt.live ? 'Live' : 'Frozen';
+    liveDot.classList.toggle('live', changesByItself(wt));
+    liveLabel.textContent = wavetableMode(wt);
     const vs = model.voicesOn(wt.id);
     usedBy.replaceChildren(
       ...(vs.length
@@ -422,7 +422,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
   sec.onToggle(() => (dirty = true));
   sec.setStatus(() => {
     const wt = cur();
-    return `${expanded ? 'Editing ' : ''}${wt.name} · ${shapeLabel(wt)} · ${wt.live ? 'Live' : 'Frozen'}`;
+    return `${expanded ? 'Editing ' : ''}${wt.name} · ${shapeLabel(wt)} · ${wavetableMode(wt)}`;
   });
   new ResizeObserver(() => (dirty = true)).observe(box);
   onThemeChange(() => (dirty = true));

@@ -165,8 +165,23 @@ export class AppModel {
   }
 
   private emit(...topics: Topic[]): void {
+    // Derived built-ins (Selection) follow the state the topics announce.
+    if ((topics.includes('selection') || topics.includes('timeline')) && this.syncDerived() && !topics.includes('wavetables')) topics.push('wavetables');
     this.emits++;
     for (const t of new Set(topics)) for (const fn of this.listeners.get(t) ?? []) fn();
+  }
+
+  /** Keep the Selection wavetable's one slot on the selection; true if it changed. */
+  private syncDerived(): boolean {
+    let changed = false;
+    this.wavetables = this.wavetables.map((w) => {
+      if (w.builtin !== 'selection') return w;
+      const id = this.selectedId !== null && this.byId.has(this.selectedId) ? this.selectedId : null;
+      if (w.rows.length === 1 && w.rows[0].length === 1 && w.rows[0][0] === id) return w;
+      changed = true;
+      return { ...w, rows: [[id]] };
+    });
+    return changed;
   }
 
   // ---- queries ----
@@ -556,7 +571,7 @@ export class AppModel {
       const n = normalizeChain(c);
       const name = uniqueName(n.name, names);
       names.add(name);
-      added.push({ id: this.chainId(added.length), chain: { ...n, name } });
+      added.push({ id: this.chainId(added), chain: { ...n, name } });
     }
     if (!added.length) return 0;
     this.shapeChains = [...this.shapeChains, ...added];
@@ -568,10 +583,11 @@ export class AppModel {
    * A saved-chain id never used before (not even by a deleted chain: a Shape chip that
    * pointed at a deleted chain must not pick up a new one): time-based plus a counter.
    */
-  private chainId(offset = 0): string {
-    const used = new Set(this.shapeChains.map((c) => c.id));
+  private chainId(taken: readonly SavedChain[] = []): string {
+    const used = new Set([...this.shapeChains, ...taken].map((c) => c.id));
     for (;;) {
-      const id = `chain-${Date.now().toString(36)}${(this.chainSeq++ + offset).toString(36)}`;
+      // Fixed-width time (8 base-36 digits) then a counter that only grows: never repeats.
+      const id = `chain-${Date.now().toString(36).padStart(8, '0')}${(this.chainSeq++).toString(36)}`;
       if (!used.has(id)) return id;
     }
   }

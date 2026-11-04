@@ -6,6 +6,7 @@ import { decodeSession, encodeMeta, encodeWaveforms, type SessionMeta } from '..
 import { applyChain, normalizeChain, chainJson } from '../src/core/shapeChain';
 import { chainsFile, DEFAULT_CHAIN, FACTORY_CHAINS, MAX_SAVED_CHAINS, normalizeSavedChains, parseChainsFile } from '../src/core/shapeFactory';
 import { newStep } from '../src/core/shapeSteps';
+import { SELECTION_WAVETABLE_ID } from '../src/core/wavetable';
 
 const model = () => {
   const m = new AppModel();
@@ -131,5 +132,22 @@ describe('Shape chain engine (review fixes)', () => {
     for (let i = 0; i < a.length; i++) d = Math.max(d, Math.abs(a[i] - b[i]));
     expect(d).toBeLessThan(1e-3);
     expect(peak(b)).toBeCloseTo(1, 9);
+  });
+});
+
+describe('Selection wavetable', () => {
+  it('holds the Timeline selection, follows select / add / undo, and a voice can play it', () => {
+    const m = model();
+    const sel = () => m.wavetable(SELECTION_WAVETABLE_ID)!.rows;
+    expect(sel()).toEqual([[m.selectedId]]);
+    m.select(m.timeline[1].id);
+    expect(sel()).toEqual([[m.timeline[1].id]]);
+    const [t] = m.addTables([{ data: m.timeline[0].data, recipe: m.timeline[0].recipe }]);
+    expect(sel()).toEqual([[t.id]]);
+    m.undo();
+    expect(sel()).toEqual([[m.selectedId]]);
+    const v = m.voices[0];
+    m.updateVoice(v.id, { wavetableId: SELECTION_WAVETABLE_ID });
+    expect(m.windowTables(m.voice(v.id)!).map((x) => x.id)).toEqual([m.selectedId]);
   });
 });
