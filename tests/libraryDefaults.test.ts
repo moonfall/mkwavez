@@ -1,6 +1,7 @@
 /**
  * Locks every Seed library entry's default output: the hashes of each entry's default
- * batch (several seeds and batch sizes) and their recipes, generated from `main` before
+ * batch (several seeds and batch sizes), of random-parameter batches of every parameter
+ * entry, and their recipes, generated from `main` before
  * the formula waveform functions were added. A change to any library entry's default
  * waveforms, or to how a stored recipe re-renders, fails here.
  *
@@ -35,10 +36,16 @@ export function hashTable(x: Float32Array): string {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
 }
 
-const request = (entry: SeedEntry, seed: number, count: number, inputs?: Record<string, ParamValue>[]): SeedRequest => ({
+const request = (
+  entry: SeedEntry,
+  seed: number,
+  count: number,
+  inputs?: Record<string, ParamValue>[],
+  params: Record<string, number> = {},
+): SeedRequest => ({
   entry,
   expr: entry.expr ?? '',
-  params: {},
+  params,
   seed,
   count,
   inputs,
@@ -47,6 +54,8 @@ const request = (entry: SeedEntry, seed: number, count: number, inputs?: Record<
 const fnFor = (r: SeedRequest) => (r.entry.mode === 'formula' ? compileFormula(r.expr) : undefined);
 
 interface EntryFixture {
+  /** Random-parameter cases: the params used. */
+  params?: Record<string, number>;
   /** `${seed}/${count}` → table hashes. */
   hashes: Record<string, string[]>;
   /** The recipes of the batch at SEEDS[0] × COUNTS.at(-1). */
@@ -58,18 +67,60 @@ function snapshot(): Record<string, EntryFixture> {
   const cases: [string, SeedEntry, Record<string, ParamValue>[] | undefined][] = SEED_LIBRARY.map((e) => [e.id, e, undefined]);
   const glyph = SEED_LIBRARY.find((e) => e.mode === 'glyph')!;
   cases.push([`${glyph.id}+inputs`, glyph, GLYPH_INPUTS]);
-  for (const [key, entry, inputs] of cases) {
-    const fx: EntryFixture = { hashes: {}, recipes: [] };
-    for (const seed of SEEDS)
-      for (const count of COUNTS) {
-        const r = request(entry, seed, count, inputs);
-        const tables = seedBatch(r, fnFor(r));
-        fx.hashes[`${seed}/${count}`] = tables.map((t) => hashTable(t.data));
-        if (seed === SEEDS[0] && count === COUNTS.at(-1)) fx.recipes = tables.map((t) => t.recipe);
-      }
-    out[key] = fx;
+  for (const [key, entry, inputs] of cases) out[key] = entryFixture(entry, {}, inputs, SEEDS, COUNTS);
+  // Non-default settings: RANDOM_SETS random parameter sets per parameter entry.
+  for (const entry of SEED_LIBRARY.filter((e) => e.params?.length)) {
+    const rnd = lcg(hashString(entry.id));
+    for (let k = 0; k < RANDOM_SETS; k++) {
+      const params = randomParams(entry, rnd);
+      const inputs = entry.mode === 'glyph' ? GLYPH_INPUTS : undefined;
+      out[`${entry.id}~${k}`] = { params, ...entryFixture(entry, params, inputs, [RANDOM_SEEDS[k % RANDOM_SEEDS.length]], [1, 6]) };
+    }
   }
   return out;
+}
+
+const RANDOM_SETS = 4;
+const RANDOM_SEEDS = [7, 0x9e3779b9, 123456];
+
+/** Deterministic PRNG (an LCG) for the random parameter sets. */
+function lcg(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296;
+}
+
+function hashString(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+/** Random values on each parameter's slider grid (or one of its options). */
+function randomParams(entry: SeedEntry, rnd: () => number): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const p of entry.params ?? []) {
+    if (p.options) out[p.key] = p.options[Math.floor(rnd() * p.options.length)][0];
+    else out[p.key] = Number(Math.min(p.max, p.min + Math.round((rnd() * (p.max - p.min)) / p.step) * p.step).toFixed(6));
+  }
+  return out;
+}
+
+function entryFixture(
+  entry: SeedEntry,
+  params: Record<string, number>,
+  inputs: Record<string, ParamValue>[] | undefined,
+  seeds: readonly number[],
+  counts: readonly number[],
+): EntryFixture {
+  const fx: EntryFixture = { hashes: {}, recipes: [] };
+  for (const seed of seeds)
+    for (const count of counts) {
+      const r = request(entry, seed, count, inputs, params);
+      const tables = seedBatch(r, fnFor(r));
+      fx.hashes[`${seed}/${count}`] = tables.map((t) => hashTable(t.data));
+      if (seed === seeds[0] && count === counts.at(-1)) fx.recipes = tables.map((t) => t.recipe);
+    }
+  return fx;
 }
 
 const stringify = (fx: Record<string, EntryFixture>) =>
@@ -90,7 +141,8 @@ describe('library defaults (fixture from main)', () => {
     expect(keys.length).toBeGreaterThan(40);
     for (const k of keys) {
       const { recipes, hashes } = fixture[k];
-      const want = hashes[`${SEEDS[0]}/${COUNTS.at(-1)}`];
+      // The recipes are those of the first seed's largest batch.
+      const want = hashes[`${recipes[0].seed}/${recipes.length}`];
       expect(recipes.length, k).toBe(want.length);
       recipes.forEach((r, i) => expect(hashTable(renderRecipe(r, { compileFormula })), `${k} #${i}`).toBe(want[i]));
     }
