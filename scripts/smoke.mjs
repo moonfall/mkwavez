@@ -376,6 +376,8 @@ async function sampleChecks(page, tlCount) {
   const wts1 = await M(() => window.mkwavez.model.wavetables.length);
   const n1 = await tlCount();
   await page.click('#smp-add-batch');
+  // The add can land a moment after the click: wait for it before checking.
+  await page.waitForFunction((n) => window.mkwavez.model.timeline.length >= n, n1 + 12, { timeout: 5000 }).catch(() => {});
   assert(
     (await tlCount()) === n1 + 12 && (await M(() => window.mkwavez.model.wavetables.length)) === wts1 && (await M(() => window.mkwavez.model.timeline.at(-1).recipe.params.mode)) === 'Harmonic snapshot',
     'Harmonic snapshot Add batch: 12 rebuilt cycles, no wavetable when unticked',
@@ -3428,8 +3430,17 @@ async function midiChecks(label, url, browser) {
       .waitForFunction(([v, n]) => window.mkwavez.bridge.status.voices.find((x) => x.id === v)?.note === n, [voice, note], { timeout: 3000 })
       .then(() => assert(true, msg));
 
+  // The blink is short: watch for it rather than sampling once after the event (a slow
+  // round trip could miss it).
+  await page.evaluate(() => {
+    const led = document.querySelector('#midi-led');
+    window.__ledBlinked = false;
+    new MutationObserver(() => {
+      if (led.classList.contains('blink')) window.__ledBlinked = true;
+    }).observe(led, { attributes: true, attributeFilter: ['class'] });
+  });
   await fire([0x90, 69, 100]);
-  assert(await page.$eval('#midi-led', (l) => l.classList.contains('blink')), 'activity LED blinks');
+  assert(await page.waitForFunction(() => window.__ledBlinked, null, { timeout: 2000 }).then(() => true, () => false), 'activity LED blinks');
   await waitNote(1, 69, 'channel 1 note-on reaches voice 1 in the engine');
   await fire([0x91, 72, 90]);
   await waitNote(2, 72, 'channel 2 → voice 2');
