@@ -91,14 +91,15 @@ switches (the choice is remembered).
   category or formula text (Enter picks the first match, ↓ moves into the list, Esc
   clears); ▲/▼ or the arrow keys step through the (filtered) list. On a phone the library
   is one row (▲ · Category › Name · ▼); tap the name for the list. Edit the formula (JS in
-  `p`, `t`, `n`, `u`, `pnoise()` and the basic waveform functions — see
+  `p`, `t`, `n`, `u`, `pnoise()` and the waveform functions — see
   [Formula reference](#formula-reference); "Revert to preset") or the mode's parameters.
   The basic presets (Sine, Triangle, Saw, Square, Pulse) show their expression and
   choose its source: **Built-in function** (default: `saw(p)`, `pulse(p, …)` — exactly the
   band-limited preset) or **Formula** (the naive formula, e.g. the additive `reduce` series
   or `t < … ? 1 : -1`); either can be edited like any formula (edited / Revert; Pulse's
-  sliders write its expression until it is edited). **Edit as formula** writes the shown
-  expression into Blank formula, where it renders the same waveforms. The
+  sliders write its expression until it is edited). **Edit as formula** (basic presets and
+  every parameter mode) writes the equivalent formula — the current values, with `n` / `u`
+  where the batch varies — into Blank formula, where it renders the same waveforms. The
   large view shows one waveform of the batch with its spectrum; the strip below shows all N
   (click, or ←/→ when focused). The previews are exactly what gets added: "Add shown"
   adds that one waveform, "Add batch (+N)" all N (a voice on the built-in **Last batch**
@@ -306,10 +307,15 @@ then band-limited, DC-free, phase-aligned and normalised like every waveform.
 | `sin`, `pow`, `PI`, … | every `Math` member |
 | `pnoise(freq, z, oct, pers)` | loop-seamless Perlin noise at the current phase (seeded) |
 
-**Waveform functions** take a phase `x` in radians (`saw(2*p)`, `square(p + u)`). Each
+**Waveform functions** take a phase `x` in radians first (`saw(2*p)`, `square(p + u)`,
+`ca(p + 0.5, 30, 32, n)`), then the arguments of the library entry they reproduce. Each
 returns the cycle its generator builds before the pipeline normalises it, so a lone call
-at `x = p` renders exactly (bit for bit) like the preset; levels are the generator's own
-(saw peaks ≈ 1.85, square ≈ 0.93, triangle ≈ 1.23).
+at `x = p` renders exactly (bit for bit) like the entry; levels are the generator's own
+(saw peaks ≈ 1.85, square ≈ 0.93, triangle ≈ 1.23, CA ±1, …). Functions marked *seed?*
+use the Seed shown in the batch row unless given an explicit last argument. Whole-waveform
+generators (all but the basic waves and `perlin`) run once per distinct argument set per
+waveform and are then looked up, so they stay fast; use `n` / `u` in the arguments to vary
+them across a batch.
 
 | Function | Waveform |
 | --- | --- |
@@ -318,10 +324,22 @@ at `x = p` renders exactly (bit for bit) like the preset; levels are the generat
 | `saw(x)` | band-limited saw: every harmonic at 1/k (Saw) |
 | `square(x)` | band-limited square: odd harmonics at 1/k (Square) |
 | `pulse(x, width)` | pulse, +1 for the first `width` (0 … 1) of the cycle, else −1; band-limited by the pipeline like the Pulse preset |
+| `perlin(x, freq, z, oct, pers, seed?)` | loop-seamless Perlin noise (Perlin noise: z = start + drift·u) |
+| `ca(x, rule, cells, gen, seed?)` | generation `gen` of an elementary cellular automaton as ±1 steps (Cellular automaton: gen = start + n) |
+| `dyn(x, map, control, iters, spread, output)` | chaotic map 0 logistic · 1 sine · 2 circle · 3 Hénon · 4 tent; control 0 … 1; output 0 linear / 1 soft clip (Dynamical systems) |
+| `ks(x, passes, damping, pos, length, excite, seed?)` | Karplus-Strong string after `passes` round trips; excite 0 noise burst / 1 pluck (Karplus-Strong) |
+| `additive(x, slope, balance, move, phase, f1, w1, g1, f2, w2, g2, f3, w3, g3, seed?)` | harmonics at k^−slope, odd / even balance −1 … 1, up to three formants (centre × `move`, width, gain); phase 0 sine / 1 Schroeder / 2 random (Additive designer) |
+| `seq(x, source, steps, smoothing, pos, pulses)` | number sequence window: source 0 π · 1 e · 2 Collatz · 3 prime gaps · 4 Euclidean; `pos` = window position (Euclidean: pulses advanced by `pos`) (Number sequences) |
+| `rd(x, system, step, cells, spots, feed, kill, seed?)` | reaction-diffusion ring after `step` steps; system 0–4 presets, 5 custom feed / kill (Reaction-diffusion) |
+| `life(x, rule, read, size, density, gen, seed?)` | Life-like automaton, generation `gen`; rule and read as the entry's lists (index) (Life-like automaton) |
+| `spline(x, points, kind, tension, jitter, seed?)` | seeded periodic spline; kind 0 Catmull-Rom / 1 B-spline (Spline) |
+| `glyph(x, contour, skew)` | radius vs angle of a contour polyline: "x,y x,y …" or the compact form Edit as formula writes (4 characters per point, ≤ 64 points); no fonts needed (Glyph contour) |
 
 Between the 2048 sample positions the basic waves evaluate their 72-harmonic Fourier sum
-exactly and `pulse` stays the naive pulse. Example: `saw(p) - saw(p + 2*PI*(0.1+0.4*u))`
-(a pulse-width sweep).
+exactly, `pulse` stays the naive pulse, `perlin` is evaluated directly and the other
+functions interpolate their cycle (cubic). Examples: `saw(p) - saw(p + 2*PI*(0.1+0.4*u))`
+(a pulse-width sweep), `ca(p, 30, 32, n) * sine(p)`, `ks(p, 50*n, 0.5, 0.2, 96, 1) +
+0.3*pulse(3*p, 0.2)`.
 
 ## Keyboard shortcuts
 

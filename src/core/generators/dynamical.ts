@@ -104,21 +104,26 @@ function iterate(map: DynMap, k: number, iters: number, spread: number, ph: numb
  * toward the fixed point still varies (≥ 1e-6), so every table is audible.
  */
 export function dynamicalTable(p: DynParams, index: number, count: number): Float32Array {
-  const m = Math.round(p.map);
-  const map = DYN_MAPS[m] ?? 'logistic';
-  const k = dynControl(m, p.control + (p.controlEnd - p.control) * batchU(index, count));
-  const spread = clamp(p.spread, 0.01, 1);
+  return shape(dynamicalRaw(p.map, p.control + (p.controlEnd - p.control) * batchU(index, count), p.iterations, p.spread, p.output));
+}
+
+/** The raw cycle (before shape()) for one normalised control value c ∈ [0, 1]. */
+export function dynamicalRaw(map: number, c: number, iterations: number, spreadIn: number, output: number): Float64Array {
+  const m = Math.round(map);
+  const mapName = DYN_MAPS[m] ?? 'logistic';
+  const k = dynControl(m, c);
+  const spread = clamp(spreadIn, 0.01, 1);
   const x = new Float64Array(TABLE_SIZE);
-  for (let iters = clamp(Math.round(p.iterations), 1, 64); ; iters = Math.floor(iters / 2)) {
+  for (let iters = clamp(Math.round(iterations), 1, 64); ; iters = Math.floor(iters / 2)) {
     let lo = Infinity;
     let hi = -Infinity;
     for (let i = 0; i < TABLE_SIZE; i++) {
-      const v = iterate(map, k, iters, spread, (2 * Math.PI * i) / TABLE_SIZE);
-      x[i] = p.output >= 0.5 ? Math.tanh(3 * v) : v;
+      const v = iterate(mapName, k, iters, spread, (2 * Math.PI * i) / TABLE_SIZE);
+      x[i] = output >= 0.5 ? Math.tanh(3 * v) : v;
       lo = Math.min(lo, x[i]);
       hi = Math.max(hi, x[i]);
     }
     if (hi - lo >= 1e-6 || iters <= 1) break;
   }
-  return shape(x);
+  return x;
 }

@@ -3,6 +3,8 @@ import { traceGlyph } from '../browser/glyphTrace';
 import {
   batchU,
   FormulaAborted,
+  glyphInputs,
+  modeFormula,
   SEED_LIBRARY,
   seedFormulaExpr,
   seedParams,
@@ -61,7 +63,7 @@ const SOURCES: readonly (readonly [ExprSource, string, string])[] = [
 ];
 /** The waveform functions, one per line (the legend's tooltip). */
 const FUNCTIONS_TIP =
-  'Waveform functions (x = phase in radians, e.g. p, 2*p, p+u):\n' +
+  'Waveform functions (x = phase in radians, e.g. p, 2*p, p+u; seed? defaults to the shown seed):\n' +
   WAVE_FUNCTION_DOCS.map((d) => `${d.sig} — ${d.about}`).join('\n');
 
 /** A preview batch being computed incrementally in the frame loop. */
@@ -115,16 +117,10 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     if (c === undefined) contours.set(k, (c = traceGlyph(ch, weight)));
     return c;
   };
+  const glyphChars = (e: SeedEntry) => [...glyphTextOf(e)].filter((c) => c.trim());
   /** Per-table inputs: Next characters (char i of the text), or the first character at a swept weight. */
-  const glyphInputsOf = (e: SeedEntry, p: Record<string, number>, count: number) => {
-    const chars = [...glyphTextOf(e)].filter((c) => c.trim());
-    if (!chars.length) return [];
-    return Array.from({ length: count }, (_, i) => {
-      const ch = p.batch === 0 ? chars[i % chars.length] : chars[0];
-      const w = p.batch === 1 ? p.weight + (p.weightEnd - p.weight) * batchU(i, count) : p.weight;
-      return { glyph: ch, contour: contourOf(ch, Math.round(w / 100) * 100) };
-    });
-  };
+  const glyphInputsOf = (e: SeedEntry, p: Record<string, number>, count: number) =>
+    glyphInputs(glyphChars(e), { batch: p.batch, weight: p.weight, weightEnd: p.weightEnd }, count, contourOf);
 
   const request = (): SeedRequest => {
     const e = entry();
@@ -254,7 +250,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       'span',
       { id: 'seed-functions', class: 'seed-fns', tabindex: 0, title: FUNCTIONS_TIP, 'aria-label': FUNCTIONS_TIP },
       h('b', {}, 'saw(x)'),
-      ' sine tri square pulse',
+      ' sine tri square pulse perlin ca dyn ks additive seq rd life spline glyph',
     );
     const vars = [
       legendItem('p', 'phase 0–2π'),
@@ -424,7 +420,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         });
         controls.unshift(h('label', { class: 'seed-formula' }, h('span', { class: 'seed-f' }, 'Text'), text));
       }
-      edBody.replaceChildren(h('div', { class: 'seed-params' }, ...controls), h('p', { class: 'hint' }, e.about ?? hints[e.mode] ?? ''));
+      const asF = asFormulaButton(e, () => modeFormula(e, paramsOf(e), { glyphChars: glyphChars(e), contourOf }));
+      edBody.replaceChildren(h('div', { class: 'seed-params' }, ...controls), h('p', { class: 'hint' }, `${e.about ?? hints[e.mode] ?? ''} `, asF));
     }
   };
 

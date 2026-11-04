@@ -51,15 +51,21 @@ export const DEFAULT_ADDITIVE: AdditiveParams = {
 /** Harmonic amplitudes 1..KMAX (index = harmonic) of table `index`. */
 export function additiveAmps(p: AdditiveParams, index: number, count: number): Float64Array {
   const u = batchU(index, count);
-  const slope = p.slope + (p.slopeEnd - p.slope) * u;
-  const move = Math.pow(2, p.shift * u);
   const formants = [
     [p.f1, p.w1, p.g1],
     [p.f2, p.w2, p.g2],
     [p.f3, p.w3, p.g3],
   ];
-  const odd = 1 + Math.min(0, p.balance);
-  const even = 1 - Math.max(0, p.balance);
+  return additiveAmpsAt(p.slope + (p.slopeEnd - p.slope) * u, p.balance, Math.pow(2, p.shift * u), formants);
+}
+
+/**
+ * Harmonic amplitudes 1..KMAX for one slope, balance and formant move (centres × move);
+ * formants are [centre, width, gain] (gain ≤ 0 = off).
+ */
+export function additiveAmpsAt(slope: number, balance: number, move: number, formants: readonly (readonly number[])[]): Float64Array {
+  const odd = 1 + Math.min(0, balance);
+  const even = 1 - Math.max(0, balance);
   const A = new Float64Array(KMAX + 1);
   for (let k = 1; k <= KMAX; k++) {
     let a = Math.pow(k, -slope) * (k === 1 ? 1 : k % 2 ? odd : even);
@@ -76,8 +82,12 @@ export function additiveAmps(p: AdditiveParams, index: number, count: number): F
 }
 
 export function additiveTable(p: AdditiveParams, seed: number, index: number, count: number): Float32Array {
-  const A = additiveAmps(p, index, count);
-  const mode = Math.round(p.phase);
+  return shape(designerRaw(additiveAmps(p, index, count), p.phase, seed));
+}
+
+/** The raw cycle (before shape()) of amplitudes A (index = harmonic), phases 0 sine / 1 Schroeder / 2 seeded. */
+export function designerRaw(A: Float64Array, phase: number, seed: number): Float64Array {
+  const mode = Math.round(phase);
   const r = new Prng(seed);
   const x = new Float64Array(TABLE_SIZE);
   for (let k = 1; k <= KMAX; k++) {
@@ -88,5 +98,5 @@ export function additiveTable(p: AdditiveParams, seed: number, index: number, co
     const w = (2 * Math.PI * k) / TABLE_SIZE;
     for (let i = 0; i < TABLE_SIZE; i++) x[i] += A[k] * Math.sin(w * i + ph);
   }
-  return shape(x);
+  return x;
 }

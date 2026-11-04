@@ -33,6 +33,37 @@ export function encodeContour(pts: readonly number[]): string {
   return out.join(' ');
 }
 
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+/**
+ * A contour string in the compact form formulas use: two base64url characters per
+ * coordinate (k + 2048 for the coordinate k / 1000, |k| ≤ 2047), so 4 per point. Only
+ * when every coordinate is exactly such a k / 1000 (as traced contours are: 3 decimals),
+ * so decoding gives the very same numbers as parseContour(); otherwise null.
+ */
+export function compactContour(s: string): string | null {
+  let out = '';
+  for (const v of parseContour(s)) {
+    const k = Math.round(v * 1000);
+    if (k / 1000 !== v || Object.is(v, -0) || k < -2048 || k > 2047) return null;
+    out += B64[(k + 2048) >> 6] + B64[(k + 2048) & 63];
+  }
+  return out;
+}
+
+/** Flat points of a contour given as "x,y x,y …" (parseContour) or in the compact form. */
+export function contourPoints(s: string): number[] {
+  if (s.includes(',')) return parseContour(s);
+  const out: number[] = [];
+  const t = s.trim();
+  for (let i = 0; i + 3 < t.length; i += 4) {
+    const d = [0, 1, 2, 3].map((j) => B64.indexOf(t[i + j]));
+    if (d.some((v) => v < 0)) continue;
+    out.push(((d[0] << 6) + d[1] - 2048) / 1000, ((d[2] << 6) + d[3] - 2048) / 1000);
+  }
+  return out;
+}
+
 /** Area centroid of a closed polygon (vertex mean if degenerate). */
 function centroid(p: readonly number[]): [number, number] {
   const n = p.length / 2;
@@ -117,8 +148,40 @@ function radii(contour: readonly number[], s: number): Float64Array | null {
  * DEFAULT_CONTOUR, so a table is never silent.
  */
 export function glyphTable(p: GlyphParams, index: number, count: number): Float32Array {
-  const s = p.skew + (p.skewEnd - p.skew) * batchU(index, count);
-  const pts = parseContour(p.contour);
-  const x = (pts.length >= 6 && area(pts) > 1e-4 && radii(pts, s)) || radii(parseContour(DEFAULT_CONTOUR), s)!;
-  return shape(x);
+  return shape(glyphRaw(parseContour(p.contour), p.skew + (p.skewEnd - p.skew) * batchU(index, count)));
+}
+
+/** The raw cycle (before shape()): radius vs angle of flat points `pts` at skew s (fallback as glyphTable). */
+export function glyphRaw(pts: readonly number[], s: number): Float64Array {
+  return (pts.length >= 6 && area(pts) > 1e-4 && radii(pts, s)) || radii(parseContour(DEFAULT_CONTOUR), s)!;
+}
+
+/** The host's contour tracer: the outer contour of `ch` at a font weight (100…900). */
+export type ContourOf = (ch: string, weight: number) => string;
+
+/** Glyph contour batch settings (the mode's params). */
+export interface GlyphBatch {
+  /** 0 = next characters, 1 = sweep weight (and skew), 2 = sweep skew. */
+  batch: number;
+  weight: number;
+  weightEnd: number;
+}
+
+/** The font weight (a multiple of 100) waveform `index` of a batch traces at. */
+export function glyphWeight(p: GlyphBatch, index: number, count: number): number {
+  const w = p.batch === 1 ? p.weight + (p.weightEnd - p.weight) * batchU(index, count) : p.weight;
+  return Math.round(w / 100) * 100;
+}
+
+/**
+ * Per-waveform inputs of a Glyph contour batch (SeedRequest.inputs): next characters
+ * (character i of the text), or the first character at the batch's weight. `chars` are the
+ * text's non-blank characters; none → no inputs (the fallback contour).
+ */
+export function glyphInputs(chars: readonly string[], p: GlyphBatch, count: number, contourOf: ContourOf): { glyph: string; contour: string }[] {
+  if (!chars.length) return [];
+  return Array.from({ length: count }, (_, i) => {
+    const ch = p.batch === 0 ? chars[i % chars.length] : chars[0];
+    return { glyph: ch, contour: contourOf(ch, glyphWeight(p, i, count)) };
+  });
 }

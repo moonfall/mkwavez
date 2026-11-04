@@ -13,10 +13,13 @@ src/
     perlin.ts           improved Perlin noise, fBm, seeded NoiseField, loop-seamless pnoise
     generators/         basic, formula (FormulaFn interface only), Perlin, CA, presets,
                         paramModes.ts (further parameter modes: library entry + pure
-                        render(params, seed, index, count); dynamical.ts, …),
-                        waveFunctions.ts (the formulas' waveform functions sine(),
-                        tri(), saw(), square(), pulse(): raw cycles at a phase),
-                        asFormula.ts (basic presets' source expressions),
+                        render(params, seed, index, count); dynamical.ts, …; each
+                        generator also exposes its raw cycle before shape(), e.g.
+                        caRawGenerations, karplusRaw, rdRaw),
+                        waveFunctions.ts (the formulas' waveform functions sine() …
+                        glyph(): raw cycles sampled at a phase, per-render memo),
+                        asFormula.ts ("Edit as formula": a library entry's params →
+                        the equivalent formula; basic presets' source expressions),
                         seed.ts (Seed library entries + seedTable/seedBatch),
                         renderRecipe() to re-render a table from its recipe
                         (mutations need env.resolveTable for parent data)
@@ -712,16 +715,26 @@ the C++ tests compare against, so a change here that alters those numbers fails
   needs an expression parser for the same small language (Math functions, `pnoise`,
   ternaries; some presets use JS array idioms like `[...Array(n)].reduce`, which would
   need a `sum(k, n, expr)` builtin or similar) plus the waveform functions of
-  `core/generators/waveFunctions.ts` (pure core code over the basic generators' raw
-  cycles). Formula recipes store the expression text, so tables still carry provenance.
-- **Formula waveform functions** (`waveFunctions(seed)`, passed to every FormulaFn as its
-  7th argument, built per table by `formulaTable`): each returns its generator's cycle
-  *before* shape() at phase x — on the 2048-sample grid (x·2048/2π within 1e-9 of an
-  integer) the generator's own sample, so `saw(p)` renders bit-identically to the Saw
-  preset; between grid points the basic waves sum their 72 harmonics in closed form and
-  pulse is the naive pulse. Raw rather than normalised values because shape() of an
-  already-shaped float64 cycle differs from the original in a few near-zero samples
-  (≈1e-15), which would break the bit-identity.
+  `core/generators/waveFunctions.ts` (pure core code: each calls a generator's raw-cycle
+  function, so the C++ generators can back them; "Edit as formula" output and the glyph
+  contour literals are plain strings, numbers and arrays). Formula recipes store the
+  expression text, so tables still carry provenance.
+- **Formula waveform functions** (`waveFunctions(seed, memo)`, passed to every FormulaFn
+  as its 7th argument, built per table by `formulaTable`): each returns its generator's
+  cycle *before* shape() at phase x — on the 2048-sample grid (x·2048/2π within 1e-9 of an
+  integer) the generator's own sample, so `saw(p)` or the formula "Edit as formula" writes
+  for a mode renders bit-identically (tested for every mode, random params, seeds and batch
+  sizes); between grid points the basic waves sum their 72 harmonics in closed form, pulse
+  is the naive pulse, perlin is evaluated directly and the rest interpolate (Catmull-Rom).
+  Raw rather than normalised values because shape() of an already-shaped float64 cycle
+  differs from the original in a few near-zero samples (≈1e-15), which would break the
+  bit-identity. Whole-cycle generators are memoised per render (`CycleMemo`, LRU 32, plus a
+  last-arguments fast path); loop-bound arguments (CA / Life generation, RD step, sequence
+  position) are range-checked so a formula can't hang the page. "Edit as formula" writes
+  batch sweeps in the generators' own arithmetic (`a+(b-a)*u`, `start+k*n`,
+  `pow(|b−a|+1,u)-1` for Karplus passes) and numbers that read back exactly; Glyph contours
+  become compact string literals (2 base64url characters per coordinate k/1000, exact
+  because traced contours have 3 decimals).
 - Cross-version determinism of re-rendering is not guaranteed (no recipe/version tag), so
   sessions store samples except for `basic` / `pulse` waveforms verified bit-exact at save
   time (with a hash checked at load); exported files always carry samples.

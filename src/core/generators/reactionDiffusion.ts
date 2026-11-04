@@ -114,7 +114,7 @@ const clone = (s: RdState): RdState => ({ u: s.u.slice(), v: s.v.slice(), step: 
  * The ring's V after `step` steps. `cache` (default: a module-level memo of recent
  * simulations) only saves time; a port can pass its own or none.
  */
-export function rdState(p: RdParams, seed: number, step: number, cache: StepCache<RdState> = defaultCache): Float64Array {
+export function rdState(p: Pick<RdParams, 'system' | 'feed' | 'kill' | 'cells' | 'spots'>, seed: number, step: number, cache: StepCache<RdState> = defaultCache): Float64Array {
   const preset = RD_PRESETS[Math.round(p.system)];
   const F = preset ? preset.feed : clamp(p.feed, 0, 0.1);
   const k = preset ? preset.kill : clamp(p.kill, 0, 0.1);
@@ -133,6 +133,11 @@ export function rdState(p: RdParams, seed: number, step: number, cache: StepCach
 /** Table `index` of a batch: V after start + index·steps steps. */
 export function rdTable(p: RdParams, seed: number, index: number): Float32Array {
   const steps = clamp(Math.round(p.steps), 1, 1000);
+  return shape(rdRaw(p, seed, Math.max(0, Math.round(p.start)) + index * steps));
+}
+
+/** The raw cycle (before shape()): V around the ring after `step` steps, resampled. */
+export function rdRaw(p: Pick<RdParams, 'system' | 'feed' | 'kill' | 'cells' | 'spots'>, seed: number, step: number): Float64Array {
   // A pattern that died out (V uniform to 1e-6) is silence, not amplified residue.
-  return shape(resamplePeriodic(rdState(p, seed, Math.max(0, Math.round(p.start)) + index * steps), 1e-6));
+  return resamplePeriodic(rdState(p, seed, step), 1e-6);
 }

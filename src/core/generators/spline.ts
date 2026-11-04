@@ -33,6 +33,14 @@ export function splinePoints(p: SplineParams, seed: number, index: number, count
   const u = batchU(index, count);
   const addPoints = Math.round(p.batch) === 1;
   const M = clamp(Math.round(p.points) + (addPoints ? index : 0), 3, MAX_POINTS + 64);
+  return splinePointsAt(M, addPoints ? p.jitter : p.jitter + (p.jitterEnd - p.jitter) * u, seed);
+}
+
+/** Most control points a spline takes (points + one per batch waveform). */
+export const SPLINE_MAX_POINTS = MAX_POINTS + 64;
+
+/** M seeded control points (M already rounded / clamped) at jitter J. */
+export function splinePointsAt(M: number, J: number, seed: number): number[] {
   const r = new Prng(seed);
   // Base values and jitter directions, drawn in pairs so point j never depends on M.
   const base: number[] = [];
@@ -41,16 +49,19 @@ export function splinePoints(p: SplineParams, seed: number, index: number, count
     base.push(r.bipolar());
     dir.push(r.bipolar());
   }
-  const J = addPoints ? p.jitter : p.jitter + (p.jitterEnd - p.jitter) * u;
   return base.map((b, j) => b + J * dir[j]);
 }
 
 export function splineTable(p: SplineParams, seed: number, index: number, count: number): Float32Array {
-  const P = splinePoints(p, seed, index, count);
+  return shape(splineRaw(splinePoints(p, seed, index, count), p.kind, p.tension));
+}
+
+/** The raw cycle (before shape()) through control points P (kind 0 cardinal, 1 B-spline). */
+export function splineRaw(P: readonly number[], kind: number, tension: number): Float64Array {
   const M = P.length;
   const at = (j: number) => P[((j % M) + M) % M];
-  const tau = clamp(p.tension, 0, 1);
-  const bspline = Math.round(p.kind) === 1;
+  const tau = clamp(tension, 0, 1);
+  const bspline = Math.round(kind) === 1;
   const x = new Float64Array(TABLE_SIZE);
   for (let i = 0; i < TABLE_SIZE; i++) {
     const s = (i * M) / TABLE_SIZE;
@@ -71,5 +82,5 @@ export function splineTable(p: SplineParams, seed: number, index: number, count:
       x[i] = (2 * f3 - 3 * f2 + 1) * p1 + (f3 - 2 * f2 + f) * m1 + (-2 * f3 + 3 * f2) * p2 + (f3 - f2) * m2;
     }
   }
-  return shape(x);
+  return x;
 }

@@ -100,7 +100,7 @@ const defaultCache = new StepCache<Board>();
 const clone = (b: Board): Board => ({ cells: b.cells.slice(), rng: b.rng });
 
 /** The board after `generation` generations (row-major, size × size). `cache` only saves time. */
-export function lifeBoard(p: LifeParams, seed: number, generation: number, cache: StepCache<Board> = defaultCache): Uint8Array {
+export function lifeBoard(p: Pick<LifeParams, 'size' | 'density' | 'rule'>, seed: number, generation: number, cache: StepCache<Board> = defaultCache): Uint8Array {
   const size = clamp(Math.round(p.size), 8, 64);
   const density = clamp(p.density, 0.05, 0.95);
   const ruleIdx = clamp(Math.round(p.rule), 0, LIFE_RULES.length - 1);
@@ -149,10 +149,14 @@ export function lifeLine(cells: Uint8Array, size: number, read: number): number[
 
 /** Table `index` of a batch: generation start + index·step, read as held steps. */
 export function lifeTable(p: LifeParams, seed: number, index: number): Float32Array {
+  return shape(lifeRaw(p, seed, Math.max(0, Math.round(p.start)) + index * clamp(Math.round(p.step), 1, 16)));
+}
+
+/** The raw cycle (before shape()) of generation `gen`: the read line as held steps. */
+export function lifeRaw(p: Pick<LifeParams, 'size' | 'density' | 'rule' | 'read'>, seed: number, gen: number): Float64Array {
   const size = clamp(Math.round(p.size), 8, 64);
-  const gen = Math.max(0, Math.round(p.start)) + index * clamp(Math.round(p.step), 1, 16);
   const line = lifeLine(lifeBoard(p, seed, gen), size, p.read);
   const x = new Float64Array(TABLE_SIZE);
   for (let i = 0; i < TABLE_SIZE; i++) x[i] = line[Math.floor((i * size) / TABLE_SIZE)];
-  return shape(x);
+  return x;
 }

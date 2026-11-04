@@ -635,6 +635,29 @@ async function seedChecks(page, tlCount) {
     'Revert to defaults restores the sliders and the expression',
   );
 
+  // Edit as formula on parameter modes: the formula renders the same waveforms, bit for bit.
+  const accept = (d) => d.accept();
+  page.on('dialog', accept);
+  for (const [q, name, fn] of [
+    ['cellular', 'Noise & automata › Cellular automaton', 'ca('],
+    ['karplus', 'Simulations › Karplus-Strong snapshots', 'ks('],
+    ['reaction', 'Simulations › Reaction-diffusion ring', 'rd('],
+    ['glyph', 'Builders › Glyph contour', 'glyph('],
+  ]) {
+    await pick(q);
+    assert((await title()) === name, `${name} selected`);
+    await page.click('#seed-strip .gen-card:nth-child(3)');
+    await page.click('#seed-add-shown');
+    const op = (await lastRecipe()).op;
+    await page.click('#seed-as-formula');
+    const expr = await page.inputValue('#seed-expr');
+    assert((await title()) === 'Custom › Blank formula' && expr.startsWith(fn), `${name}: Edit as formula writes ${expr.slice(0, 48)}…`);
+    await page.click('#seed-strip .gen-card:nth-child(3)');
+    await page.click('#seed-add-shown');
+    assert((await lastTwoSame()) && (await lastRecipe()).op === 'formula' && op !== 'formula', `${name}: the formula renders the same waveform (#3)`);
+    await undoTo(n0);
+  }
+  page.off('dialog', accept);
   await pick('saw');
   await page.click('#seed-source-builtin');
   assert((await page.inputValue('#seed-expr')) === 'saw(p)' && (await tlCount()) === n0, 'Saw back on its built-in function; adds undone');

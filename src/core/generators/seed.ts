@@ -133,12 +133,12 @@ export function seedParams(entry: SeedEntry, over: Readonly<Record<string, numbe
   return out;
 }
 
-/** Formula calls that use the seed. */
-const SEEDED_CALL = /\bpnoise\s*\(/;
+/** Formula calls that may use the seed: pnoise() and the seeded waveform functions. */
+const SEEDED_CALL = /\b(pnoise|perlin|ca|ks|additive|rd|life|spline)\s*\(/;
 
 /**
  * True when the seed changes the result: Perlin, CA, a formula (or a basic preset's
- * expression) that calls pnoise(), or a parameter mode that is
+ * expression) that calls pnoise() or a seeded waveform function, or a parameter mode that is
  * seeded for these params (defaults when omitted).
  */
 export function seedUsesRandomness(

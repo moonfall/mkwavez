@@ -104,10 +104,13 @@ export function euclid(k: number, n: number): number[] {
 
 /** The raw values of table `index`, before the constant-window guard. */
 function rawValues(p: SequenceParams, index: number, shift: number): number[] {
-  const n = Math.max(2, Math.min(64, Math.round(p.steps)));
-  const off = Math.max(0, Math.round(p.offset)) + shift;
-  const adv = Math.max(0, Math.round(p.advance)) * index;
-  switch (Math.round(p.source)) {
+  return valuesAt(p.source, p.steps, Math.max(0, Math.round(p.offset)) + shift, Math.max(0, Math.round(p.advance)) * index, p.pulses);
+}
+
+/** Window values: digits / gaps from off + adv, Collatz from 27 + off + adv, Euclidean pulses advanced by adv. */
+function valuesAt(source: number, steps: number, off: number, adv: number, pulses: number): number[] {
+  const n = Math.max(2, Math.min(64, Math.round(steps)));
+  switch (Math.round(source)) {
     case 1:
       return Array.from({ length: n }, (_, j) => digit(E_DIGITS, off + adv + j));
     case 2:
@@ -115,7 +118,7 @@ function rawValues(p: SequenceParams, index: number, shift: number): number[] {
     case 3:
       return primeGaps(off + adv, n);
     case 4: {
-      const k0 = Math.max(1, Math.min(n - 1, Math.round(p.pulses)));
+      const k0 = Math.max(1, Math.min(n - 1, Math.round(pulses)));
       return euclid(1 + ((k0 - 1 + adv) % (n - 1)), n);
     }
     default:
@@ -133,13 +136,29 @@ export function sequenceValues(p: SequenceParams, index: number): number[] {
   return v;
 }
 
+/**
+ * The values at window position `pos` (digits / gaps: index; Collatz: start 27 + pos;
+ * Euclidean: pulses advanced by pos), with the same constant-window guard.
+ */
+export function sequenceValuesAt(source: number, steps: number, pos: number, pulses: number): number[] {
+  const euclidean = Math.round(source) === 4;
+  const at = (shift: number) => (euclidean ? valuesAt(source, steps, shift, pos, pulses) : valuesAt(source, steps, pos + shift, 0, pulses));
+  let v = at(0);
+  for (let shift = 1; shift < 1024 && v.every((x) => x === v[0]); shift++) v = at(shift);
+  return v;
+}
+
 export function sequenceTable(p: SequenceParams, index: number): Float32Array {
-  const v = sequenceValues(p, index);
+  return shape(sequenceRaw(sequenceValues(p, index), p.smoothing));
+}
+
+/** The raw cycle (before shape()) of window values v: normalised steps, smoothed by `smoothing`. */
+export function sequenceRaw(v: readonly number[], smoothing: number): Float64Array {
   const n = v.length;
   const lo = Math.min(...v);
   const span = Math.max(...v) - lo || 1;
   const y = v.map((x) => ((x - lo) / span) * 2 - 1);
-  const s = Math.max(0, Math.min(1, p.smoothing));
+  const s = Math.max(0, Math.min(1, smoothing));
   const x = new Float64Array(TABLE_SIZE);
   for (let i = 0; i < TABLE_SIZE; i++) {
     const f = (i * n) / TABLE_SIZE;
@@ -149,5 +168,5 @@ export function sequenceTable(p: SequenceParams, index: number): Float32Array {
     const c = a + (b - a) * (0.5 - 0.5 * Math.cos(Math.PI * (f - j)));
     x[i] = (1 - s) * a + s * c;
   }
-  return shape(x);
+  return x;
 }

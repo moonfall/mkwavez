@@ -47,18 +47,23 @@ export function caStep(rule: number, row: Uint8Array, scratch: Uint8Array): void
  * so any generation is reproducible from (rule, cells, seed, generation).
  */
 export function caGenerations(p: CaParams, seed: number, start: number, count: number): Float32Array[] {
+  return caRawGenerations(p, seed, start, count).map((x) => shape(x));
+}
+
+/** The raw cycles (±1 steps, before shape()) of caGenerations(). */
+export function caRawGenerations(p: CaParams, seed: number, start: number, count: number): Float64Array[] {
   const cells = Math.max(2, Math.round(p.cells));
   const r = new Prng(seed);
   const row = new Uint8Array(cells);
   const scratch = new Uint8Array(cells);
   randomRow(r, cells, row);
-  const out: Float32Array[] = [];
+  const out: Float64Array[] = [];
   for (let g = 0; g < start + count; g++) {
     if (isUniform(row)) randomRow(r, cells, row);
     if (g >= start) {
       const x = new Float64Array(TABLE_SIZE);
       for (let i = 0; i < TABLE_SIZE; i++) x[i] = row[Math.floor((i * cells) / TABLE_SIZE)] * 2 - 1;
-      out.push(shape(x));
+      out.push(x);
     }
     caStep(p.rule, row, scratch);
   }
