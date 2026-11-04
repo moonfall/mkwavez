@@ -308,14 +308,19 @@ then band-limited, DC-free, phase-aligned and normalised like every waveform.
 | `pnoise(freq, z, oct, pers)` | loop-seamless Perlin noise at the current phase (seeded) |
 
 **Waveform functions** take a phase `x` in radians first (`saw(2*p)`, `square(p + u)`,
-`ca(p + 0.5, 30, 32, n)`), then the arguments of the library entry they reproduce. Each
-returns the cycle its generator builds before the pipeline normalises it, so a lone call
-at `x = p` renders exactly (bit for bit) like the entry; levels are the generator's own
-(saw peaks ≈ 1.85, square ≈ 0.93, triangle ≈ 1.23, CA ±1, …). Functions marked *seed?*
-use the Seed shown in the batch row unless given an explicit last argument. Whole-waveform
-generators (all but the basic waves and `perlin`) run once per distinct argument set per
-waveform and are then looked up, so they stay fast; use `n` / `u` in the arguments to vary
-them across a batch.
+`ca(p + 0.5, 30, 32, n)`), then the arguments of the library entry they reproduce. Every
+function's cycle peaks at ±1 (the generator's cycle divided by its peak; DC is kept, so a
+pulse stays ±1 and a Life row 0 / 1), so `ks(p, …) + perlin(p, …)` or `tanh(3*saw(p))`
+mix and shape alike. A lone call at `x = p` renders like its library entry (within 1e-6;
+the entry itself still renders through its generator, unchanged). Functions marked
+*seed?* use the Seed shown in the batch row unless given an explicit last argument.
+Whole-waveform generators (all but the basic waves and `perlin`) run once per distinct
+argument set per waveform and are then looked up, so they stay fast; use `n` / `u` in the
+arguments to vary them across a batch. Every argument must be a finite number (glyph's
+contour a string); arguments that set the cost are bounded (CA cells ≤ 256, generation ≤
+1000; Life generation ≤ 2000; RD step ≤ 70000; ks passes ≤ 4096; seq pos ≤ 5000; dyn
+iterations 1–64), and anything else is an error naming the function and argument. In the
+Seed tab, **ƒ Functions** in the legend opens this list.
 
 | Function | Waveform |
 | --- | --- |

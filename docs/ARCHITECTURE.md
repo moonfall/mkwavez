@@ -719,18 +719,23 @@ the C++ tests compare against, so a change here that alters those numbers fails
   function, so the C++ generators can back them; "Edit as formula" output and the glyph
   contour literals are plain strings, numbers and arrays). Formula recipes store the
   expression text, so tables still carry provenance.
-- **Formula waveform functions** (`waveFunctions(seed, memo)`, passed to every FormulaFn
-  as its 7th argument, built per table by `formulaTable`): each returns its generator's
-  cycle *before* shape() at phase x — on the 2048-sample grid (x·2048/2π within 1e-9 of an
-  integer) the generator's own sample, so `saw(p)` or the formula "Edit as formula" writes
-  for a mode renders bit-identically (tested for every mode, random params, seeds and batch
-  sizes); between grid points the basic waves sum their 72 harmonics in closed form, pulse
-  is the naive pulse, perlin is evaluated directly and the rest interpolate (Catmull-Rom).
-  Raw rather than normalised values because shape() of an already-shaped float64 cycle
-  differs from the original in a few near-zero samples (≈1e-15), which would break the
-  bit-identity. Whole-cycle generators are memoised per render (`CycleMemo`, LRU 32, plus a
-  last-arguments fast path); loop-bound arguments (CA / Life generation, RD step, sequence
-  position) are range-checked so a formula can't hang the page. "Edit as formula" writes
+- **Formula waveform functions** (`waveFunctions(seed, memo, check)`, passed to every
+  FormulaFn as its 7th argument, built per table by `formulaTable`): each returns its
+  generator's cycle *before* shape(), divided by that cycle's peak (normalised to ±1, DC
+  kept), at phase x — on the 2048-sample grid (x·2048/2π within 1e-9 of an integer) the
+  generator's own sample; between grid points the basic waves sum their 72 harmonics in
+  closed form, pulse is the naive pulse, perlin is evaluated directly and the rest
+  interpolate (Catmull-Rom). Scaling commutes with shape(), so `saw(p)` or the formula
+  "Edit as formula" writes for a mode renders the mode's waveforms within 1e-6 after
+  shape() (measured ≤ 4e-9; tested for every mode, random params, seeds and batch sizes).
+  Unedited library entries keep rendering through their generators, so defaults and stored
+  recipes stay bit-identical (tests/libraryDefaults.test.ts: defaults and random params,
+  generated on main). Whole-cycle generators are memoised per render (`CycleMemo`, LRU 32,
+  plus a last-arguments fast path). Every argument is validated (finite number, glyph's
+  contour a string: else a RangeError naming function and argument); cost-setting ones are
+  bounded (`WAVE_FUNCTION_LIMITS`: what the library entries can ask for at N = 64), and
+  `check` — the render's abort deadline — runs before each cycle is generated and between
+  RD / Life simulation chunks, so a formula can't hang the page. "Edit as formula" writes
   batch sweeps in the generators' own arithmetic (`a+(b-a)*u`, `start+k*n`,
   `pow(|b−a|+1,u)-1` for Karplus passes) and numbers that read back exactly; Glyph contours
   become compact string literals (2 base64url characters per coordinate k/1000, exact

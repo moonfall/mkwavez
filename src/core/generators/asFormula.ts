@@ -3,7 +3,8 @@
  * functions (waveFunctions.ts), from its current parameter values. Batch sweeps become
  * n / u terms written in exactly the generators' arithmetic (`a+(b-a)*u`, `start+n`, …)
  * and numbers are written so they read back exactly, so the formula renders the same
- * waveforms bit for bit (tests/formulaFunctions.test.ts).
+ * waveforms after shape() (within 1e-6: the functions are peak-normalised; in practice
+ * ≤ 4e-9, tests/formulaFunctions.test.ts).
  */
 import { RD_PRESETS } from './reactionDiffusion';
 import { KS_MAX_PASS } from './karplus';

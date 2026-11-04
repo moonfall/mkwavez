@@ -7,6 +7,7 @@ import {
   contourPoints,
   CycleMemo,
   DEFAULT_CONTOUR,
+  FormulaAborted,
   formulaTable,
   glyphInputs,
   modeFormula,
@@ -36,6 +37,11 @@ const maxDiff = (a: ArrayLike<number>, b: ArrayLike<number>) => {
   for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i] - b[i]));
   return m;
 };
+/** Function formulas match their library entries after shape() within this (in practice ≈ 1e-7: float32 rounding). */
+const TOL = 1e-6;
+const close = (a: ArrayLike<number>, b: ArrayLike<number>) => maxDiff(a, b) < TOL;
+/** Worst difference seen per mode (reported by the equivalence test). */
+const worst: Record<string, number> = {};
 const blank = seedEntry('blank-formula')!;
 /** The formula `expr` rendered as a batch (through the Blank formula entry, as the UI does). */
 const formulaBatch = (expr: string, seed: number, count: number) =>
@@ -54,22 +60,50 @@ describe('basic waveform functions (Part 1)', () => {
     ['square', 'square'],
   ] as const;
 
-  it('sine(p) / tri(p) / saw(p) / square(p) render exactly the basic generators', () => {
+  it('sine(p) / tri(p) / saw(p) / square(p) render the basic generators (within 1e-6 after shape)', () => {
     for (const [fn, wave] of WAVES) {
       const [t] = formulaBatch(`${fn}(p)`, 1, 1);
-      expect(same(t, basicWave(wave, 1)), fn).toBe(true);
+      expect(maxDiff(t, basicWave(wave, 1)), fn).toBeLessThan(TOL);
     }
   });
 
-  it('pulse(p, w) renders exactly the Pulse generator at any width', () => {
+  it('outputs are normalised: every basic wave peaks at ±1', () => {
+    const fx = waveFunctions(1);
+    const h = (2 * Math.PI) / TABLE_SIZE;
+    for (const w of ['sine', 'tri', 'saw', 'square'] as const) {
+      let m = 0;
+      for (let i = 0; i < TABLE_SIZE; i++) m = Math.max(m, Math.abs(fx[w](i * h)));
+      expect(m, w).toBeCloseTo(1, 12);
+    }
+    expect(fx.pulse(0.1, 0.25)).toBe(1);
+    expect(fx.pulse(3, 0.25)).toBe(-1);
+  });
+
+  it('pulse(p, w) renders the Pulse generator at any width', () => {
     for (const w of [0.25, 0.1, 0.05, 0.5, 0.02, 0.37, 1 / 3]) {
       const [t] = formulaBatch(`pulse(p, ${w})`, 1, 1);
-      expect(same(t, pulse(w)), `pulse ${w}`).toBe(true);
+      expect(maxDiff(t, pulse(w)), `pulse ${w}`).toBeLessThan(TOL);
     }
   });
 
   it('off-grid phases evaluate the closed-form band-limited sum', () => {
     const fx = waveFunctions(1);
+    const peaks = { saw: fx.saw(0), square: 0, tri: 0 };
+    const h0 = (2 * Math.PI) / TABLE_SIZE;
+    // The normalisation constants: each cycle's peak on the grid.
+    const raw = (k: number, x: number, f: (k: number) => number) => f(k) * Math.sin(k * x);
+    const gridPeak = (f: (k: number) => number) => {
+      let m = 0;
+      for (let i = 0; i < TABLE_SIZE; i++) {
+        let v = 0;
+        for (let k = 1; k <= KMAX; k++) v += raw(k, i * h0, f);
+        m = Math.max(m, Math.abs(v));
+      }
+      return m;
+    };
+    peaks.saw = gridPeak((k) => 1 / k);
+    peaks.square = gridPeak((k) => (k % 2 ? 1 / k : 0));
+    peaks.tri = gridPeak((k) => (k % 2 ? (((k - 1) / 2) % 2 ? -1 : 1) / (k * k) : 0));
     for (const x of [0.1234, 1, 2.5, -3.3, 100.7, 2 * Math.PI * 0.30001]) {
       let saw = 0;
       let sq = 0;
@@ -79,10 +113,10 @@ describe('basic waveform functions (Part 1)', () => {
         if (k % 2) sq += Math.sin(k * x) / k;
         if (k % 2) tri += ((((k - 1) / 2) % 2 ? -1 : 1) * Math.sin(k * x)) / (k * k);
       }
-      expect(Math.abs(fx.saw(x) - saw)).toBeLessThan(1e-11);
-      expect(Math.abs(fx.square(x) - sq)).toBeLessThan(1e-11);
-      expect(Math.abs(fx.tri(x) - tri)).toBeLessThan(1e-11);
-      expect(fx.sine(x)).toBe(Math.sin(x));
+      expect(Math.abs(fx.saw(x) - saw / peaks.saw)).toBeLessThan(1e-9);
+      expect(Math.abs(fx.square(x) - sq / peaks.square)).toBeLessThan(1e-9);
+      expect(Math.abs(fx.tri(x) - tri / peaks.tri)).toBeLessThan(1e-9);
+      expect(Math.abs(fx.sine(x) - Math.sin(x))).toBeLessThan(1e-12);
     }
     // Continuous across grid points (grid value vs closed form just beside it).
     const h = (2 * Math.PI) / TABLE_SIZE;
@@ -101,7 +135,7 @@ describe('basic waveform functions (Part 1)', () => {
     expect(maxDiff(sq, basicWave('square', 1))).toBeLessThan(1e-6);
     // pulse(p, 0.5) is a naive square: band-limited by shape() like the Pulse preset.
     const [p50] = formulaBatch('pulse(p, 0.5)', 1, 1);
-    expect(same(p50, pulse(0.5))).toBe(true);
+    expect(close(p50, pulse(0.5))).toBe(true);
   });
 
   it('basic presets: Built-in function (default) renders the generator; Formula renders the naive formula', () => {
@@ -118,8 +152,8 @@ describe('basic waveform functions (Part 1)', () => {
           expect(same(t.data, gen[i].data)).toBe(true);
         });
       }
-      // The built-in function through the formula path: bit-identical too.
-      formulaBatch(e.fn!, 7, 2).forEach((d) => expect(same(d, gen[0].data), e.id).toBe(true));
+      // The built-in function through the formula path: within 1e-6 after shape().
+      formulaBatch(e.fn!, 7, 2).forEach((d) => expect(maxDiff(d, gen[0].data), e.id).toBeLessThan(TOL));
       // Formula source: the naive formula (exactly what "Edit as formula" gave before), recorded as a formula.
       const fr = req(e, { source: 'formula', count: 3 });
       const f = seedBatch(fr, fnFor(fr));
@@ -138,7 +172,7 @@ describe('basic waveform functions (Part 1)', () => {
     }
   });
 
-  it('Pulse: both sources render exactly the Pulse parameter mode (width sweep via u)', () => {
+  it('Pulse: both sources render the Pulse parameter mode (width sweep via u)', () => {
     const e = seedEntry('pulse')!;
     const sets: Record<string, number>[] = [{}, { width: 0.4, widthEnd: 0.1 }, { width: 0.3, widthEnd: 0.3 }, { width: 0.02, widthEnd: 0.5 }];
     for (const params of sets) {
@@ -147,12 +181,12 @@ describe('basic waveform functions (Part 1)', () => {
         for (const source of ['builtin', 'formula'] as ExprSource[]) {
           const expr = sourceExpr(e, source, seedParams(e, params));
           const f = formulaBatch(expr, 7, count);
-          f.forEach((d, i) => expect(same(d, gen[i].data), `${source} ${expr} #${i}`).toBe(true));
+          f.forEach((d, i) => expect(maxDiff(d, gen[i].data), `${source} ${expr} #${i}`).toBeLessThan(TOL));
         }
         const fr = req(e, { params, count, source: 'formula' });
         seedBatch(fr, fnFor(fr)).forEach((t, i) => {
           expect(t.recipe.op).toBe('formula');
-          expect(same(t.data, gen[i].data)).toBe(true);
+          expect(maxDiff(t.data, gen[i].data)).toBeLessThan(TOL);
         });
         // Built-in, unedited: still the pulse generator (recipe op 'pulse').
         expect(seedBatch(req(e, { params, count, source: 'builtin' }))[0].recipe.op).toBe('pulse');
@@ -189,7 +223,7 @@ describe('parameter modes as functions (Part 2)', () => {
     return out;
   };
 
-  it('every parameter mode has a formula that renders its batch bit for bit', () => {
+  it('every parameter mode has a formula that renders its batch (within 1e-6 after shape)', () => {
     let s = 12345;
     const rnd = () => ((s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 4294967296);
     const chars = ['m', 'k', 'w'];
@@ -208,12 +242,17 @@ describe('parameter modes as functions (Part 2)', () => {
           const expr = modeFormula(e, params, { glyphChars: chars, contourOf: fakeTrace })!;
           expect(expr, e.id).toBeTruthy();
           const f = formulaBatch(expr, seed, count);
-          f.forEach((d, i) => expect(same(d, gen[i].data), `${e.id} ${JSON.stringify(over)} seed ${seed} #${i}/${count}: ${expr.slice(0, 120)}`).toBe(true));
+          f.forEach((d, i) => {
+            const diff = maxDiff(d, gen[i].data);
+            worst[e.id] = Math.max(worst[e.id] ?? 0, diff);
+            expect(diff, `${e.id} ${JSON.stringify(over)} seed ${seed} #${i}/${count}: ${expr.slice(0, 120)}`).toBeLessThan(TOL);
+          });
         }
       }
       exact.push(e.id);
     }
     expect(exact.length).toBe(modes.length);
+    console.log('Edit as formula: worst |difference| after shape() per mode', worst);
     expect(exact).toEqual(expect.arrayContaining(['pulse', 'perlin-noise', 'cellular-automaton', 'dynamical-systems', 'karplus-strong', 'additive-designer', 'number-sequences', 'reaction-diffusion', 'life-like-ca', 'spline', 'glyph-contour']));
   });
 
@@ -242,7 +281,7 @@ describe('parameter modes as functions (Part 2)', () => {
       expect(expr).not.toContain(',0.'); // compact contours, not "x,y" polylines
       const inputs = glyphInputs(chars, { batch: params.batch, weight: params.weight, weightEnd: params.weightEnd }, 6, fakeTrace);
       const gen = seedBatch(req(e, { params, count: 6, inputs }));
-      formulaBatch(expr, 7, 6).forEach((d, i) => expect(same(d, gen[i].data), `${JSON.stringify(over)} #${i}`).toBe(true));
+      formulaBatch(expr, 7, 6).forEach((d, i) => expect(maxDiff(d, gen[i].data), `${JSON.stringify(over)} #${i}`).toBeLessThan(TOL));
     }
     // The compact form decodes to exactly the parsed polyline; others fall back to the plain string.
     for (const c of [DEFAULT_CONTOUR, fakeTrace('q', 700), '0.200,0.200 0.800,0.200 0.800,0.800 0.200,0.800', '-1.500,0.001 2.047,-2.048']) {
@@ -262,7 +301,7 @@ describe('parameter modes as functions (Part 2)', () => {
     const c = formulaBatch('ca(p, 30, 32, 0, 5)', 6, 1)[0];
     expect(same(a, b)).toBe(false);
     expect(same(a, c)).toBe(true);
-    expect(same(formulaBatch('perlin(p, 2, 0, 4, 0.5, 9)', 1, 1)[0], formulaBatch('pnoise(2, 0, 4, 0.5)', 9, 1)[0])).toBe(true);
+    expect(close(formulaBatch('perlin(p, 2, 0, 4, 0.5, 9)', 1, 1)[0], formulaBatch('pnoise(2, 0, 4, 0.5)', 9, 1)[0])).toBe(true);
   });
 });
 
@@ -316,10 +355,48 @@ describe('memoisation', () => {
     expect(performance.now() - t0).toBeLessThan(2000);
   });
 
-  it('bad arguments are errors, not hangs', () => {
-    expect(() => formulaBatch('ca(p, 30, 32, 1e9)', 1, 1)).toThrow(/gen/);
-    expect(() => formulaBatch('rd(p, 0, -5)', 1, 1)).toThrow(/step/);
-    expect(() => formulaBatch('saw(p/0*0)', 1, 1)).toThrow();
+  it('bad arguments are clear errors, not hangs', () => {
+    expect(() => formulaBatch('ca(p, 30, 32, 1e9)', 1, 1)).toThrow(/ca\(\): gen must be from 0 to 1000/);
+    expect(() => formulaBatch('ca(p, 30, 4096, 100000)', 1, 1)).toThrow(/ca\(\): cells/);
+    expect(() => formulaBatch('rd(p, 0, -5)', 1, 1)).toThrow(/rd\(\): step/);
+    expect(() => formulaBatch('saw(p/0*0)', 1, 1)).toThrow(/saw\(\): the phase x must be a finite number/);
+    // NaN iterations used to loop forever.
+    expect(() => formulaBatch('dyn(p, 0, u, sqrt(n-1))', 1, 2)).toThrow(/dyn\(\): iters must be a finite number \(got NaN\)/);
+    expect(() => formulaBatch('dyn(p, "0")', 1, 1)).toThrow(/dyn\(\): map must be a finite number \(got "0"\)/);
+    expect(() => formulaBatch('life(p, NaN)', 1, 1)).toThrow(/life\(\): rule/);
+    expect(() => formulaBatch('glyph(p, "", NaN)', 1, 1)).toThrow(/glyph\(\): skew/);
+    expect(() => formulaBatch('glyph(p, 5)', 1, 1)).toThrow(/glyph\(\): contour must be a string/);
+    expect(() => formulaBatch('perlin(p, 2, 0, 1e9)', 1, 1)).toThrow(/perlin\(\): oct/);
+    expect(() => formulaBatch('ks(p, 0, 0.5, 0.2, 96, 0, Infinity)', 1, 1)).toThrow(/ks\(\): seed/);
+  });
+
+  it('every argument of every function rejects NaN, Infinity and strings', () => {
+    const fx = waveFunctions(1) as unknown as Record<string, (...a: unknown[]) => number>;
+    for (const d of WAVE_FUNCTION_DOCS) {
+      const argc = d.sig.slice(d.sig.indexOf('(') + 1, -1).split(',').length;
+      for (let i = 0; i < argc; i++)
+        for (const bad of [NaN, Infinity, '1']) {
+          if (d.name === 'glyph' && i === 1 && bad === '1') continue; // the contour is a string
+          const args: unknown[] = [0.5];
+          args[i] = bad;
+          expect(() => fx[d.name](...args), `${d.sig} arg ${i} = ${String(bad)}`).toThrow(RangeError);
+        }
+    }
+  });
+
+  it('cost is bounded: the largest allowed calls stay quick, and a render polls its abort deadline', () => {
+    for (const expr of ['ca(p, 30, 256, 1000)', 'life(p, 0, 0, 64, 0.35, 2000)', 'ks(p, 4096, 0.6, 0.2, 512, 0)', 'seq(p, 3, 64, 0, 5000)', 'dyn(p, 0, 1, 64)']) {
+      const t0 = performance.now();
+      formulaTable(compileFormula(expr), 1, 0, 1);
+      expect(performance.now() - t0, expr).toBeLessThan(1500);
+    }
+    // A long simulation stops at the deadline (checked between chunks) …
+    let calls = 0;
+    expect(() => formulaTable(compileFormula('rd(p, 0, 70000, 256, 3)'), 77, 0, 1, () => ++calls > 3)).toThrow(FormulaAborted);
+    // … and so does a formula whose arguments change every sample (a cache miss each time).
+    const t0 = performance.now();
+    expect(() => formulaTable(compileFormula('ks(p, t*4000, 0.5, 0.2, 512, 1)'), 1, 0, 1, () => performance.now() > t0 + 150)).toThrow(FormulaAborted);
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 });
 

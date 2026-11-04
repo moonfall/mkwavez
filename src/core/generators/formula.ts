@@ -50,8 +50,11 @@ export function formulaTable(
   const pnoise: PNoise = (freq = 2, z = 0, octaves = 4, persistence = 0.5) =>
     pnoiseAt(field, phase, freq, z || 0, octaves, persistence);
   const u = batchU(index, count);
-  // Fresh per table: generated cycles are memoised for this render only.
-  const fx = waveFunctions(seed);
+  // Fresh per table: generated cycles are memoised for this render only. A waveform
+  // function polls `abort()` before generating a cycle (and between simulation chunks).
+  const fx = waveFunctions(seed, undefined, () => {
+    if (abort && abort()) throw new FormulaAborted('stopped in a waveform function');
+  });
   const x = new Float64Array(TABLE_SIZE);
   for (let i = 0; i < TABLE_SIZE; i++) {
     if (abort && i % ABORT_STRIDE === 0 && abort()) throw new FormulaAborted(`stopped at sample ${i}`);

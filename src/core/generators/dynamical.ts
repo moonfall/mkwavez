@@ -123,7 +123,7 @@ export function dynamicalRaw(map: number, c: number, iterations: number, spreadI
       lo = Math.min(lo, x[i]);
       hi = Math.max(hi, x[i]);
     }
-    if (hi - lo >= 1e-6 || iters <= 1) break;
+    if (hi - lo >= 1e-6 || !(iters > 1)) break; // (also stops on NaN)
   }
   return x;
 }

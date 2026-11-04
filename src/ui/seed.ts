@@ -244,22 +244,55 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   };
 
   const legendItem = (name: string, text: string) => h('span', {}, h('b', {}, name), ` ${text}`);
-  /** The formula legend; `fnsFirst` (basic presets, a narrower row) leads with the waveform functions. */
-  const legend = (fnsFirst = false) => {
-    const fns = h(
-      'span',
-      { id: 'seed-functions', class: 'seed-fns', tabindex: 0, title: FUNCTIONS_TIP, 'aria-label': FUNCTIONS_TIP },
-      h('b', {}, 'saw(x)'),
-      ' sine tri square pulse perlin ca dyn ks additive seq rd life spline glyph',
+  /** The waveform-function reference (opened by the legend's Functions button; stays open across entries). */
+  let fnHelpOpen = false;
+  let fnBtn: HTMLButtonElement | null = null;
+  const setFnHelp = (open: boolean) => {
+    fnHelpOpen = open;
+    fnHelp.hidden = !open;
+    fnBtn?.setAttribute('aria-expanded', String(open));
+    fnBtn?.classList.toggle('seg-on', open);
+    mainDirty = true;
+  };
+  const fnHelp = h(
+    'div',
+    { id: 'seed-fn-help', class: 'seed-fn-help', role: 'region', 'aria-label': 'Waveform functions', hidden: true },
+    h(
+      'div',
+      { class: 'seed-fn-help-head' },
+      h('span', {}, 'Waveform functions — x is a phase in radians (p, 2*p, p+u); each peaks at ±1; seed? defaults to the shown seed.'),
+      h('button', { class: 'small', id: 'seed-fn-help-close', 'aria-label': 'Close the function reference', onclick: () => setFnHelp(false) }, '×'),
+    ),
+    h('dl', {}, ...WAVE_FUNCTION_DOCS.flatMap((d) => [h('dt', {}, h('code', {}, d.sig)), h('dd', {}, d.about)])),
+  );
+  /** The formula legend (and the function reference below it, when open). */
+  const legend = (): HTMLElement[] => {
+    fnBtn = h(
+      'button',
+      {
+        id: 'seed-functions',
+        class: `small seed-fns${fnHelpOpen ? ' seg-on' : ''}`,
+        'aria-expanded': String(fnHelpOpen),
+        'aria-controls': 'seed-fn-help',
+        title: FUNCTIONS_TIP,
+        onclick: () => setFnHelp(!fnHelpOpen),
+      },
+      'ƒ Functions',
     );
-    const vars = [
-      legendItem('p', 'phase 0–2π'),
-      legendItem('t', '0–1'),
-      legendItem('n', 'batch index'),
-      legendItem('u', '0–1 across batch'),
-      legendItem('pnoise', '(freq, z, oct, pers)'),
+    fnHelp.hidden = !fnHelpOpen;
+    return [
+      h(
+        'div',
+        { class: 'seed-legend' },
+        fnBtn,
+        legendItem('p', 'phase 0–2π'),
+        legendItem('t', '0–1'),
+        legendItem('n', 'batch index'),
+        legendItem('u', '0–1 across batch'),
+        legendItem('pnoise', '(freq, z, oct, pers)'),
+      ),
+      fnHelp,
     ];
-    return h('div', { class: 'seed-legend' }, ...(fnsFirst ? [fns, ...vars] : [...vars, fns]));
   };
 
   /** The formula input (formula entries and basic presets). */
@@ -379,7 +412,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       ca: 'Each generation’s cells become ±1 steps of one waveform; a batch is N consecutive generations from the start.',
     };
     if (e.mode === 'formula') {
-      edBody.replaceChildren(formulaInput(e), legend());
+      edBody.replaceChildren(formulaInput(e), ...legend());
     } else if (hasSource(e)) {
       // Basic presets: the expression (built-in function or naive formula), Pulse's sliders below it.
       const builtin = sourceOf(e) === 'builtin';
@@ -394,7 +427,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       const controls = e.mode === 'pulse' ? [h('div', { class: 'seed-params' }, ...paramControls(e))] : [];
       edBody.replaceChildren(
         h('div', { class: 'seed-source-row' }, sourceSeg(e), formulaInput(e)),
-        legend(true),
+        ...legend(),
         ...controls,
         h('p', { class: 'hint' }, `${about} `, asFormulaButton(e, () => exprOf(e))),
       );

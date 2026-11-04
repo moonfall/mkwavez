@@ -552,13 +552,13 @@ async function seedChecks(page, tlCount) {
     await page.press('#seed-search', 'Enter');
   };
   const lastRecipe = () => M(() => window.mkwavez.model.timeline.at(-1).recipe);
-  /** The last two Timeline waveforms are bit-identical. */
+  /** The last two Timeline waveforms match within 1e-6 (function formulas vs their generators). */
   const lastTwoSame = () =>
     M(() => {
       const t = window.mkwavez.model.timeline;
       const a = t.at(-2).data;
       const b = t.at(-1).data;
-      return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+      return a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
     });
   const undoTo = async (n) => {
     while ((await tlCount()) > n) await page.click('#undo');
@@ -574,6 +574,18 @@ async function seedChecks(page, tlCount) {
   );
   await page.click('#seed-add-shown');
   assert((await lastRecipe()).op === 'basic', 'built-in source adds the band-limited generator (recipe op basic)');
+  // The function reference: a button in the legend (works on touch), not only a tooltip.
+  assert(!(await page.isVisible('#seed-fn-help')), 'function reference closed by default');
+  await page.click('#seed-functions');
+  assert(
+    (await page.isVisible('#seed-fn-help')) &&
+      (await page.getAttribute('#seed-functions', 'aria-expanded')) === 'true' &&
+      (await page.textContent('#seed-fn-help')).includes('ks(x, passes'),
+    'Functions opens the waveform function reference',
+  );
+  assert(!(await M(() => document.documentElement.scrollWidth > window.innerWidth)), 'function reference: no horizontal overflow at 390px');
+  await page.click('#seed-fn-help-close');
+  assert(!(await page.isVisible('#seed-fn-help')), 'the reference closes');
   await page.click('#seed-source-formula');
   assert(
     (await page.inputValue('#seed-expr')).includes('reduce') &&
@@ -602,7 +614,7 @@ async function seedChecks(page, tlCount) {
     'Edit as formula (built-in source) writes saw(p) into Blank formula',
   );
   await page.click('#seed-add-shown');
-  assert((await lastTwoSame()) && (await lastRecipe()).op === 'formula', 'the formula saw(p) renders exactly the Saw preset');
+  assert((await lastTwoSame()) && (await lastRecipe()).op === 'formula', 'the formula saw(p) renders the Saw preset (within 1e-6)');
   await undoTo(n0);
   await pick('saw');
   await page.click('#seed-source-formula');
@@ -635,7 +647,7 @@ async function seedChecks(page, tlCount) {
     'Revert to defaults restores the sliders and the expression',
   );
 
-  // Edit as formula on parameter modes: the formula renders the same waveforms, bit for bit.
+  // Edit as formula on parameter modes: the formula renders the same waveforms (within 1e-6).
   const accept = (d) => d.accept();
   page.on('dialog', accept);
   for (const [q, name, fn] of [

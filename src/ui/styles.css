@@ -2388,26 +2388,48 @@ input.seed-expr:focus-visible {
 .seed-legend b {
   color: var(--text);
 }
-/* the waveform functions: full list in the tooltip */
-.seed-fns {
-  cursor: help;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-  flex: 0 1 auto;
-  min-width: 0;
+/* the waveform functions: a button opening the reference below the legend */
+.seed-legend button.seed-fns {
+  flex: none;
+  height: 20px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-family: var(--font-mono);
 }
-.seed-legend > span:not(.seed-fns) {
+.seed-legend > span {
   flex: none;
 }
-.seed-legend > .seed-fns:first-child {
-  flex: none;
-  max-width: 60%;
+.seed-fn-help {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  padding: 6px 8px;
+  max-height: 180px;
+  overflow: auto;
+  font-size: 12px;
 }
-.seed-fns:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.seed-fn-help[hidden] {
+  display: none;
+}
+.seed-fn-help-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.seed-fn-help dl {
+  margin: 0;
+}
+.seed-fn-help dt code {
+  font-family: var(--font-mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.seed-fn-help dd {
+  margin: 0 0 4px 12px;
+  color: var(--text-2);
 }
 /* basic presets: Built-in function | Formula, then the expression */
 .seed-source-row {
