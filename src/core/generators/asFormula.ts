@@ -77,6 +77,8 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
       return entry.fn ?? null;
     case 'pulse':
       return pulseExpr(p.width, p.widthEnd);
+    case 'supersaw':
+      return `supersaw(p, ${lit(p.voices)}, ${lerpExpr(0, p.detune)}, ${lit(p.outer)}, ${lit(p.wave)}, ${lit(p.phases)})`;
     case 'perlin': {
       const z = p.zDrift === 0 ? lit(p.z) : p.z === 0 ? `${lit(p.zDrift)}*u` : `${lit(p.z)}+${lit(p.zDrift)}*u`;
       return `perlin(p, ${lit(p.freq)}, ${z}, ${lit(p.octaves)}, ${lit(p.persistence)})`;

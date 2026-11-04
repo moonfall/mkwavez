@@ -11,7 +11,7 @@ import { basicWave, pulse, type BasicWave } from './basic';
 import { CA_RULES, caGenerations } from './ca';
 import { formulaTable, type FormulaFn } from './formula';
 import { FORMULA_PRESETS } from './formulaPresets';
-import { PARAM_MODES, paramMode, type ParamModeId, type SeedParam } from './paramModes';
+import { PARAM_MODES, paramMode, type ParamModeDef, type ParamModeId, type SeedParam } from './paramModes';
 import { batchU, DEFAULT_PERLIN, perlinTable, type PerlinParams } from './perlin';
 
 export type { SeedParam } from './paramModes';
@@ -56,7 +56,12 @@ const basic = (name: string, wave: BasicWave, fn: string, about: string, asFormu
   fn,
 });
 
-export const SEED_LIBRARY: readonly SeedEntry[] = [
+const MODES: readonly ParamModeDef[] = PARAM_MODES;
+function modeEntry(m: ParamModeDef): SeedEntry {
+  return { id: m.id, cat: m.cat, name: m.name, mode: m.mode as ParamModeId, params: m.params, about: m.about };
+}
+
+const BASE_LIBRARY: readonly SeedEntry[] = [
   basic('Sine', 'sine', 'sine(p)', 'The fundamental alone.', 'sin(p)'),
   basic(
     'Triangle',
@@ -118,9 +123,12 @@ export const SEED_LIBRARY: readonly SeedEntry[] = [
       { key: 'start', label: 'Start generation', min: 0, max: 64, step: 1, value: 0 },
     ],
   },
-  ...PARAM_MODES.map((m): SeedEntry => ({ id: m.id, cat: m.cat, name: m.name, mode: m.mode, params: m.params, about: m.about })),
+  ...MODES.filter((m) => !m.after).map(modeEntry),
   { id: 'blank-formula', cat: 'Custom', name: 'Blank formula', mode: 'formula', expr: 'sin(p) + 0.5*sin(2*p)*u' },
 ];
+
+/** Every entry in library order: modes with `after` right after that entry (e.g. Supersaw after Pulse, in Basic). */
+export const SEED_LIBRARY: readonly SeedEntry[] = BASE_LIBRARY.flatMap((e) => [e, ...MODES.filter((m) => m.after === e.id).map(modeEntry)]);
 
 export function seedEntry(id: string): SeedEntry | undefined {
   return SEED_LIBRARY.find((e) => e.id === id);
@@ -134,7 +142,7 @@ export function seedParams(entry: SeedEntry, over: Readonly<Record<string, numbe
 }
 
 /** Formula calls that may use the seed: pnoise() and the seeded waveform functions. */
-const SEEDED_CALL = /\b(pnoise|perlin|ca|ks|additive|rd|life|spline)\s*\(/;
+const SEEDED_CALL = /\b(pnoise|perlin|ca|ks|additive|rd|life|spline|supersaw)\s*\(/;
 
 /**
  * True when the seed changes the result: Perlin, CA, a formula (or a basic preset's

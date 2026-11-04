@@ -253,12 +253,13 @@ describe('parameter modes as functions (Part 2)', () => {
     }
     expect(exact.length).toBe(modes.length);
     console.log('Edit as formula: worst |difference| after shape() per mode', worst);
-    expect(exact).toEqual(expect.arrayContaining(['pulse', 'perlin-noise', 'cellular-automaton', 'dynamical-systems', 'karplus-strong', 'additive-designer', 'number-sequences', 'reaction-diffusion', 'life-like-ca', 'spline', 'glyph-contour']));
+    expect(exact).toEqual(expect.arrayContaining(['pulse', 'supersaw', 'perlin-noise', 'cellular-automaton', 'dynamical-systems', 'karplus-strong', 'additive-designer', 'number-sequences', 'reaction-diffusion', 'life-like-ca', 'spline', 'glyph-contour']));
   });
 
   it('formulas at the defaults read as expected', () => {
     const f = (id: string) => modeFormula(seedEntry(id)!, seedParams(seedEntry(id)!));
     expect(f('pulse')).toBe('pulse(p, 0.25+(0.05-0.25)*u)');
+    expect(f('supersaw')).toBe('supersaw(p, 7, 2*u, 0.6, 0, 0)');
     expect(f('perlin-noise')).toBe('perlin(p, 2, 1.5*u, 4, 0.5)');
     expect(f('cellular-automaton')).toBe('ca(p, 30, 32, n)');
     expect(f('dynamical-systems')).toBe('dyn(p, 0, 0.6+(1-0.6)*u, 12, 0.8, 0)');
@@ -422,7 +423,7 @@ describe('formula recipes', () => {
   });
 
   it('documents every function', () => {
-    expect(WAVE_FUNCTION_NAMES.length).toBe(15);
+    expect(WAVE_FUNCTION_NAMES.length).toBe(16);
     for (const d of WAVE_FUNCTION_DOCS) expect(d.sig.startsWith(`${d.name}(x`)).toBe(true);
     const fx = waveFunctions(1) as unknown as Record<string, unknown>;
     for (const n of WAVE_FUNCTION_NAMES) expect(typeof fx[n]).toBe('function');

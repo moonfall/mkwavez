@@ -1,6 +1,6 @@
 /**
  * Waveform functions for formulas: the basic waves (sine, tri, saw, square, pulse) and one
- * function per parameter mode (perlin, ca, dyn, ks, additive, seq, rd, life, spline, glyph).
+ * function per parameter mode (supersaw, perlin, ca, dyn, ks, additive, seq, rd, life, spline, glyph).
  * Each takes a phase x in radians first (`saw(2*p)`, `ca(p + u, 30, 32, n)`), then the
  * mode's arguments; seeded ones take the render's seed unless given an explicit last one.
  *
@@ -40,6 +40,7 @@ import { lifeBoard, lifeRaw } from './life';
 import { rdRaw, rdState } from './reactionDiffusion';
 import { sequenceRaw, sequenceValuesAt } from './sequences';
 import { SPLINE_MAX_POINTS, splinePointsAt, splineRaw } from './spline';
+import { SUPERSAW_MAX_VOICES, supersawRaw } from './supersaw';
 
 type Arg = number | string;
 
@@ -49,6 +50,7 @@ export interface WaveFunctions {
   saw(x: number): number;
   square(x: number): number;
   pulse(x: number, width?: number): number;
+  supersaw(x: number, voices?: number, drift?: number, outer?: number, wave?: number, phases?: number, seed?: number): number;
   perlin(x: number, freq?: number, z?: number, oct?: number, pers?: number, seed?: number): number;
   ca(x: number, rule?: number, cells?: number, gen?: number, seed?: number): number;
   dyn(x: number, map?: number, control?: number, iters?: number, spread?: number, output?: number): number;
@@ -77,6 +79,11 @@ export const WAVE_FUNCTION_DOCS: readonly WaveFunctionDoc[] = [
   { name: 'saw', sig: 'saw(x)', about: 'band-limited saw, harmonics 1/k (the Saw preset)' },
   { name: 'square', sig: 'square(x)', about: 'band-limited square, odd harmonics 1/k (the Square preset)' },
   { name: 'pulse', sig: 'pulse(x, width)', about: 'pulse, +1 for the first `width` (0–1) of the cycle, else −1 (the Pulse preset)' },
+  {
+    name: 'supersaw',
+    sig: 'supersaw(x, voices, drift, outer, wave, phases, seed?)',
+    about: 'detuned stack of 1–15 voices, the outermost `drift` cycles off the centre (Supersaw)',
+  },
   { name: 'perlin', sig: 'perlin(x, freq, z, oct, pers, seed?)', about: 'loop-seamless Perlin noise (Perlin noise)' },
   { name: 'ca', sig: 'ca(x, rule, cells, gen, seed?)', about: 'generation `gen` (0–1000) of an elementary cellular automaton (Cellular automaton)' },
   { name: 'dyn', sig: 'dyn(x, map, control, iters, spread, output)', about: 'chaotic map 0–4, control 0–1, iters 1–64 (Dynamical systems)' },
@@ -335,6 +342,7 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
     return lifeRaw(p, n(s), n(gen));
   });
   const splineC = cycleFn('spline', ([points, kind, tension, jitter, s]) => splineRaw(splinePointsAt(n(points), n(jitter), n(s)), n(kind), n(tension)));
+  const supersawC = cycleFn('supersaw', ([voices, drift, outer, wave, phases, s]) => supersawRaw(n(voices), n(drift), n(outer), n(wave), n(phases), n(s)));
   const glyphC = cycleFn('glyph', ([contour, skew]) => glyphRaw(contourPoints(String(contour)), n(skew)));
 
   return {
@@ -343,6 +351,15 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
     saw: basicAt('saw'),
     square: basicAt('square'),
     pulse: (x, width) => pulseAt(phase('pulse', x), num('pulse', 'width', width, 0.5)),
+    supersaw: (x, voices, drift, outer, wave, phases, s) =>
+      supersawC(phase('supersaw', x), [
+        Math.round(num('supersaw', 'voices', voices, 7, 1, SUPERSAW_MAX_VOICES)),
+        num('supersaw', 'drift', drift, 0),
+        num('supersaw', 'outer', outer, 0.6, 0, 1),
+        Math.round(num('supersaw', 'wave', wave, 0, 0, 2)),
+        Math.round(num('supersaw', 'phases', phases, 0, 0, 2)),
+        seedOf('supersaw', s),
+      ]),
     perlin: (x, freq, z, oct, pers, s) => {
       phase('perlin', x);
       const a = [

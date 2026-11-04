@@ -23,6 +23,8 @@ import {
   splinePoints,
   splineRaw,
   StepCache,
+  supersawLevel,
+  supersawPhases,
   type Board,
   type LifeParams,
   type RdParams,
@@ -327,6 +329,39 @@ export function valueCells(g: CanvasRenderingContext2D, w: number, h: number, c:
 }
 
 // ---------------- the builders ----------------
+
+// Supersaw: each voice's phase (mod 1) across the batch (time →), the shown moment marked.
+viz('supersaw', {
+  axis: (i) => ['u 0', `${Math.round(i.params.voices)} voices · outer ±${f2(i.params.detune * i.u)} cycles`, '1'],
+  draw: (g, w, h, i, c) => {
+    const p = i.params;
+    const V = clamp(Math.round(p.voices), 1, 15);
+    const s = scale(w, h, 0, 1, 0, 1);
+    rules(g, s, w, h, [0.5], [0.5], c.grid);
+    const at = (u: number) => supersawPhases(V, p.detune * u, p.phases, i.seed);
+    const steps = Math.ceil(w);
+    const frac = (v: number) => v - Math.floor(v);
+    for (let j = 0; j < V; j++) {
+      g.strokeStyle = j === (V - 1) / 2 ? c.accent : c.line;
+      g.globalAlpha = 0.35 + 0.65 * supersawLevel(j, V, p.outer);
+      g.lineWidth = 1.2;
+      g.beginPath();
+      let prev = NaN;
+      for (let k = 0; k <= steps; k++) {
+        const u = k / steps;
+        const y = frac(at(u)[j]);
+        // Break the line where the phase wraps.
+        if (k && Math.abs(y - prev) < 0.5) g.lineTo(s.x(u), s.y(y));
+        else g.moveTo(s.x(u), s.y(y));
+        prev = y;
+      }
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+    rules(g, s, w, h, [i.u], [], c.accent);
+    at(i.u).forEach((v, j) => dot(g, s.x(i.u), s.y(frac(v)), 2.5, j === (V - 1) / 2 ? c.accent : c.line));
+  },
+});
 
 // Chebyshev: T_k(x) = cos(k·acos x), k = n + 2, applied to 0.95·sin p.
 viz('chebyshev', {

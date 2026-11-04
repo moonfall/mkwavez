@@ -84,9 +84,10 @@ switches (the choice is remembered).
   hover, focus or drag it. The choice follows the panel's size, not the window's; when the
   full view doesn't fit, the tabbed pages return.
 
-- **Generate → Seed**: pick from the library (basic waves, formula presets by
-  category, Perlin noise, cellular automaton, simulations — dynamical systems,
-  Karplus-Strong, reaction-diffusion, Life-like automata — and builders — additive
+- **Generate → Seed**: pick from the library (basic waves; Supersaw, a detuned stack of
+  1–15 saws, squares or triangles whose voices drift apart across the batch so the
+  wavetable beats like the stack; formula presets by category, Perlin noise, cellular
+  automaton, simulations — dynamical systems, Karplus-Strong, reaction-diffusion, Life-like automata — and builders — additive
   designer, number sequences, spline, glyph contour (type text; each character's outline
   becomes a waveform) — and a blank formula). Search filters by name,
   category or formula text (Enter picks the first match, ↓ moves into the list, Esc
@@ -334,6 +335,7 @@ Seed tab, **ƒ Functions** in the legend opens this list.
 | `saw(x)` | band-limited saw: every harmonic at 1/k (Saw) |
 | `square(x)` | band-limited square: odd harmonics at 1/k (Square) |
 | `pulse(x, width)` | pulse, +1 for the first `width` (0 … 1) of the cycle, else −1; band-limited by the pipeline like the Pulse preset |
+| `supersaw(x, voices, drift, outer, wave, phases, seed?)` | detuned stack of 1–15 voices (wave 0 saw · 1 square · 2 triangle), the outermost `drift` cycles off the centre and at level `outer`; phases 0 random · 1 spread · 2 aligned (Supersaw: drift = detune·u) |
 | `perlin(x, freq, z, oct, pers, seed?)` | loop-seamless Perlin noise (Perlin noise: z = start + drift·u) |
 | `ca(x, rule, cells, gen, seed?)` | generation `gen` of an elementary cellular automaton as ±1 steps (Cellular automaton: gen = start + n) |
 | `dyn(x, map, control, iters, spread, output)` | chaotic map 0 logistic · 1 sine · 2 circle · 3 Hénon · 4 tent; control 0 … 1; output 0 linear / 1 soft clip (Dynamical systems) |

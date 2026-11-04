@@ -14,6 +14,7 @@ import { DEFAULT_LIFE as LF, LIFE_READS, LIFE_RULES, lifeTable, type LifeParams 
 import { DEFAULT_RD as RD, RD_CUSTOM, RD_PRESETS, rdTable, type RdParams } from './reactionDiffusion';
 import { DEFAULT_SPLINE as SP, splineTable, type SplineParams } from './spline';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
+import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
 export interface SeedParam {
   readonly key: string;
@@ -38,6 +39,8 @@ export interface ParamModeDef {
   readonly name: string;
   /** One-line description shown under the parameters. */
   readonly about: string;
+  /** Library placement: the id of the entry this one follows (default: with the other modes). */
+  readonly after?: string;
   readonly params: readonly SeedParam[];
   /** True when the seed changes the result for these params. */
   seeded(p: ModeParams): boolean;
@@ -57,6 +60,25 @@ function nums<T extends object>(p: ModeParams, defaults: T): T {
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
 export const PARAM_MODES = [
+  {
+    mode: 'supersaw',
+    id: 'supersaw',
+    cat: 'Basic',
+    name: 'Supersaw',
+    after: 'pulse',
+    about:
+      'Detuned copies of one band-limited wave, centre loudest. Each waveform is one moment of the stack; the outer voices ' +
+      'drift Detune cycles across the batch, so the wavetable beats.',
+    params: [
+      { key: 'voices', label: 'Voices', min: 1, max: SUPERSAW_MAX_VOICES, step: 1, value: SS.voices },
+      { key: 'detune', label: 'Detune (cycles over the batch)', min: 0, max: 16, step: 0.05, value: SS.detune },
+      { key: 'outer', label: 'Outer voices level', min: 0, max: 1, step: 0.01, value: SS.outer },
+      { key: 'wave', label: 'Wave', min: 0, max: SUPERSAW_WAVES.length - 1, step: 1, value: SS.wave, options: opts(SUPERSAW_WAVES) },
+      { key: 'phases', label: 'Start phases', min: 0, max: SUPERSAW_PHASES.length - 1, step: 1, value: SS.phases, options: opts(SUPERSAW_PHASES) },
+    ],
+    seeded: (p) => Math.round(num(p, 'phases')) === 0,
+    render: (p, seed, index, count) => supersawTable(nums<SupersawParams>(p, SS), seed, index, count),
+  },
   {
     mode: 'dynamical',
     id: 'dynamical-systems',

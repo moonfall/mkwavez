@@ -26,6 +26,7 @@ export * from './seed';
 export * from './sequences';
 export * from './simCache';
 export * from './spline';
+export * from './supersaw';
 export * from './waveFunctions';
 export * from './asFormula';
 

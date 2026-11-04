@@ -33,9 +33,12 @@ import {
   seedEntry,
   seedParams,
   seedTable,
+  SEED_LIBRARY,
   type SeedRequest,
 } from '../src/core/generators';
 import { ksPasses, ksString } from '../src/core/generators/karplus';
+import { supersawPhases, supersawRaw } from '../src/core/generators/supersaw';
+import { basicWave } from '../src/core/generators/basic';
 import { resamplePeriodic } from '../src/core/generators/resample';
 import { shape } from '../src/core/shape';
 import { describeRecipe } from '../src/core/table';
@@ -242,6 +245,37 @@ describe('parameter modes', () => {
     const board = new Uint8Array(64);
     board[8 * 2 + 3] = 1;
     expect(lifeLine(board, 8, 0).some((v) => v)).toBe(true);
+  });
+
+  it('supersaw: placed after Pulse; one voice / no drift is the plain wave; drift scans the beating; seeded phases', () => {
+    const ids = SEED_LIBRARY.map((e) => e.id);
+    expect(ids.indexOf('supersaw')).toBe(ids.indexOf('pulse') + 1);
+    expect(seedEntry('supersaw')!.cat).toBe('Basic');
+    // A single voice is its wave; aligned voices without drift too (same phase).
+    const saw = basicWave('saw', 1);
+    const plain: Record<string, number>[] = [{ voices: 1 }, { voices: 9, phases: 2, detune: 0 }];
+    for (const p of plain) expect(maxDiff(seedTable(req('supersaw', p, 1), 0).data, saw)).toBeLessThan(1e-6);
+    const sq = seedTable(req('supersaw', { voices: 1, wave: 1 }, 1), 0).data;
+    expect(maxDiff(sq, basicWave('square', 1))).toBeLessThan(1e-6);
+    // Drift moves the outer voices by `detune` cycles across the batch (centre fixed), so the timbre changes.
+    const ph0 = supersawPhases(7, 0, 1, 5);
+    const ph1 = supersawPhases(7, 2, 1, 5);
+    expect(ph1[3] - ph0[3]).toBe(0);
+    expect(ph1[6] - ph0[6]).toBeCloseTo(2, 12);
+    expect(ph1[0] - ph0[0]).toBeCloseTo(-2, 12);
+    const b = seedBatch(req('supersaw', {}, 8));
+    expect(maxDiff(b[0].data, b[3].data)).toBeGreaterThan(0.05);
+    // Whole-cycle drift of every voice (detune·u an integer for all) returns to the start.
+    const whole = seedBatch(req('supersaw', { voices: 3, detune: 4 }, 3));
+    expect(maxDiff(whole[0].data, whole[2].data)).toBeLessThan(1e-6);
+    // Random start phases follow the seed; spread / aligned don't.
+    const at = (phases: number, seed: number) => seedTable({ ...req('supersaw', { phases }, 4, seed) }, 1).data;
+    expect(same(at(0, 1), at(0, 2))).toBe(false);
+    expect(same(at(1, 1), at(1, 2))).toBe(true);
+    // Voice j's random phase doesn't depend on the voice count.
+    expect(supersawPhases(3, 0, 0, 9)).toEqual(supersawPhases(11, 0, 0, 9).slice(0, 3));
+    // Exact cancellation (two evenly spread squares at equal level) falls back to one voice, not silence.
+    expect(peak(shape(supersawRaw(2, 0, 1, 1, 1, 0)))).toBeGreaterThan(0.5);
   });
 
   it('spline: jitter sweep moves the points; adding points keeps the earlier ones', () => {
