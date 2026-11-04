@@ -500,3 +500,30 @@ viz('bytebeat', {
     cells(g, 0, 2, w, h - 4, rows, (b, r) => (b ? (r < 2 ? c.accent : c.line) : null));
   },
 });
+
+// Logistic map: bifurcation diagram for r ∈ [3.4, 4]; the shown r marked.
+let logisticCache: { key: string; img: ImageData } | null = null;
+viz('logistic-map', {
+  axis: (i) => ['r 3.4', `x → r·x(1−x) · r = ${f2(3.5 + 0.5 * i.u)}`, '4'],
+  draw: (g, w, h, i, c) => {
+    const s = scale(w, h, 3.4, 4, 0, 1);
+    const d = window.devicePixelRatio || 1;
+    const key = `${w}|${h}|${d}|${c.line}`;
+    if (logisticCache?.key !== key) {
+      g.fillStyle = c.line;
+      g.globalAlpha = 0.5;
+      for (let px = 0; px < w; px++) {
+        const r = 3.4 + (0.6 * px) / w;
+        let x = 0.5;
+        for (let j = 0; j < 200; j++) x = r * x * (1 - x);
+        for (let j = 0; j < 120; j++) {
+          x = r * x * (1 - x);
+          g.fillRect(px, s.y(x), 1, 1);
+        }
+      }
+      g.globalAlpha = 1;
+      logisticCache = { key, img: g.getImageData(0, 0, Math.round(w * d), Math.round(h * d)) };
+    } else g.putImageData(logisticCache.img, 0, 0);
+    rules(g, s, w, h, [3.5 + 0.5 * i.u], [], c.accent);
+  },
+});
