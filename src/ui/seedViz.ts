@@ -656,3 +656,8 @@ viz('zoom', {
   axis: (i) => ['', `circle r ${f2(1 + 5 * i.u)} · z 0`, ''],
   draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, 1 + 5 * i.u, 0, 4, 0.5),
 });
+
+viz('add-octaves', {
+  axis: (i) => ['', `circle r 2 · ${i.index + 1} octave${i.index ? 's' : ''}`, ''],
+  draw: (g, w, h, i, c) => noisePlane(g, w, h, c, i.seed, 2, 0, 1 + i.index, 0.6),
+});
