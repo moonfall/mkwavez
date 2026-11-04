@@ -25,18 +25,27 @@ as a native plugin (VST3 / AU / CLAP / LV2 / Standalone) whose editor is the sam
 - **Everything is a recipe.** Each waveform records how it was made (generator / mutation /
   breed / shape, parameters, seed, parents), so it can be re-rendered exactly; randomness
   is always seeded, and previews are exactly what gets added.
+- **Grids from two processes.** Generate → Grid crosses two batch operations into a 2D
+  wavetable (columns from any tab's batch, rows from a Mutate sweep or Shape chain), and a
+  voice can scan it on its X/Y pad before anything is added.
+- **You can see what a generator is made of.** Most Seed entries (every parameter mode
+  and many formula presets) show a basis plot next to the result: the bifurcation diagram a chaotic map samples, the cobweb of an iterated map,
+  a cellular automaton's generations, a reaction-diffusion ring's history, a plucked
+  string's passes, an FM modulator, the polygon or glyph outline being traced.
 - **Every waveform is crossfade-safe.** One pipeline band-limits, removes DC, aligns the
   fundamental's phase and normalizes every waveform, so any two can be blended without
   comb-filtering; playback uses per-octave band-limited copies.
 
 ## Making waveforms (Generate)
 
-- **Seed** — a searchable library: band-limited basic waves; ~37 formula presets (Perlin,
-  shapers, phase distortion, spectral series, fractals, chaos, vowels, bit tricks);
-  parameter modes: Perlin noise, 1D and Life-like cellular automata, dynamical systems
-  (logistic / sine / circle / Hénon / tent), Karplus-Strong snapshots, additive designer,
-  number sequences (π, e, Collatz, prime gaps, Euclidean), reaction-diffusion, splines and
-  **glyph contours** (type a character, hear its outline). A formula language over phase
+- **Seed** — a searchable library: band-limited basic waves and parameter modes —
+  supersaw, FM / PM, phase distortion, resonance (CZ-style), hard sync, waveshaper,
+  harmonic series, superformula, fractal sum, polygon, Perlin noise (the classic formula
+  presets now open as starting points of the matching mode), 1D and Life-like cellular automata, dynamical systems (logistic /
+  sine / circle / Hénon / tent), Karplus-Strong snapshots, additive designer, number
+  sequences (π, e, Collatz, prime gaps, Euclidean), reaction-diffusion, splines and
+  **glyph contours** (type a character, hear its outline); plus ~14 formula presets
+  (vowels, bit tricks, chaos maps, bells, Euclidean pulses, digits of π and more). A formula language over phase
   `p`, `t`, batch index `n` and batch position `u`, with built-in functions for every wave
   and mode (`saw(2*p)`, `0.5*ks(p) + perlin(p, …)`), and Edit as formula on any preset.
 - **Mutate** — ~45 mutations (morph, waveshaping, spectral, phase, time, nonlinear,
@@ -47,7 +56,8 @@ as a native plugin (VST3 / AU / CLAP / LV2 / Standalone) whose editor is the sam
   generation of children.
 - **Shape** — a chain of editing steps: draw on the waveform (clip, fold, push, pull,
   replace) or on its harmonics (set, shift, stretch, tilt, limit to a drawn curve), apply
-  any mutation, sweep any step across a batch; apply to a selection, batch or whole
+  any mutation, sweep any step across a batch (a drawing can morph from a start to an
+  end drawing); apply to a selection, batch or whole
   wavetable, or attach a chain to Seed / Mutate / Breed adds.
 - **Grid** — build a 2D wavetable from two batch operations: another tab's batch makes the
   columns, a Mutate sweep or a Shape chain varies each column down the rows. Previewed as
@@ -64,8 +74,9 @@ play up to 8 notes at once (or 1: monophonic, legato and glide between held note
 - **Synth voice** — two wavetable oscillators (each with its own wavetable window, tuning
   and unison 1–4, a warp mode — sync, formant, bend, squeeze, quantize, fold; B can
   hard-sync and FM A), sub, noise, ring; multimode ZDF filter with drive and key
-  tracking; amp / filter / pitch / mod envelopes; three LFOs (tempo-syncable) and an 8-slot
-  mod matrix; glide; presets; a full knob view when the panel has room.
+  tracking; a stereo path (oscillator pan, stereo phase / position, noise width, filter
+  spread, stereo LFOs); amp / filter / pitch / mod envelopes; three LFOs (tempo-syncable)
+  and an 8-slot mod matrix; glide; presets; a full knob view when the panel has room.
 - **Preview and Selection wavetables** — voices can play the Timeline selection, or the
   waveform / whole batch Generate is showing, before anything is added.
 - **Sequences** — per-voice step grids with musical step lengths (1/4 … 1/16T) on a shared
