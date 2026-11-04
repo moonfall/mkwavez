@@ -14,135 +14,135 @@
 </style>
 <rect class="bg" width="830" height="304" rx="6"/>
 <text class="t ink" x="12" y="20">Spectral centroid along the default batch</text>
-<text class="small muted" x="12" y="36">Top 5 (first row) and bottom 5 (second row) Seed entries by overall score · y: centroid 0–39.7 (shared scale) · x: waveform 1…N</text>
+<text class="small muted" x="12" y="36">Top 5 (first row) and bottom 5 (second row) Seed entries by overall score · y: centroid 0–40.9 (shared scale) · x: waveform 1…N</text>
 <text class="small ink2" x="12" y="60">Vowel formants · 80</text>
 <line class="grid" x1="12" x2="162" y1="101" y2="101"/>
 <line class="axis" x1="12" x2="162" y1="134" y2="134"/>
-<polyline class="s1" points="16.0,119.1 36.3,118.5 56.6,117.9 76.9,117.2 97.1,116.6 117.4,116.0 137.7,115.3 158.0,114.6"/>
-<circle class="d1" cx="16.0" cy="119.1" r="2.5"><title>Vowel formants · 80 · waveform 1: centroid 9</title></circle>
-<circle class="d1" cx="36.3" cy="118.5" r="2.5"><title>Vowel formants · 80 · waveform 2: centroid 9.3</title></circle>
-<circle class="d1" cx="56.6" cy="117.9" r="2.5"><title>Vowel formants · 80 · waveform 3: centroid 9.7</title></circle>
-<circle class="d1" cx="76.9" cy="117.2" r="2.5"><title>Vowel formants · 80 · waveform 4: centroid 10.1</title></circle>
-<circle class="d1" cx="97.1" cy="116.6" r="2.5"><title>Vowel formants · 80 · waveform 5: centroid 10.5</title></circle>
-<circle class="d1" cx="117.4" cy="116.0" r="2.5"><title>Vowel formants · 80 · waveform 6: centroid 10.8</title></circle>
-<circle class="d1" cx="137.7" cy="115.3" r="2.5"><title>Vowel formants · 80 · waveform 7: centroid 11.2</title></circle>
-<circle class="d1" cx="158.0" cy="114.6" r="2.5"><title>Vowel formants · 80 · waveform 8: centroid 11.6</title></circle>
+<polyline class="s1" points="16.0,119.5 36.3,118.9 56.6,118.3 76.9,117.7 97.1,117.1 117.4,116.5 137.7,115.9 158.0,115.2"/>
+<circle class="d1" cx="16.0" cy="119.5" r="2.5"><title>Vowel formants · 80 · waveform 1: centroid 9</title></circle>
+<circle class="d1" cx="36.3" cy="118.9" r="2.5"><title>Vowel formants · 80 · waveform 2: centroid 9.3</title></circle>
+<circle class="d1" cx="56.6" cy="118.3" r="2.5"><title>Vowel formants · 80 · waveform 3: centroid 9.7</title></circle>
+<circle class="d1" cx="76.9" cy="117.7" r="2.5"><title>Vowel formants · 80 · waveform 4: centroid 10.1</title></circle>
+<circle class="d1" cx="97.1" cy="117.1" r="2.5"><title>Vowel formants · 80 · waveform 5: centroid 10.5</title></circle>
+<circle class="d1" cx="117.4" cy="116.5" r="2.5"><title>Vowel formants · 80 · waveform 6: centroid 10.8</title></circle>
+<circle class="d1" cx="137.7" cy="115.9" r="2.5"><title>Vowel formants · 80 · waveform 7: centroid 11.2</title></circle>
+<circle class="d1" cx="158.0" cy="115.2" r="2.5"><title>Vowel formants · 80 · waveform 8: centroid 11.6</title></circle>
 <text class="small muted" x="12" y="146">centroid 9–11.6</text>
 <text class="small ink2" x="176" y="60">Sinc · 80</text>
 <line class="grid" x1="176" x2="326" y1="101" y2="101"/>
 <line class="axis" x1="176" x2="326" y1="134" y2="134"/>
-<polyline class="s1" points="180.0,130.7 200.3,130.1 220.6,129.7 240.9,129.4 261.1,128.9 281.4,127.8 301.7,126.9 322.0,126.1"/>
-<circle class="d1" cx="180.0" cy="130.7" r="2.5"><title>Sinc · 80 · waveform 1: centroid 2</title></circle>
-<circle class="d1" cx="200.3" cy="130.1" r="2.5"><title>Sinc · 80 · waveform 2: centroid 2.4</title></circle>
-<circle class="d1" cx="220.6" cy="129.7" r="2.5"><title>Sinc · 80 · waveform 3: centroid 2.6</title></circle>
-<circle class="d1" cx="240.9" cy="129.4" r="2.5"><title>Sinc · 80 · waveform 4: centroid 2.7</title></circle>
-<circle class="d1" cx="261.1" cy="128.9" r="2.5"><title>Sinc · 80 · waveform 5: centroid 3.1</title></circle>
-<circle class="d1" cx="281.4" cy="127.8" r="2.5"><title>Sinc · 80 · waveform 6: centroid 3.7</title></circle>
-<circle class="d1" cx="301.7" cy="126.9" r="2.5"><title>Sinc · 80 · waveform 7: centroid 4.3</title></circle>
-<circle class="d1" cx="322.0" cy="126.1" r="2.5"><title>Sinc · 80 · waveform 8: centroid 4.8</title></circle>
+<polyline class="s1" points="180.0,130.8 200.3,130.2 220.6,129.9 240.9,129.6 261.1,129.1 281.4,128.0 301.7,127.1 322.0,126.3"/>
+<circle class="d1" cx="180.0" cy="130.8" r="2.5"><title>Sinc · 80 · waveform 1: centroid 2</title></circle>
+<circle class="d1" cx="200.3" cy="130.2" r="2.5"><title>Sinc · 80 · waveform 2: centroid 2.4</title></circle>
+<circle class="d1" cx="220.6" cy="129.9" r="2.5"><title>Sinc · 80 · waveform 3: centroid 2.6</title></circle>
+<circle class="d1" cx="240.9" cy="129.6" r="2.5"><title>Sinc · 80 · waveform 4: centroid 2.7</title></circle>
+<circle class="d1" cx="261.1" cy="129.1" r="2.5"><title>Sinc · 80 · waveform 5: centroid 3.1</title></circle>
+<circle class="d1" cx="281.4" cy="128.0" r="2.5"><title>Sinc · 80 · waveform 6: centroid 3.7</title></circle>
+<circle class="d1" cx="301.7" cy="127.1" r="2.5"><title>Sinc · 80 · waveform 7: centroid 4.3</title></circle>
+<circle class="d1" cx="322.0" cy="126.3" r="2.5"><title>Sinc · 80 · waveform 8: centroid 4.8</title></circle>
 <text class="small muted" x="176" y="146">centroid 2–4.8</text>
 <text class="small ink2" x="340" y="60">Iterated sine map · 79</text>
 <line class="grid" x1="340" x2="490" y1="101" y2="101"/>
 <line class="axis" x1="340" x2="490" y1="134" y2="134"/>
-<polyline class="s1" points="344.0,109.4 364.3,81.6 384.6,73.4 404.9,74.2 425.1,92.1 445.4,97.3 465.7,72.9 486.0,74.4"/>
-<circle class="d1" cx="344.0" cy="109.4" r="2.5"><title>Iterated sine map · 79 · waveform 1: centroid 14.8</title></circle>
-<circle class="d1" cx="364.3" cy="81.6" r="2.5"><title>Iterated sine map · 79 · waveform 2: centroid 31.5</title></circle>
-<circle class="d1" cx="384.6" cy="73.4" r="2.5"><title>Iterated sine map · 79 · waveform 3: centroid 36.5</title></circle>
-<circle class="d1" cx="404.9" cy="74.2" r="2.5"><title>Iterated sine map · 79 · waveform 4: centroid 36</title></circle>
-<circle class="d1" cx="425.1" cy="92.1" r="2.5"><title>Iterated sine map · 79 · waveform 5: centroid 25.2</title></circle>
-<circle class="d1" cx="445.4" cy="97.3" r="2.5"><title>Iterated sine map · 79 · waveform 6: centroid 22.1</title></circle>
-<circle class="d1" cx="465.7" cy="72.9" r="2.5"><title>Iterated sine map · 79 · waveform 7: centroid 36.8</title></circle>
-<circle class="d1" cx="486.0" cy="74.4" r="2.5"><title>Iterated sine map · 79 · waveform 8: centroid 35.8</title></circle>
+<polyline class="s1" points="344.0,110.2 364.3,83.1 384.6,75.1 404.9,75.9 425.1,93.3 445.4,98.4 465.7,74.6 486.0,76.2"/>
+<circle class="d1" cx="344.0" cy="110.2" r="2.5"><title>Iterated sine map · 79 · waveform 1: centroid 14.8</title></circle>
+<circle class="d1" cx="364.3" cy="83.1" r="2.5"><title>Iterated sine map · 79 · waveform 2: centroid 31.5</title></circle>
+<circle class="d1" cx="384.6" cy="75.1" r="2.5"><title>Iterated sine map · 79 · waveform 3: centroid 36.5</title></circle>
+<circle class="d1" cx="404.9" cy="75.9" r="2.5"><title>Iterated sine map · 79 · waveform 4: centroid 36</title></circle>
+<circle class="d1" cx="425.1" cy="93.3" r="2.5"><title>Iterated sine map · 79 · waveform 5: centroid 25.2</title></circle>
+<circle class="d1" cx="445.4" cy="98.4" r="2.5"><title>Iterated sine map · 79 · waveform 6: centroid 22.1</title></circle>
+<circle class="d1" cx="465.7" cy="74.6" r="2.5"><title>Iterated sine map · 79 · waveform 7: centroid 36.8</title></circle>
+<circle class="d1" cx="486.0" cy="76.2" r="2.5"><title>Iterated sine map · 79 · waveform 8: centroid 35.8</title></circle>
 <text class="small muted" x="340" y="146">centroid 14.8–36.8</text>
-<text class="small ink2" x="504" y="60">Rounded bell partials · 78</text>
+<text class="small ink2" x="504" y="60">Digits of π · 78</text>
 <line class="grid" x1="504" x2="654" y1="101" y2="101"/>
 <line class="axis" x1="504" x2="654" y1="134" y2="134"/>
-<polyline class="s1" points="508.0,128.9 528.3,128.4 548.6,127.5 568.9,126.9 589.1,126.7 609.4,125.8 629.7,125.2 650.0,124.3"/>
-<circle class="d1" cx="508.0" cy="128.9" r="2.5"><title>Rounded bell partials · 78 · waveform 1: centroid 3.1</title></circle>
-<circle class="d1" cx="528.3" cy="128.4" r="2.5"><title>Rounded bell partials · 78 · waveform 2: centroid 3.4</title></circle>
-<circle class="d1" cx="548.6" cy="127.5" r="2.5"><title>Rounded bell partials · 78 · waveform 3: centroid 3.9</title></circle>
-<circle class="d1" cx="568.9" cy="126.9" r="2.5"><title>Rounded bell partials · 78 · waveform 4: centroid 4.3</title></circle>
-<circle class="d1" cx="589.1" cy="126.7" r="2.5"><title>Rounded bell partials · 78 · waveform 5: centroid 4.4</title></circle>
-<circle class="d1" cx="609.4" cy="125.8" r="2.5"><title>Rounded bell partials · 78 · waveform 6: centroid 4.9</title></circle>
-<circle class="d1" cx="629.7" cy="125.2" r="2.5"><title>Rounded bell partials · 78 · waveform 7: centroid 5.3</title></circle>
-<circle class="d1" cx="650.0" cy="124.3" r="2.5"><title>Rounded bell partials · 78 · waveform 8: centroid 5.8</title></circle>
-<text class="small muted" x="504" y="146">centroid 3.1–5.8</text>
-<text class="small ink2" x="668" y="60">Zoom · 77</text>
+<polyline class="s1" points="508.0,108.0 528.3,105.6 548.6,106.3 568.9,106.4 589.1,105.2 609.4,106.6 629.7,106.2 650.0,105.1"/>
+<circle class="d1" cx="508.0" cy="108.0" r="2.5"><title>Digits of π · 78 · waveform 1: centroid 16.1</title></circle>
+<circle class="d1" cx="528.3" cy="105.6" r="2.5"><title>Digits of π · 78 · waveform 2: centroid 17.6</title></circle>
+<circle class="d1" cx="548.6" cy="106.3" r="2.5"><title>Digits of π · 78 · waveform 3: centroid 17.2</title></circle>
+<circle class="d1" cx="568.9" cy="106.4" r="2.5"><title>Digits of π · 78 · waveform 4: centroid 17.1</title></circle>
+<circle class="d1" cx="589.1" cy="105.2" r="2.5"><title>Digits of π · 78 · waveform 5: centroid 17.9</title></circle>
+<circle class="d1" cx="609.4" cy="106.6" r="2.5"><title>Digits of π · 78 · waveform 6: centroid 17</title></circle>
+<circle class="d1" cx="629.7" cy="106.2" r="2.5"><title>Digits of π · 78 · waveform 7: centroid 17.2</title></circle>
+<circle class="d1" cx="650.0" cy="105.1" r="2.5"><title>Digits of π · 78 · waveform 8: centroid 17.9</title></circle>
+<text class="small muted" x="504" y="146">centroid 16.1–17.9</text>
+<text class="small ink2" x="668" y="60">Logistic map · 78</text>
 <line class="grid" x1="668" x2="818" y1="101" y2="101"/>
 <line class="axis" x1="668" x2="818" y1="134" y2="134"/>
-<polyline class="s1" points="672.0,119.5 692.3,111.4 712.6,106.5 732.9,105.8 753.1,104.6 773.4,100.5 793.7,96.9 814.0,96.1"/>
-<circle class="d1" cx="672.0" cy="119.5" r="2.5"><title>Zoom · 77 · waveform 1: centroid 8.7</title></circle>
-<circle class="d1" cx="692.3" cy="111.4" r="2.5"><title>Zoom · 77 · waveform 2: centroid 13.6</title></circle>
-<circle class="d1" cx="712.6" cy="106.5" r="2.5"><title>Zoom · 77 · waveform 3: centroid 16.5</title></circle>
-<circle class="d1" cx="732.9" cy="105.8" r="2.5"><title>Zoom · 77 · waveform 4: centroid 17</title></circle>
-<circle class="d1" cx="753.1" cy="104.6" r="2.5"><title>Zoom · 77 · waveform 5: centroid 17.7</title></circle>
-<circle class="d1" cx="773.4" cy="100.5" r="2.5"><title>Zoom · 77 · waveform 6: centroid 20.1</title></circle>
-<circle class="d1" cx="793.7" cy="96.9" r="2.5"><title>Zoom · 77 · waveform 7: centroid 22.3</title></circle>
-<circle class="d1" cx="814.0" cy="96.1" r="2.5"><title>Zoom · 77 · waveform 8: centroid 22.8</title></circle>
-<text class="small muted" x="668" y="146">centroid 8.7–22.8</text>
-<text class="small ink2" x="12" y="182">Saw · 21</text>
+<polyline class="s1" points="672.0,108.1 692.3,104.5 712.6,107.9 732.9,76.7 753.1,78.9 773.4,88.4 793.7,74.0 814.0,72.9"/>
+<circle class="d1" cx="672.0" cy="108.1" r="2.5"><title>Logistic map · 78 · waveform 1: centroid 16.1</title></circle>
+<circle class="d1" cx="692.3" cy="104.5" r="2.5"><title>Logistic map · 78 · waveform 2: centroid 18.3</title></circle>
+<circle class="d1" cx="712.6" cy="107.9" r="2.5"><title>Logistic map · 78 · waveform 3: centroid 16.2</title></circle>
+<circle class="d1" cx="732.9" cy="76.7" r="2.5"><title>Logistic map · 78 · waveform 4: centroid 35.5</title></circle>
+<circle class="d1" cx="753.1" cy="78.9" r="2.5"><title>Logistic map · 78 · waveform 5: centroid 34.1</title></circle>
+<circle class="d1" cx="773.4" cy="88.4" r="2.5"><title>Logistic map · 78 · waveform 6: centroid 28.2</title></circle>
+<circle class="d1" cx="793.7" cy="74.0" r="2.5"><title>Logistic map · 78 · waveform 7: centroid 37.2</title></circle>
+<circle class="d1" cx="814.0" cy="72.9" r="2.5"><title>Logistic map · 78 · waveform 8: centroid 37.9</title></circle>
+<text class="small muted" x="668" y="146">centroid 16.1–37.9</text>
+<text class="small ink2" x="12" y="182">Harmonics · 35</text>
 <line class="grid" x1="12" x2="162" y1="223" y2="223"/>
 <line class="axis" x1="12" x2="162" y1="256" y2="256"/>
-<polyline class="s1" points="16.0,231.4 36.3,231.4 56.6,231.4 76.9,231.4 97.1,231.4 117.4,231.4 137.7,231.4 158.0,231.4"/>
-<circle class="d1" cx="16.0" cy="231.4" r="2.5"><title>Saw · 21 · waveform 1: centroid 14.8</title></circle>
-<circle class="d1" cx="36.3" cy="231.4" r="2.5"><title>Saw · 21 · waveform 2: centroid 14.8</title></circle>
-<circle class="d1" cx="56.6" cy="231.4" r="2.5"><title>Saw · 21 · waveform 3: centroid 14.8</title></circle>
-<circle class="d1" cx="76.9" cy="231.4" r="2.5"><title>Saw · 21 · waveform 4: centroid 14.8</title></circle>
-<circle class="d1" cx="97.1" cy="231.4" r="2.5"><title>Saw · 21 · waveform 5: centroid 14.8</title></circle>
-<circle class="d1" cx="117.4" cy="231.4" r="2.5"><title>Saw · 21 · waveform 6: centroid 14.8</title></circle>
-<circle class="d1" cx="137.7" cy="231.4" r="2.5"><title>Saw · 21 · waveform 7: centroid 14.8</title></circle>
-<circle class="d1" cx="158.0" cy="231.4" r="2.5"><title>Saw · 21 · waveform 8: centroid 14.8</title></circle>
-<text class="small muted" x="12" y="268">centroid 14.8–14.8</text>
-<text class="small ink2" x="176" y="182">Square · 20</text>
+<polyline class="s1" points="16.0,254.4 36.3,252.8 56.6,251.2 76.9,249.5 97.1,247.9 117.4,246.3 137.7,244.7 158.0,243.1"/>
+<circle class="d1" cx="16.0" cy="254.4" r="2.5"><title>Harmonics · 35 · waveform 1: centroid 1</title></circle>
+<circle class="d1" cx="36.3" cy="252.8" r="2.5"><title>Harmonics · 35 · waveform 2: centroid 2</title></circle>
+<circle class="d1" cx="56.6" cy="251.2" r="2.5"><title>Harmonics · 35 · waveform 3: centroid 3</title></circle>
+<circle class="d1" cx="76.9" cy="249.5" r="2.5"><title>Harmonics · 35 · waveform 4: centroid 4</title></circle>
+<circle class="d1" cx="97.1" cy="247.9" r="2.5"><title>Harmonics · 35 · waveform 5: centroid 5</title></circle>
+<circle class="d1" cx="117.4" cy="246.3" r="2.5"><title>Harmonics · 35 · waveform 6: centroid 6</title></circle>
+<circle class="d1" cx="137.7" cy="244.7" r="2.5"><title>Harmonics · 35 · waveform 7: centroid 7</title></circle>
+<circle class="d1" cx="158.0" cy="243.1" r="2.5"><title>Harmonics · 35 · waveform 8: centroid 8</title></circle>
+<text class="small muted" x="12" y="268">centroid 1–8</text>
+<text class="small ink2" x="176" y="182">Saw · 21</text>
 <line class="grid" x1="176" x2="326" y1="223" y2="223"/>
 <line class="axis" x1="176" x2="326" y1="256" y2="256"/>
-<polyline class="s1" points="180.0,234.4 200.3,234.4 220.6,234.4 240.9,234.4 261.1,234.4 281.4,234.4 301.7,234.4 322.0,234.4"/>
-<circle class="d1" cx="180.0" cy="234.4" r="2.5"><title>Square · 20 · waveform 1: centroid 13</title></circle>
-<circle class="d1" cx="200.3" cy="234.4" r="2.5"><title>Square · 20 · waveform 2: centroid 13</title></circle>
-<circle class="d1" cx="220.6" cy="234.4" r="2.5"><title>Square · 20 · waveform 3: centroid 13</title></circle>
-<circle class="d1" cx="240.9" cy="234.4" r="2.5"><title>Square · 20 · waveform 4: centroid 13</title></circle>
-<circle class="d1" cx="261.1" cy="234.4" r="2.5"><title>Square · 20 · waveform 5: centroid 13</title></circle>
-<circle class="d1" cx="281.4" cy="234.4" r="2.5"><title>Square · 20 · waveform 6: centroid 13</title></circle>
-<circle class="d1" cx="301.7" cy="234.4" r="2.5"><title>Square · 20 · waveform 7: centroid 13</title></circle>
-<circle class="d1" cx="322.0" cy="234.4" r="2.5"><title>Square · 20 · waveform 8: centroid 13</title></circle>
-<text class="small muted" x="176" y="268">centroid 13–13</text>
-<text class="small ink2" x="340" y="182">Digits of π · 19</text>
+<polyline class="s1" points="180.0,232.1 200.3,232.1 220.6,232.1 240.9,232.1 261.1,232.1 281.4,232.1 301.7,232.1 322.0,232.1"/>
+<circle class="d1" cx="180.0" cy="232.1" r="2.5"><title>Saw · 21 · waveform 1: centroid 14.8</title></circle>
+<circle class="d1" cx="200.3" cy="232.1" r="2.5"><title>Saw · 21 · waveform 2: centroid 14.8</title></circle>
+<circle class="d1" cx="220.6" cy="232.1" r="2.5"><title>Saw · 21 · waveform 3: centroid 14.8</title></circle>
+<circle class="d1" cx="240.9" cy="232.1" r="2.5"><title>Saw · 21 · waveform 4: centroid 14.8</title></circle>
+<circle class="d1" cx="261.1" cy="232.1" r="2.5"><title>Saw · 21 · waveform 5: centroid 14.8</title></circle>
+<circle class="d1" cx="281.4" cy="232.1" r="2.5"><title>Saw · 21 · waveform 6: centroid 14.8</title></circle>
+<circle class="d1" cx="301.7" cy="232.1" r="2.5"><title>Saw · 21 · waveform 7: centroid 14.8</title></circle>
+<circle class="d1" cx="322.0" cy="232.1" r="2.5"><title>Saw · 21 · waveform 8: centroid 14.8</title></circle>
+<text class="small muted" x="176" y="268">centroid 14.8–14.8</text>
+<text class="small ink2" x="340" y="182">Square · 20</text>
 <line class="grid" x1="340" x2="490" y1="223" y2="223"/>
 <line class="axis" x1="340" x2="490" y1="256" y2="256"/>
-<polyline class="s1" points="344.0,229.3 364.3,229.3 384.6,229.3 404.9,229.3 425.1,229.3 445.4,229.3 465.7,229.3 486.0,229.3"/>
-<circle class="d1" cx="344.0" cy="229.3" r="2.5"><title>Digits of π · 19 · waveform 1: centroid 16.1</title></circle>
-<circle class="d1" cx="364.3" cy="229.3" r="2.5"><title>Digits of π · 19 · waveform 2: centroid 16.1</title></circle>
-<circle class="d1" cx="384.6" cy="229.3" r="2.5"><title>Digits of π · 19 · waveform 3: centroid 16.1</title></circle>
-<circle class="d1" cx="404.9" cy="229.3" r="2.5"><title>Digits of π · 19 · waveform 4: centroid 16.1</title></circle>
-<circle class="d1" cx="425.1" cy="229.3" r="2.5"><title>Digits of π · 19 · waveform 5: centroid 16.1</title></circle>
-<circle class="d1" cx="445.4" cy="229.3" r="2.5"><title>Digits of π · 19 · waveform 6: centroid 16.1</title></circle>
-<circle class="d1" cx="465.7" cy="229.3" r="2.5"><title>Digits of π · 19 · waveform 7: centroid 16.1</title></circle>
-<circle class="d1" cx="486.0" cy="229.3" r="2.5"><title>Digits of π · 19 · waveform 8: centroid 16.1</title></circle>
-<text class="small muted" x="340" y="268">centroid 16.1–16.1</text>
+<polyline class="s1" points="344.0,235.0 364.3,235.0 384.6,235.0 404.9,235.0 425.1,235.0 445.4,235.0 465.7,235.0 486.0,235.0"/>
+<circle class="d1" cx="344.0" cy="235.0" r="2.5"><title>Square · 20 · waveform 1: centroid 13</title></circle>
+<circle class="d1" cx="364.3" cy="235.0" r="2.5"><title>Square · 20 · waveform 2: centroid 13</title></circle>
+<circle class="d1" cx="384.6" cy="235.0" r="2.5"><title>Square · 20 · waveform 3: centroid 13</title></circle>
+<circle class="d1" cx="404.9" cy="235.0" r="2.5"><title>Square · 20 · waveform 4: centroid 13</title></circle>
+<circle class="d1" cx="425.1" cy="235.0" r="2.5"><title>Square · 20 · waveform 5: centroid 13</title></circle>
+<circle class="d1" cx="445.4" cy="235.0" r="2.5"><title>Square · 20 · waveform 6: centroid 13</title></circle>
+<circle class="d1" cx="465.7" cy="235.0" r="2.5"><title>Square · 20 · waveform 7: centroid 13</title></circle>
+<circle class="d1" cx="486.0" cy="235.0" r="2.5"><title>Square · 20 · waveform 8: centroid 13</title></circle>
+<text class="small muted" x="340" y="268">centroid 13–13</text>
 <text class="small ink2" x="504" y="182">Triangle · 17</text>
 <line class="grid" x1="504" x2="654" y1="223" y2="223"/>
 <line class="axis" x1="504" x2="654" y1="256" y2="256"/>
-<polyline class="s1" points="508.0,252.2 528.3,252.2 548.6,252.2 568.9,252.2 589.1,252.2 609.4,252.2 629.7,252.2 650.0,252.2"/>
-<circle class="d1" cx="508.0" cy="252.2" r="2.5"><title>Triangle · 17 · waveform 1: centroid 2.3</title></circle>
-<circle class="d1" cx="528.3" cy="252.2" r="2.5"><title>Triangle · 17 · waveform 2: centroid 2.3</title></circle>
-<circle class="d1" cx="548.6" cy="252.2" r="2.5"><title>Triangle · 17 · waveform 3: centroid 2.3</title></circle>
-<circle class="d1" cx="568.9" cy="252.2" r="2.5"><title>Triangle · 17 · waveform 4: centroid 2.3</title></circle>
-<circle class="d1" cx="589.1" cy="252.2" r="2.5"><title>Triangle · 17 · waveform 5: centroid 2.3</title></circle>
-<circle class="d1" cx="609.4" cy="252.2" r="2.5"><title>Triangle · 17 · waveform 6: centroid 2.3</title></circle>
-<circle class="d1" cx="629.7" cy="252.2" r="2.5"><title>Triangle · 17 · waveform 7: centroid 2.3</title></circle>
-<circle class="d1" cx="650.0" cy="252.2" r="2.5"><title>Triangle · 17 · waveform 8: centroid 2.3</title></circle>
+<polyline class="s1" points="508.0,252.4 528.3,252.4 548.6,252.4 568.9,252.4 589.1,252.4 609.4,252.4 629.7,252.4 650.0,252.4"/>
+<circle class="d1" cx="508.0" cy="252.4" r="2.5"><title>Triangle · 17 · waveform 1: centroid 2.3</title></circle>
+<circle class="d1" cx="528.3" cy="252.4" r="2.5"><title>Triangle · 17 · waveform 2: centroid 2.3</title></circle>
+<circle class="d1" cx="548.6" cy="252.4" r="2.5"><title>Triangle · 17 · waveform 3: centroid 2.3</title></circle>
+<circle class="d1" cx="568.9" cy="252.4" r="2.5"><title>Triangle · 17 · waveform 4: centroid 2.3</title></circle>
+<circle class="d1" cx="589.1" cy="252.4" r="2.5"><title>Triangle · 17 · waveform 5: centroid 2.3</title></circle>
+<circle class="d1" cx="609.4" cy="252.4" r="2.5"><title>Triangle · 17 · waveform 6: centroid 2.3</title></circle>
+<circle class="d1" cx="629.7" cy="252.4" r="2.5"><title>Triangle · 17 · waveform 7: centroid 2.3</title></circle>
+<circle class="d1" cx="650.0" cy="252.4" r="2.5"><title>Triangle · 17 · waveform 8: centroid 2.3</title></circle>
 <text class="small muted" x="504" y="268">centroid 2.3–2.3</text>
 <text class="small ink2" x="668" y="182">Sine · 10</text>
 <line class="grid" x1="668" x2="818" y1="223" y2="223"/>
 <line class="axis" x1="668" x2="818" y1="256" y2="256"/>
-<polyline class="s1" points="672.0,254.3 692.3,254.3 712.6,254.3 732.9,254.3 753.1,254.3 773.4,254.3 793.7,254.3 814.0,254.3"/>
-<circle class="d1" cx="672.0" cy="254.3" r="2.5"><title>Sine · 10 · waveform 1: centroid 1</title></circle>
-<circle class="d1" cx="692.3" cy="254.3" r="2.5"><title>Sine · 10 · waveform 2: centroid 1</title></circle>
-<circle class="d1" cx="712.6" cy="254.3" r="2.5"><title>Sine · 10 · waveform 3: centroid 1</title></circle>
-<circle class="d1" cx="732.9" cy="254.3" r="2.5"><title>Sine · 10 · waveform 4: centroid 1</title></circle>
-<circle class="d1" cx="753.1" cy="254.3" r="2.5"><title>Sine · 10 · waveform 5: centroid 1</title></circle>
-<circle class="d1" cx="773.4" cy="254.3" r="2.5"><title>Sine · 10 · waveform 6: centroid 1</title></circle>
-<circle class="d1" cx="793.7" cy="254.3" r="2.5"><title>Sine · 10 · waveform 7: centroid 1</title></circle>
-<circle class="d1" cx="814.0" cy="254.3" r="2.5"><title>Sine · 10 · waveform 8: centroid 1</title></circle>
+<polyline class="s1" points="672.0,254.4 692.3,254.4 712.6,254.4 732.9,254.4 753.1,254.4 773.4,254.4 793.7,254.4 814.0,254.4"/>
+<circle class="d1" cx="672.0" cy="254.4" r="2.5"><title>Sine · 10 · waveform 1: centroid 1</title></circle>
+<circle class="d1" cx="692.3" cy="254.4" r="2.5"><title>Sine · 10 · waveform 2: centroid 1</title></circle>
+<circle class="d1" cx="712.6" cy="254.4" r="2.5"><title>Sine · 10 · waveform 3: centroid 1</title></circle>
+<circle class="d1" cx="732.9" cy="254.4" r="2.5"><title>Sine · 10 · waveform 4: centroid 1</title></circle>
+<circle class="d1" cx="753.1" cy="254.4" r="2.5"><title>Sine · 10 · waveform 5: centroid 1</title></circle>
+<circle class="d1" cx="773.4" cy="254.4" r="2.5"><title>Sine · 10 · waveform 6: centroid 1</title></circle>
+<circle class="d1" cx="793.7" cy="254.4" r="2.5"><title>Sine · 10 · waveform 7: centroid 1</title></circle>
+<circle class="d1" cx="814.0" cy="254.4" r="2.5"><title>Sine · 10 · waveform 8: centroid 1</title></circle>
 <text class="small muted" x="668" y="268">centroid 1–1</text>
 </svg>

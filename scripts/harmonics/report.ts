@@ -62,6 +62,7 @@ export function renderReport(r: EvalOutput, S: Summary): Report {
   if (!isDefaultConfig(r)) push('> **Note:** this run does not use the default configuration; the hand-written commentary below was written against the default run and may not match the numbers.', '');
 
   push('## Summary', '', note('summary'));
+  if (C.get('fixes')) push('## Fixes since first run', '', note('fixes'));
 
   // ---- Method ----
   push(
@@ -271,11 +272,12 @@ export function renderReport(r: EvalOutput, S: Summary): Report {
   push('### Breed', '', note('breed'));
   const sets = [...new Set(r.batches.filter((b) => b.section === 'breed').map((b) => (b.settings.parents as string[]).join('+')))];
   push(
-    `Each operator × parent sets {${sets.join(', ')}} × {sweep bias ${APP_DEFAULTS.breedBias}, sweep bias 1, generation bias ${APP_DEFAULTS.breedBias}}, walk ${APP_DEFAULTS.breedWalk}, rate ${APP_DEFAULTS.breedRate}, N = ${r.config.n}. ` +
-      '*Effect A / B* = LSD from parent A / parent B (the second parent) to the last child of the bias-0.5 sweep.',
+    `Each operator × parent sets {${sets.join(', ')}} × {sweep at the default bias, sweep bias 1, generation at the default bias}, walk ${APP_DEFAULTS.breedWalk}, rate ${APP_DEFAULTS.breedRate}, N = ${r.config.n}. ` +
+      'The default bias is the app’s for the parent count (½ for two parents, ¾ for three: between two parents). ' +
+      '*Effect A / B* = LSD from parent A / parent B (the second parent) to the last child of the default-bias sweep.',
     '',
     table(
-      ['Operator', 'Seeded', 'Mean score', 'Sweep 0.5', 'Sweep 1', 'Gen 0.5', 'Effect A / B @ sweep 0.5 (dB)', 'Dup', 'Phase-only'],
+      ['Operator', 'Seeded', 'Mean score', 'Sweep default', 'Sweep 1', 'Gen default', 'Effect A / B @ default sweep (dB)', 'Dup', 'Phase-only'],
       S.breed.map((b) => [b.label, b.seeded ? 'yes' : 'no', f(b.meanScore), f(b.sweepHalf, 0), f(b.sweepFull, 0), f(b.genHalf, 0), `${f(b.effectA)} / ${f(b.effectB)}`, pct(b.dupFrac), pct(b.phaseOnlyFrac)]),
       ['l', 'l', 'r', 'r', 'r', 'r', 'r', 'r', 'r'],
     ),

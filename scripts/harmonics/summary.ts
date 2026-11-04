@@ -157,7 +157,7 @@ export function buildSummary(r: EvalOutput): Summary {
   const seed = summarizeSeed(r.batches);
   const bb = r.batches.filter((b) => b.section === 'breed');
   const mb = r.batches.filter((b) => b.section === 'mutate');
-  const cfgBreed = (item: string, mode: string, bias: number) => bb.filter((b) => b.item === item && b.settings.mode === mode && b.settings.bias === bias);
+  const cfgBreed = (item: string, config: string) => bb.filter((b) => b.item === item && b.settings.config === config);
   return {
     config: {
       k: r.config.k,
@@ -203,15 +203,15 @@ export function buildSummary(r: EvalOutput): Summary {
     }),
     mutate: summarizeItems(r.batches, 'mutate').map((s) => mutateRow(s, mb)),
     breed: summarizeItems(r.batches, 'breed').map((s): BreedRow => {
-      const half = cfgBreed(s.item, 'sweep', APP_DEFAULTS.breedBias);
+      const half = cfgBreed(s.item, 'sweep-default');
       return {
         item: s.item,
         label: s.label,
         seeded: Boolean(s.batches[0].settings.seeded),
         meanScore: rnd(s.meanScore, 1),
         sweepHalf: rnd(mean(half.map(sc)), 1),
-        sweepFull: rnd(mean(cfgBreed(s.item, 'sweep', 1).map(sc)), 1),
-        genHalf: rnd(mean(cfgBreed(s.item, 'gen', APP_DEFAULTS.breedBias).map(sc)), 1),
+        sweepFull: rnd(mean(cfgBreed(s.item, 'sweep-1').map(sc)), 1),
+        genHalf: rnd(mean(cfgBreed(s.item, 'gen-default').map(sc)), 1),
         effectA: rnd(mean(half.map((b) => b.effect?.lastLsd ?? NaN)), 1),
         effectB: rnd(mean(half.map((b) => b.effect?.toBLsd ?? NaN)), 1),
         dupFrac: rnd(mean(s.batches.map((b) => b.metrics?.dupFrac ?? 0)), 2),

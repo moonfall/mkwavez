@@ -5,7 +5,7 @@
  * score.ts). Deterministic: every seed derives from `cfg.seed` and the item's id.
  */
 import { compileFormula } from '../../src/browser/formulaEval';
-import { BREED_OPS, breedBatch, isSeededOp, type BreedMode, type BreedOpId } from '../../src/core/breed';
+import { BREED_OPS, breedBatch, defaultBreedBias, isSeededOp, type BreedMode, type BreedOpId } from '../../src/core/breed';
 import { basicWave } from '../../src/core/generators/basic';
 import { glyphInputs } from '../../src/core/generators/glyph';
 import {
@@ -49,8 +49,12 @@ export interface EvalConfig {
 export type Section = 'seed' | 'mutate' | 'breed' | 'shape' | 'grid';
 export const SECTIONS: readonly Section[] = ['seed', 'mutate', 'breed', 'shape', 'grid'];
 
-/** App defaults the evaluation mirrors (src/ui: generate.ts N = 8, mutate.ts amount 0.25 / lin, breed.ts bias 0.5 / path / rate 0.05 / sweep). */
-export const APP_DEFAULTS = { n: 8, mutateAmount: 0.25, mutateMode: 'lin', breedBias: 0.5, breedWalk: 'path', breedRate: 0.05, breedMode: 'sweep', glyphText: 'mkwavez' } as const;
+/**
+ * App defaults the evaluation mirrors (src/ui: generate.ts N = 8, mutate.ts amount 0.25 / lin,
+ * breed.ts path / rate 0.05 / sweep, and the default bias for the parent count:
+ * core/breed.ts defaultBreedBias(), ½ for two parents, ¾ for three).
+ */
+export const APP_DEFAULTS = { n: 8, mutateAmount: 0.25, mutateMode: 'lin', breedWalk: 'path', breedRate: 0.05, breedMode: 'sweep', glyphText: 'mkwavez' } as const;
 
 export type BatchSummary = Omit<BatchMetrics, 'mean'> & { mean: BatchMetrics['mean'] };
 
@@ -297,10 +301,11 @@ export function evalBreed(cfg: EvalConfig, log: (s: string) => void = () => {}):
     { id: 'sine+saw', parents: [refs.sine, refs.saw] },
     { id: 'saw+formant+noisy', parents: [refs.saw, refs.formant, refs.noisy] },
   ];
-  const configs: { mode: BreedMode; bias: number }[] = [
-    { mode: 'sweep', bias: APP_DEFAULTS.breedBias },
-    { mode: 'sweep', bias: 1 },
-    { mode: 'gen', bias: APP_DEFAULTS.breedBias },
+  // Bias null = the app's default for the parent count (defaultBreedBias).
+  const configs: { key: string; mode: BreedMode; bias: number | null }[] = [
+    { key: 'sweep-default', mode: 'sweep', bias: null },
+    { key: 'sweep-1', mode: 'sweep', bias: 1 },
+    { key: 'gen-default', mode: 'gen', bias: null },
   ];
   const out: BatchResult[] = [];
   for (const op of BREED_OPS) {
@@ -308,16 +313,17 @@ export function evalBreed(cfg: EvalConfig, log: (s: string) => void = () => {}):
     const seed = deriveSeed(cfg.seed, hashId(`breed:${op.id}`));
     for (const set of sets) {
       for (const c of configs) {
-        const req = { op: op.id as BreedOpId, bias: c.bias, walk: APP_DEFAULTS.breedWalk, rate: APP_DEFAULTS.breedRate, seed, mode: c.mode, count: cfg.n };
+        const bias = c.bias ?? defaultBreedBias(set.parents.length, APP_DEFAULTS.breedWalk);
+        const req = { op: op.id as BreedOpId, bias, walk: APP_DEFAULTS.breedWalk, rate: APP_DEFAULTS.breedRate, seed, mode: c.mode, count: cfg.n };
         const r = timed(() => breedBatch(req, set.parents.map((p) => p.table)).map((t) => t.data));
         const res: BatchResult = {
           section: 'breed',
-          id: `breed:${op.id}:${set.id}:${c.mode}:${c.bias}`,
+          id: `breed:${op.id}:${set.id}:${c.key}`,
           item: op.id,
           label: op.label,
           category: op.group,
-          variant: `${set.id} · ${c.mode} · bias ${c.bias}`,
-          settings: { op: op.id, parents: set.parents.map((p) => p.id), mode: c.mode, bias: c.bias, walk: req.walk, rate: req.rate, seed, count: cfg.n, seeded: isSeededOp(op.id as BreedOpId) },
+          variant: `${set.id} · ${c.mode} · bias ${bias}`,
+          settings: { op: op.id, parents: set.parents.map((p) => p.id), config: c.key, mode: c.mode, bias, walk: req.walk, rate: req.rate, seed, count: cfg.n, seeded: isSeededOp(op.id as BreedOpId) },
           ms: r.ms,
         };
         if (r.error) res.error = r.error;
