@@ -990,19 +990,41 @@ button.icon-btn svg {
   flex-direction: column;
   gap: 6px;
 }
+.wt-main {
+  display: flex;
+  gap: 6px;
+  flex: none;
+  min-height: 0;
+}
+/* The wavetable list: a column beside the view; scrolls vertically if it outgrows it. */
 .wt-chips {
   display: flex;
-  gap: 4px;
-  overflow-x: auto;
+  flex-direction: column;
+  gap: 3px;
+  width: 124px;
   flex: none;
+  min-height: 0;
+  max-height: 240px;
+  overflow-x: hidden;
+  overflow-y: auto;
   scrollbar-width: thin;
 }
 button.wt-chip {
   flex: none;
-  height: 26px;
-  display: inline-flex;
+  height: 24px;
+  width: 100%;
+  display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 5px;
+  text-align: left;
+}
+.wt-chip-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 button.wt-chip[aria-selected='true'] {
   background: var(--accent-bg);
@@ -1022,7 +1044,9 @@ button.wt-chip[aria-selected='true'] {
 }
 .wt-box {
   position: relative;
-  height: 150px;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 150px;
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
@@ -1062,10 +1086,15 @@ button.wt-chip[aria-selected='true'] {
   font-weight: 600;
 }
 @media (min-width: 900px) {
-  .wt-box {
+  .wt-main {
     flex: 1 1 0;
     min-height: 60px;
-    height: auto;
+  }
+  .wt-chips {
+    max-height: none;
+  }
+  .wt-box {
+    min-height: 0;
   }
 }
 

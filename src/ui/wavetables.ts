@@ -46,7 +46,7 @@ function lastWritten(wt: Wavetable): { x: number; y: number } | null {
 }
 
 /**
- * Wavetables (compact panel): chips pick a wavetable (a dot marks live ones); the view
+ * Wavetables (compact panel): a vertical list beside the view picks a wavetable (a dot marks live ones); the view
  * shows it — 1D as a stack of waveforms, 2D as a small grid, Rows as rows of cells — with
  * voice windows tinted in voice colours (V1 …), the write head of live wavetables in green
  * and the voices' play positions. The summary line gives shape, interpolation (Blend /
@@ -76,7 +76,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
     layout.refresh();
     sec.el.classList.toggle('expanded', on);
     if (on) sec.open();
-    for (const e of [chips, box, summary, newBtn, editBtn]) e.hidden = on;
+    for (const e of [main, chips, box, summary, newBtn, editBtn]) e.hidden = on;
     editor.el.hidden = !on;
     collapseBtn.hidden = editHint.hidden = !on;
     if (on) {
@@ -135,7 +135,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
             onclick: () => pick(w.id),
           },
           h('span', { class: `wt-dot${changesByItself(w) ? ' live' : ''}` }),
-          w.name,
+          h('span', { class: 'wt-chip-name' }, w.name),
           isFull(w) ? h('span', { class: 'wt-full' }, 'full') : null,
         ),
       ),
@@ -150,6 +150,8 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
 
   const canvas = h('canvas', { id: 'wavetable-overview', 'aria-label': 'Wavetable view; click a slot to select its waveform' });
   const box = h('div', { class: 'wt-box' }, canvas);
+  // The wavetable list runs down the left of the view (no sideways scrolling).
+  const main = h('div', { class: 'wt-main' }, chips, box);
   const sumName = h('b', { id: 'wt-name' });
   const sumShape = h('span', { id: 'wt-shape' });
   const blendBtn = h('button', { class: 'small', id: 'wt-blend', onclick: () => model.setWavetableInterp(current, 'blend') }, 'Blend');
@@ -167,7 +169,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
     h('span', { class: 'grow' }),
     usedBy,
   );
-  sec.body.append(chips, box, summary, editor.el);
+  sec.body.append(main, summary, editor.el);
   watchVisibility(canvas);
 
   const syncSummary = () => {
