@@ -46,7 +46,7 @@ export interface WriteHead {
   readonly y: number;
 }
 
-export type BuiltinKind = 'timeline' | 'lastBatch' | 'batches' | 'grid';
+export type BuiltinKind = 'timeline' | 'lastBatch' | 'batches' | 'grid' | 'selection';
 
 export interface Wavetable {
   readonly id: WavetableId;
@@ -71,6 +71,8 @@ export const TIMELINE_WAVETABLE_ID: WavetableId = 0;
 export const LAST_BATCH_WAVETABLE_ID: WavetableId = 1;
 export const BATCHES_WAVETABLE_ID: WavetableId = 2;
 export const GRID_WAVETABLE_ID: WavetableId = 3;
+/** One slot: the Timeline selection (kept in step by the model; not written by adds). */
+export const SELECTION_WAVETABLE_ID: WavetableId = 4;
 /** First id for user wavetables. */
 export const FIRST_USER_WAVETABLE_ID: WavetableId = 16;
 export const GRID_SIZE = 8;
@@ -83,7 +85,10 @@ export const DEFAULT_WRITE: WriteSettings = { dir: '+x', edge: 'grow', onWrap: '
  *  - Last batch: 1D, replaced by each new batch / single add;
  *  - Batches: Rows, one row per batch / single add;
  *  - Grid: 2D 8×8, filled in order, wrapping to the next row and overwriting.
- * Timeline and Batches mirror the timeline and don't pin; Last batch and Grid pin.
+ *  - Selection: 1D, one slot holding the Timeline selection (the model keeps it in step;
+ *    adds never write it, so it isn't Live).
+ * Timeline and Batches mirror the timeline and don't pin; Last batch and Grid pin;
+ * Selection doesn't pin.
  */
 export function builtinWavetables(): Wavetable[] {
   const base = { interp: 'blend', live: true, head: { x: 0, y: 0 } } as const;
@@ -122,8 +127,20 @@ export function builtinWavetables(): Wavetable[] {
       pins: true,
       write: { dir: '+x', edge: 'wrap', onWrap: 'next', mode: 'replace', batch: 'continue' },
     },
+    { ...base, id: SELECTION_WAVETABLE_ID, name: 'Selection', shape: '1d', builtin: 'selection', rows: [[null]], fixed: true, pins: false, live: false, write: DEFAULT_WRITE },
   ];
 }
+
+/** Built-ins whose contents the model derives from its state (never written by adds, not Live). */
+export const isDerivedBuiltin = (wt: Wavetable) => wt.builtin === 'selection';
+
+/** How a wavetable gets its contents, for labels: Live, Frozen, or what a derived built-in follows. */
+export function wavetableMode(wt: Wavetable): string {
+  if (wt.builtin === 'selection') return 'Follows the selection';
+  return wt.live ? 'Live' : 'Frozen';
+}
+/** Whether its contents change by themselves (Live, or derived): the green dot. */
+export const changesByItself = (wt: Wavetable) => wt.live || isDerivedBuiltin(wt);
 
 function emptyGrid(w: number, h: number): Slot[][] {
   return Array.from({ length: h }, () => new Array<Slot>(w).fill(null));

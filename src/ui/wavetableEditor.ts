@@ -13,6 +13,7 @@ import {
   cellAt,
   droppedBy1DResize,
   droppedBy2DResize,
+  changesByItself,
   isFull,
   findSlot,
   MAX_GRID,
@@ -21,6 +22,7 @@ import {
   previewWrites,
   shapeLabel,
   wavetableDims,
+  wavetableMode,
   type Cell,
   type PendingWrite,
   type SlotTarget,
@@ -185,7 +187,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
         svg(GLYPH[w.shape], 16, 16, 'wte-glyph'),
         h('span', { class: 'wte-item-text' }, h('span', { class: 'wte-item-name' }, w.name), h('span', { class: 'wte-item-meta' }, shapeLabel(w), isFull(w) ? h('span', { class: 'wt-full', title: `Full: ${MAX_USER_SLOTS} slots, the most a wavetable holds. New waveforms still go into the Timeline but not here (the write head stopped); remove slots to make room.` }, ' · full') : null)),
         w.builtin ? svg(LOCK, 11, 12, 'wte-lock', 'Built-in') : null,
-        h('span', { class: `wt-dot${w.live ? ' live' : ''}`, title: w.live ? 'Live' : 'Frozen' }),
+        h('span', { class: `wt-dot${changesByItself(w) ? ' live' : ''}`, title: wavetableMode(w) }),
       );
     };
     const builtins = model.wavetables.filter((w) => w.builtin);
@@ -504,6 +506,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
   };
   const noteText = (wt: Wavetable): string => {
     const p = previewWrites(wt, PREVIEW_N);
+    if (wt.builtin === 'selection') return 'Built-in: always the Timeline selection (select a waveform to change it). Duplicate it to keep a copy.';
     if (wt.builtin) return `Built-in and read-only. Duplicate it to change its settings or edit its slots. ${headText(wt, p.writes)}`;
     if (isFull(wt)) return `Full: ${MAX_USER_SLOTS} slots, the most a wavetable holds. New waveforms still go into the Timeline but not here (the write head stopped); remove slots to make room.`;
     if (!wt.live) return 'Frozen: new waveforms are not added. Drag waveforms from the Timeline: onto a slot replaces, between slots inserts. Switch to Live to write each new batch at the head.';

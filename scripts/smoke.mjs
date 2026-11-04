@@ -14,7 +14,7 @@
 // search / stepping / thumbnails, parent chips: Timeline Shift-click / long-press, Add
 // selected, Use window of Vn, reorder by keyboard and drag, remove; bias / walk / custom
 // weights / seed; Sweep / Generation strip, Add shown / Add +N recipes and selection, guards;
-// fits the Generate panel) while playing; evicted parents drop out. Wavetables: the built-ins (Timeline, Last batch, Batches, Grid) exist, update on
+// fits the Generate panel) while playing; evicted parents drop out. Wavetables: the built-ins (Timeline, Last batch, Batches, Grid, Selection) exist, update on
 // Seed Add shown / Add batch and show their views; no "Sets window of" checkboxes; V1 on the
 // Grid shows the X/Y pad (sliders move the dot, live dot while playing), the worklet plays it,
 // Step on the wavetable plays one cell; the Voice panel fits at 1440×900 / 1180×820 and 390px
@@ -1987,7 +1987,19 @@ async function wavetableChecks(page) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.waitForTimeout(150);
   const chips = await page.$$eval('#wt-chips [role="option"]', (bs) => bs.map((b) => b.textContent.trim()));
-  assert(chips.join() === 'Timeline,Last batch,Batches,Grid', `built-in wavetables (${chips.join(', ')})`);
+  assert(chips.join() === 'Timeline,Last batch,Batches,Grid,Selection', `built-in wavetables (${chips.join(', ')})`);
+  // Selection: one slot, the Timeline selection; a voice can play it.
+  {
+    const r = await M(() => {
+      const m = window.mkwavez.model;
+      m.select(m.timeline[2].id);
+      const before = m.wavetable(4).rows[0][0] === m.timeline[2].id;
+      m.select(m.timeline[3].id);
+      return before && m.wavetable(4).rows[0][0] === m.timeline[3].id;
+    });
+    assert(r, 'the Selection wavetable follows the Timeline selection');
+    assert((await page.$$eval('#voice-wavetable option', (os) => os.map((o) => o.textContent))).some((t) => t.startsWith('Selection')), 'voices can pick the Selection wavetable');
+  }
   assert(
     !(await page.$('.gen-targets')) && !(await M(() => document.body.textContent.includes('Sets window of'))),
     'no "Sets window of" checkboxes',

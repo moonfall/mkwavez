@@ -165,8 +165,23 @@ export class AppModel {
   }
 
   private emit(...topics: Topic[]): void {
+    // Derived built-ins (Selection) follow the state the topics announce.
+    if ((topics.includes('selection') || topics.includes('timeline')) && this.syncDerived() && !topics.includes('wavetables')) topics.push('wavetables');
     this.emits++;
     for (const t of new Set(topics)) for (const fn of this.listeners.get(t) ?? []) fn();
+  }
+
+  /** Keep the Selection wavetable's one slot on the selection; true if it changed. */
+  private syncDerived(): boolean {
+    let changed = false;
+    this.wavetables = this.wavetables.map((w) => {
+      if (w.builtin !== 'selection') return w;
+      const id = this.selectedId !== null && this.byId.has(this.selectedId) ? this.selectedId : null;
+      if (w.rows.length === 1 && w.rows[0].length === 1 && w.rows[0][0] === id) return w;
+      changed = true;
+      return { ...w, rows: [[id]] };
+    });
+    return changed;
   }
 
   // ---- queries ----
