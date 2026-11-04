@@ -2224,9 +2224,10 @@ async function shapeChecks(page, tlCount) {
   await page.click('#shape-tool-line');
   u = await undoDepth();
   const box = await (await page.$('#shape-ed')).boundingBox();
-  await page.mouse.move(box.x + 30, box.y + box.height * 0.3);
+  // Start above the current line (pressing on it would move it instead).
+  await page.mouse.move(box.x + 30, box.y + box.height * 0.12);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width - 30, box.y + box.height * 0.45, { steps: 10 });
+  await page.mouse.move(box.x + box.width - 30, box.y + box.height * 0.42, { steps: 10 });
   await page.mouse.up();
   const drawn = (await chain()).steps[1].draw;
   assert(
@@ -2234,6 +2235,16 @@ async function shapeChecks(page, tlCount) {
     `dragging draws a line (${JSON.stringify(drawn.pts)})`,
   );
   assert((await undoDepth()) === u + 1, 'one stroke is one undo step');
+  // Drag the line itself (its middle): the whole drawing moves; one undo step.
+  u = await undoDepth();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.27);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 10, box.y + box.height * 0.27 + 25, { steps: 6 });
+  await page.mouse.up();
+  const moved = (await chain()).steps[1].draw;
+  const d0 = drawn.pts[0][1] - moved.pts[0][1];
+  const d1 = drawn.pts[1][1] - moved.pts[1][1];
+  assert(moved.pts.length === 2 && d0 > 0.05 && Math.abs(d0 - d1) < 1e-3 && (await undoDepth()) === u + 1, `dragging the line moves the whole drawing (${JSON.stringify(moved.pts)})`);
 
   // Sweep: N cards, Add +N adds N shape waveforms; the source stays selected.
   await page.click('#shape-sweep');
@@ -2289,6 +2300,18 @@ async function shapeChecks(page, tlCount) {
   c = await chain();
   assert(c.steps.length === 4 && !c.steps.some((s) => s.op === 'gain'), 'steps can be taken out (menu and ×)');
 
+  // A click on a curve adds a point on it (a drag would move the whole drawing).
+  await page.click('#shape-step-1');
+  await page.click('#shape-tool-curve');
+  const fb = await (await page.$('#shape-ed')).boundingBox();
+  const amp = fb.height / 2 - Math.min(4, fb.height * 0.08);
+  await page.mouse.click(fb.x + fb.width * 0.5, fb.y + fb.height / 2 - (0.45 / 1.25) * amp);
+  c = await chain();
+  assert(
+    c.steps[0].draw.tool === 'curve' && c.steps[0].draw.pts.length === 3 && Math.abs(c.steps[0].draw.pts[1][1] - 0.45) < 0.01,
+    `a click on a curve adds a point on it (${JSON.stringify(c.steps[0].draw.pts)})`,
+  );
+
   // Harmonics: a set's numbers, a drawn set painted on the plot, a limit curve drawn there.
   await page.click('#shape-step-3');
   await page.fill('#shape-hof', '3, 5');
@@ -2312,7 +2335,7 @@ async function shapeChecks(page, tlCount) {
   await page.click('#shape-step-4');
   await page.click('#shape-lmode-fit');
   await page.click('#shape-tool-curve');
-  await page.mouse.click(hb.x + hb.width * 0.5, hb.y + hb.height * 0.3);
+  await page.mouse.click(hb.x + hb.width * 0.5, hb.y + hb.height * 0.12); // away from the line (pressing it moves it)
   c = await chain();
   assert(c.steps[3].mode === 'fit' && c.steps[3].draw.tool === 'curve' && c.steps[3].draw.pts.length === 3, 'limit step: Fit, a curve point added on the Harmonics plot');
 
@@ -2401,6 +2424,7 @@ async function shapeChecks(page, tlCount) {
   assert(await page.isVisible('#shape-writeback-label'), 'a wavetable of yours offers Write back');
   await page.check('#shape-writeback');
   assert((await page.textContent('#shape-add-batch')).trim() === `Write back ${wt.ids.length}`, 'Write back replaces Add');
+  await M(() => window.mkwavez.model.clearUndo()); // stay under the undo cap so depth changes count
   u = await undoDepth();
   n1 = await tlCount();
   await page.click('#shape-add-batch');

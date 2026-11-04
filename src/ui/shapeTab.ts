@@ -1165,7 +1165,45 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   };
 
   // ---- drawing with the pointer ----
-  let drawing: { pt: [number, number] | null; raw: Pt[] | null; stepId: string; stroke: number; draw: Drawing } | null = null;
+  /** A whole-drawing move: where it started, the points then, and which way the grabbed copy moves (−1: the mirrored one). */
+  interface Move {
+    x0: number;
+    y0: number;
+    pts0: Pt[];
+    sgn: number;
+    /** Pointer position at press (CSS px): a click (no drag) on a curve adds a point there instead. */
+    px0: number;
+    py0: number;
+    dragged: boolean;
+  }
+  let drawing: { pt: [number, number] | null; raw: Pt[] | null; move?: Move; stepId: string; stroke: number; draw: Drawing } | null = null;
+  /** Whether the selected step's drawing shows mirrored (± about 0). */
+  const mirrored = () => {
+    const s = sel();
+    return view === 'wave' && !!s && (s.op === 'clip' || s.op === 'soft' || s.op === 'fold') && s.side === 'both';
+  };
+  /** A point handle of `d` under (px, py), or -1. */
+  const hitPoint = (d: Drawing, px: number, py: number, w: number, hh: number) =>
+    d.tool === 'free'
+      ? -1
+      : d.pts.findIndex((q) => {
+          const [x, y] = toPx(q, w, hh);
+          return Math.hypot(x - px, y - py) < HIT_PX;
+        });
+  /**
+   * The drawing's line under (px, py): 0 = none, else the factor a vertical drag moves its
+   * values by (1 for the line as drawn; for a mirrored drawing ±1 so the grabbed copy follows).
+   */
+  const hitLine = (d: Drawing, px: number, py: number, w: number, hh: number): number => {
+    const [x] = fromPx(px, py, w, hh);
+    const v = drawingValue(d, x);
+    if (v === null) return 0;
+    if (!mirrored()) return Math.abs(toPx([x, v], w, hh)[1] - py) < HIT_PX ? 1 : 0;
+    const sv = v >= 0 ? 1 : -1;
+    if (Math.abs(toPx([x, Math.abs(v)], w, hh)[1] - py) < HIT_PX) return sv;
+    if (Math.abs(toPx([x, -Math.abs(v)], w, hh)[1] - py) < HIT_PX) return -sv;
+    return 0;
+  };
   let strokeNo = 0;
   const commitDraw = (d: Drawing) => {
     if (!drawing) return;
@@ -1220,15 +1258,16 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const p = fromPx(px, py, r.width, hh);
     const pts = ptsOf(d);
     strokeNo++;
-    if (d.tool !== 'free') {
-      const hit = pts.findIndex((q) => {
-        const [x, y] = toPx(q, r.width, hh);
-        return Math.hypot(x - px, y - py) < HIT_PX;
-      });
-      if (hit >= 0) {
-        drawing = { pt: pts[hit], raw: null, stepId: s.id, stroke: strokeNo, draw: { tool: d.tool, pts } };
-        return;
-      }
+    const hit = hitPoint(d, px, py, r.width, hh);
+    if (hit >= 0) {
+      drawing = { pt: pts[hit], raw: null, stepId: s.id, stroke: strokeNo, draw: { tool: d.tool, pts } };
+      return;
+    }
+    // On the line itself: drag the whole drawing.
+    const sgn = hitLine(d, px, py, r.width, hh);
+    if (sgn) {
+      drawing = { pt: null, raw: null, move: { x0: p[0], y0: p[1], pts0: pts, sgn, px0: px, py0: py, dragged: false }, stepId: s.id, stroke: strokeNo, draw: d };
+      return;
     }
     if (d.tool === 'line') {
       const np: [number, number][] = [[p[0], p[1]], [p[0], p[1]]];
@@ -1246,10 +1285,26 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   });
   edCanvas.addEventListener('pointermove', (e) => {
     if (painting) return paintAt(e);
-    if (!drawing) return;
     const r = edCanvas.getBoundingClientRect();
+    if (!drawing) {
+      // Hover: a handle grabs a point, the line moves the drawing, elsewhere draws.
+      const d = editable();
+      const px = e.clientX - r.left;
+      const py = e.clientY - r.top;
+      edCanvas.style.cursor = !d ? '' : hitPoint(d, px, py, r.width, r.height) >= 0 ? 'grab' : hitLine(d, px, py, r.width, r.height) ? 'move' : '';
+      return;
+    }
     const p = fromPx(e.clientX - r.left, e.clientY - r.top, r.width, r.height);
-    if (drawing.pt) {
+    if (drawing.move) {
+      const m = drawing.move;
+      if (!m.dragged && Math.hypot(e.clientX - r.left - m.px0, e.clientY - r.top - m.py0) < 3) return;
+      m.dragged = true;
+      const xs = m.pts0.map((q) => q[0]);
+      const dx = clamp(p[0] - m.x0, -Math.min(...xs), 1 - Math.max(...xs));
+      const dy = (p[1] - m.y0) * m.sgn;
+      const [lo, hi] = view === 'wave' ? WAVE_Y : HARM_DB;
+      drawing.draw = { tool: drawing.draw.tool, pts: m.pts0.map(([x, y]) => [x + dx, clamp(y + dy, lo, hi)] as Pt) };
+    } else if (drawing.pt) {
       drawing.pt[0] = p[0];
       drawing.pt[1] = p[1];
       const pts = (drawing.draw.pts as [number, number][]).slice().sort((a, b) => a[0] - b[0]);
@@ -1269,6 +1324,17 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       return;
     }
     if (!drawing) return;
+    const m = drawing.move;
+    if (m && !m.dragged && drawing.draw.tool === 'curve') {
+      // A click on a curve: a new point on it.
+      const v = drawingValue(drawing.draw, m.x0);
+      const pts = [...m.pts0, [m.x0, v ?? m.y0] as Pt].sort((a, b) => a[0] - b[0]);
+      commitDraw({ tool: 'curve', pts });
+      drawing = null;
+      model.endGesture();
+      mainDirty = true;
+      return;
+    }
     const d = drawing.draw;
     // A click without a drag (line tool): a horizontal line across the whole cycle at that level.
     if (d.tool === 'line' && d.pts.length === 2 && Math.abs(d.pts[1][0] - d.pts[0][0]) < 0.01) commitDraw({ tool: 'line', pts: [[0, d.pts[0][1]], [1, d.pts[0][1]]] });
