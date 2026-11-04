@@ -20,6 +20,8 @@ import { MAX_STEPS, TABLE_SIZE, TIMELINE_CAP } from './constants';
 import { renderRecipe } from './generators';
 import { DEFAULT_STEP_LENGTH, normalizeSteps, type SequenceData, stepLengthOf } from './sequence';
 import { normalizePresets, type VoicePreset } from './presets';
+import { normalizeChain, type ShapeChain } from './shapeChain';
+import { DEFAULT_CHAIN, normalizeSavedChains, type SavedChain } from './shapeFactory';
 import { isVoiceType, normalizeSynth } from './synth';
 
 import type { ParamValue, Recipe, TableId, WaveTable } from './table';
@@ -67,6 +69,10 @@ export interface ModelState {
   readonly bpm: number;
   /** User voice presets (missing in older sessions: none). */
   readonly voicePresets?: readonly VoicePreset[];
+  /** The Shape tab's chain (missing in older sessions: the default chain). */
+  readonly shapeChain?: ShapeChain;
+  /** The user's saved Shape chains (missing in older sessions: none). */
+  readonly shapeChains?: readonly SavedChain[];
 }
 
 /** UI prefs saved with the session (selected voice tab, open tabs, ...). JSON values only. */
@@ -98,6 +104,9 @@ export interface SessionMeta {
   readonly ui: UiPrefs;
   /** User voice presets (optional: added without a schema bump; missing = none). */
   readonly voicePresets?: readonly VoicePreset[];
+  /** The Shape tab's chain and the saved chains (optional, as voicePresets). */
+  readonly shapeChain?: ShapeChain;
+  readonly shapeChains?: readonly SavedChain[];
 }
 
 export type WaveformEncoding = 'samples' | 'recipe' | 'ref';
@@ -147,6 +156,8 @@ export function encodeMeta(s: SessionState, savedAt = 0): SessionMeta {
     bpm: m.bpm,
     ui: s.ui,
     voicePresets: m.voicePresets ?? [],
+    shapeChain: m.shapeChain ?? DEFAULT_CHAIN,
+    shapeChains: m.shapeChains ?? [],
   };
 }
 
@@ -447,6 +458,8 @@ export function decodeSession(raw: unknown, records: Records, o: DecodeOptions =
         breedParents,
         bpm,
         voicePresets: normalizePresets(m.voicePresets),
+        shapeChain: m.shapeChain === undefined ? DEFAULT_CHAIN : normalizeChain(m.shapeChain),
+        shapeChains: normalizeSavedChains(m.shapeChains),
       },
       ui: isObj(m.ui) ? m.ui : {},
     },

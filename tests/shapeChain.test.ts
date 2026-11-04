@@ -171,7 +171,7 @@ describe('steps', () => {
     const rot = applyStep(step('rotate', { value: 0.25 }), Float64Array.from(sine), 1, 1);
     expect(maxDiff(rot, Float64Array.from({ length: N }, (_, i) => sine[(i - N / 4 + N) % N]))).toBeLessThan(1e-6);
     const mu = applyStep(step('mutation', { mutation: 'fold' }), x, 0.6, 3);
-    expect(peak(mu)).toBeCloseTo(0.5, 9);
+    expect(peak(mu)).toBeCloseTo(0.5, 6);
     expect(maxDiff(mu.map((v) => v / 0.5), mutate('fold', Float32Array.from(x, (v) => v / 0.5), 0.6, 3))).toBeLessThan(1e-6);
   });
 });

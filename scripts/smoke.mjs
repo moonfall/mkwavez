@@ -2167,6 +2167,48 @@ async function shapeChecks(page, tlCount) {
   await page.click('#undo');
   assert((await chain()).name !== 'Clip ramp (sweep)', 'undo restores the previous chain');
 
+  // Saved chains: Save as (prompt), listed under Yours, edited marker, delete; New chain; realign.
+  const answer = (text) => page.once('dialog', (d) => (d.type() === 'prompt' ? d.accept(text) : d.accept()));
+  answer('My organ');
+  await page.click('#shape-chain-menu');
+  await page.click('#shape-chain-saveas');
+  let saved = await M(() => window.mkwavez.model.shapeChains.map((x) => x.chain.name));
+  assert(saved.join() === 'My organ' && (await chain()).name === 'My organ', 'Save as stores the chain under its new name');
+  assert((await page.$$eval('#shape-chains optgroup[label="Yours"] option', (os) => os.map((o) => o.textContent))).join() === 'My organ', 'the picker lists it under Yours');
+  await page.click('#shape-step-1 .shape-step-on');
+  assert((await page.textContent('#shape-chains option:first-child')).includes('(edited)'), 'an edit marks the chain edited');
+  await page.click('#shape-chain-menu');
+  await page.click('#shape-chain-save');
+  assert(
+    (await M(() => window.mkwavez.model.shapeChains[0].chain.steps[0].on)) === false && !(await page.textContent('#shape-chains option:first-child')).includes('(edited)'),
+    'Save overwrites the saved chain of that name',
+  );
+  await page.click('#shape-chain-menu');
+  await page.click('#shape-chain-realign');
+  assert((await chain()).realign === false, 'the realign option toggles');
+  await page.click('#shape-chain-menu');
+  await page.click('#shape-chain-new');
+  assert((await chain()).steps.length === 0 && (await page.isVisible('#shape-steps .shape-empty')), 'New chain: no steps');
+  await page.waitForFunction(() => document.querySelector('#shape-add-shown').disabled, null, { timeout: 3000 });
+  assert(true, 'New chain: nothing to add');
+  await page.selectOption('#shape-chains', { label: 'My organ' });
+  assert((await chain()).name === 'My organ' && (await chain()).steps.length === 4, 'a saved chain loads from the picker');
+  // Load the selection's chain from a shaped waveform's recipe.
+  await page.click('#shape-step-1 .shape-step-on');
+  await page.click('#shape-add-shown');
+  await M(() => window.mkwavez.model.select(window.mkwavez.model.timeline.at(-1).id));
+  await page.selectOption('#shape-chains', 'f:soft-clip');
+  await page.click('#shape-chain-menu');
+  assert(!(await page.isDisabled('#shape-chain-from-recipe')), 'a shaped selection offers its chain');
+  await page.click('#shape-chain-from-recipe');
+  assert((await chain()).name === 'My organ' && (await chain()).steps[0].on === true, 'Load the selection’s chain restores the chain it was made with');
+  answer('');
+  await page.click('#shape-chain-menu');
+  await page.click('#shape-chain-delete');
+  saved = await M(() => window.mkwavez.model.shapeChains.length);
+  assert(saved === 0 && (await chain()).name === 'My organ', 'Delete removes the saved chain (the edited one stays)');
+  await M((id) => window.mkwavez.model.select(id), src.id);
+
   await page.setViewportSize({ width: 1180, height: 820 });
   await page.waitForTimeout(150);
   assert((await genFits()) && (await fitsScreen(page)), '1180×820: Shape fits the Generate panel');

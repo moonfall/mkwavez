@@ -10,7 +10,7 @@ import { DEFAULT_STEP_LENGTH, emptySteps, isStepLength, normalizeSteps, type Seq
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
 import { chainJson, normalizeChain, type ShapeChain } from '../core/shapeChain';
-import { DEFAULT_CHAIN } from '../core/shapeFactory';
+import { DEFAULT_CHAIN, MAX_SAVED_CHAINS, uniqueName, type SavedChain } from '../core/shapeFactory';
 import { MAX_USER_PRESETS, presetPatch, resolvePresetWavetable, soundOf as presetSoundOf, type PresetSound, type VoicePreset } from '../core/presets';
 
 import { DEFAULT_SYNTH, SYNTH_AMP_DEFAULTS, type VoiceType } from '../core/synth';
@@ -134,6 +134,8 @@ export class AppModel {
   voicePresets: readonly VoicePreset[] = [];
   /** The Shape tab's chain (normalised; edits are undo steps, a drag or stroke is one; topic 'shape'). */
   shapeChain: ShapeChain = DEFAULT_CHAIN;
+  /** The user's saved Shape chains (session state, not undoable; topic 'shape'). */
+  shapeChains: readonly SavedChain[] = [];
   readonly cap: number;
   private room: { tl: unknown; wts: unknown; n: number; ok: boolean } | null = null;
 
@@ -517,6 +519,60 @@ export class AppModel {
     this.emit('shape', 'undo');
   }
 
+  /** The saved chain named like the current chain, if any (what Save overwrites). */
+  savedChainNamed(name: string): SavedChain | undefined {
+    return this.shapeChains.find((c) => c.chain.name === name);
+  }
+
+  /**
+   * Save the current chain as `name` (trimmed; a new entry, or overwriting the saved chain of
+   * that name). The current chain takes the name (an undo step if it changed). Null when the
+   * list is full or the name is empty.
+   */
+  saveShapeChain(name: string): SavedChain | null {
+    const nm = name.trim().slice(0, 60);
+    if (!nm) return null;
+    const existing = this.savedChainNamed(nm);
+    if (!existing && this.shapeChains.length >= MAX_SAVED_CHAINS) return null;
+    if (this.shapeChain.name !== nm) this.setShapeChain({ ...this.shapeChain, name: nm });
+    const entry: SavedChain = { id: existing?.id ?? this.chainId(), chain: normalizeChain(this.shapeChain) };
+    this.shapeChains = existing ? this.shapeChains.map((c) => (c.id === existing.id ? entry : c)) : [...this.shapeChains, entry];
+    this.emit('shape');
+    return entry;
+  }
+
+  deleteShapeChain(id: string): void {
+    if (!this.shapeChains.some((c) => c.id === id)) return;
+    this.shapeChains = this.shapeChains.filter((c) => c.id !== id);
+    this.emit('shape');
+  }
+
+  /** Add imported chains (names made unique) up to MAX_SAVED_CHAINS; returns how many were added. */
+  importShapeChains(list: readonly ShapeChain[]): number {
+    const names = new Set(this.shapeChains.map((c) => c.chain.name));
+    const added: SavedChain[] = [];
+    for (const c of list) {
+      if (this.shapeChains.length + added.length >= MAX_SAVED_CHAINS) break;
+      const n = normalizeChain(c);
+      const name = uniqueName(n.name, names);
+      names.add(name);
+      added.push({ id: this.chainId(added.length), chain: { ...n, name } });
+    }
+    if (!added.length) return 0;
+    this.shapeChains = [...this.shapeChains, ...added];
+    this.emit('shape');
+    return added.length;
+  }
+
+  private chainId(offset = 0): string {
+    let n = 1;
+    for (const c of this.shapeChains) {
+      const m = /^chain-(\d+)$/.exec(c.id);
+      if (m) n = Math.max(n, Number(m[1]) + 1);
+    }
+    return `chain-${n + offset}`;
+  }
+
   // ---- voice presets ----
 
   /**
@@ -822,6 +878,8 @@ export class AppModel {
       breedParents: this.breedParents,
       bpm: this.bpm,
       voicePresets: this.voicePresets,
+      shapeChain: this.shapeChain,
+      shapeChains: this.shapeChains,
     };
   }
 
@@ -851,7 +909,9 @@ export class AppModel {
     this.breedParents = s.breedParents.filter((id) => this.byId.has(id)).slice(0, MAX_PARENTS);
     this.bpm = Math.max(40, Math.min(300, s.bpm));
     this.voicePresets = s.voicePresets ?? [];
-    this.emit('timeline', 'wavetables', 'voices', 'sequences', 'selection', 'transport', 'undo', 'parents', 'presets');
+    this.shapeChain = s.shapeChain ? normalizeChain(s.shapeChain) : DEFAULT_CHAIN;
+    this.shapeChains = s.shapeChains ?? [];
+    this.emit('timeline', 'wavetables', 'voices', 'sequences', 'selection', 'transport', 'undo', 'parents', 'presets', 'shape');
   }
 
   // ---- undo ----

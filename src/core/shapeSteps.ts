@@ -401,6 +401,31 @@ function peak(x: ArrayLike<number>): number {
   return p;
 }
 
+/**
+ * The circular shift shape() would apply to align x (radians of the fundamental: harmonic k
+ * gains phase k·delta): the lowest harmonic with meaningful energy goes to sine phase.
+ */
+function alignDelta(x: ArrayLike<number>): number {
+  const { re, im } = spectrum(x);
+  let mx = 0;
+  for (let k = 1; k <= KMAX; k++) mx = Math.max(mx, Math.hypot(re[k], im[k]));
+  for (let k = 1; k <= KMAX; k++) if (Math.hypot(re[k], im[k]) > mx * 1e-6) return (-Math.PI / 2 - Math.atan2(im[k], re[k])) / k;
+  return 0;
+}
+
+/** x shifted circularly by delta radians of the fundamental (band-limited to KMAX). */
+function rotate(x: ArrayLike<number>, delta: number): Float64Array {
+  const { re, im } = spectrum(x);
+  for (let k = 1; k <= KMAX; k++) {
+    const c = Math.cos(k * delta);
+    const sn = Math.sin(k * delta);
+    const r = re[k] * c - im[k] * sn;
+    im[k] = re[k] * sn + im[k] * c;
+    re[k] = r;
+  }
+  return fromSpectrum(re, im);
+}
+
 /** Phase of a built harmonic k (in cosine terms: sine phase = −π/2). */
 function builtPhase(phase: HarmPhase, k: number, rand: Prng): number {
   switch (phase) {
@@ -566,12 +591,15 @@ export function applyStep(s: ShapeStep, x: Float64Array, a: number, seed: number
       return fromSpectrum(re, im);
     }
     case 'mutation': {
-      // Mutations work on a normalised table and return a shaped (normalised, phase-aligned) one:
-      // the level is restored so later steps see the same scale.
+      // Mutations expect a finished table (normalised, fundamental in sine phase) and return
+      // one: the cycle is aligned and normalised first, then the result is rotated back and
+      // rescaled, so the chain keeps its own phase (a Rotate or a drawing before it stays put).
       const p = peak(x);
       if (p < 1e-12) return Float64Array.from(x);
-      const y = mutate(s.mutation, Float32Array.from(x, (v) => v / p), a, seed);
-      return Float64Array.from(y, (v) => v * p);
+      const d = alignDelta(x);
+      const aligned = rotate(x, d);
+      const y = mutate(s.mutation, Float32Array.from(aligned, (v) => v / p), a, seed);
+      return rotate(Float64Array.from(y, (v) => v * p), -d);
     }
     default:
       return harmonicStep(s, x, a, seed);

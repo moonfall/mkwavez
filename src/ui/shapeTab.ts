@@ -11,12 +11,16 @@
  * shown. The source is the Timeline selection and stays selected after Add.
  */
 import { KMAX } from '../core/constants';
+import { harmonicMagnitudes } from '../core/fft';
 import { drawingSpan, drawingValue, resampleStroke, type Drawing, type DrawTool, type Pt } from '../core/drawing';
 import { MUTATION_CHOICES } from '../core/mutations';
 import { randomSeed } from '../core/prng';
 import {
   applyChain,
   batchUOf,
+  chainJson,
+  EMPTY_CHAIN,
+  recipeChain,
   chainStages,
   chainSweeps,
   chainUsesSeed,
@@ -28,7 +32,7 @@ import {
   type BatchPos,
   type ShapeChain,
 } from '../core/shapeChain';
-import { FACTORY_CHAINS } from '../core/shapeFactory';
+import { chainsFile, FACTORY_CHAINS, parseChainsFile } from '../core/shapeFactory';
 import {
   defaultDrawing,
   DEFAULT_LIMIT_DRAW,
@@ -56,6 +60,7 @@ import { cssColor, drawWave, fit, fitFixed, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h } from './dom';
 import { popupMenu } from './presets';
+import { downloadBytes } from './session';
 
 /** Minimum interval between preview restarts while something is dragged. */
 const PREVIEW_MS = 50;
@@ -152,7 +157,9 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   };
   const sel = (): Step | undefined => chain().steps[selIndex()];
   const source = (): WaveTable | undefined => model.table(model.selectedId);
-  const batchN = () => (chainSweeps(chain()) ? opts.count() : 1);
+  /** Results per Add: N when a step sweeps or seeded steps vary per waveform, else 1. */
+  const batchVaries = (c: ShapeChain) => chainSweeps(c) || (c.varySeed && chainUsesSeed(c));
+  const batchN = () => (batchVaries(chain()) ? opts.count() : 1);
 
   /** Replace step `id` (an undo step; `gesture` coalesces a drag). */
   const updateStep = (id: string, fn: (s: Step) => Step, gesture?: string) => {
@@ -168,31 +175,100 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   let srcDirty = true;
 
   // ---------------- chain column ----------------
-  const chainPick = h('select', { id: 'shape-chains', class: 'shape-chain-pick', 'aria-label': 'Load a chain', title: 'Load a factory chain (undoable)' });
+  const chainPick = h('select', { id: 'shape-chains', class: 'shape-chain-pick', 'aria-label': 'Load a chain', title: 'Load a chain (undoable)' });
+  /** The saved or factory chain the current one has the name of (null: none, or it was edited). */
+  const namesake = () => model.savedChainNamed(chain().name)?.chain ?? FACTORY_CHAINS.find((f) => f.chain.name === chain().name)?.chain ?? null;
   const fillChainPick = () => {
+    const ref = namesake();
+    const edited = !ref || chainJson(ref) !== chainJson(chain());
     chainPick.replaceChildren(
-      h('option', { value: '' }, chain().name),
+      h('option', { value: '' }, `${chain().name}${edited && ref ? ' (edited)' : ''}`),
       h('optgroup', { label: 'Factory' }, ...FACTORY_CHAINS.map((f) => h('option', { value: `f:${f.id}` }, f.chain.name))),
+      ...(model.shapeChains.length ? [h('optgroup', { label: 'Yours' }, ...model.shapeChains.map((c) => h('option', { value: `u:${c.id}` }, c.chain.name)))] : []),
     );
     chainPick.value = '';
   };
+  const loadChain = (c: ShapeChain) => {
+    model.setShapeChain(c);
+    selId = c.steps[0]?.id ?? null;
+    viewFor = null;
+    syncAll();
+    flash(`Loaded “${c.name}”`);
+  };
   chainPick.addEventListener('change', () => {
-    const f = FACTORY_CHAINS.find((x) => `f:${x.id}` === chainPick.value);
-    if (f) {
-      model.setShapeChain(f.chain);
-      selId = f.chain.steps[0]?.id ?? null;
-      viewFor = null;
-      syncAll();
-      flash(`Loaded “${f.chain.name}”`);
-    }
+    const v = chainPick.value;
+    const c = v.startsWith('f:') ? FACTORY_CHAINS.find((x) => `f:${x.id}` === v)?.chain : model.shapeChains.find((x) => `u:${x.id}` === v)?.chain;
     chainPick.value = '';
+    if (c) loadChain(c);
+  });
+  const chainFile = h('input', { type: 'file', id: 'shape-chain-file', accept: '.json,application/json', hidden: true });
+  chainFile.addEventListener('change', async () => {
+    const f = chainFile.files?.[0];
+    chainFile.value = '';
+    if (!f) return;
+    try {
+      const n = model.importShapeChains(parseChainsFile(await f.text()));
+      flash(n ? `Imported ${n} chain${n === 1 ? '' : 's'}` : 'No chains imported (the list is full or the file is empty)', !n);
+    } catch (e) {
+      flash(`Import failed: ${e instanceof Error ? e.message : String(e)}`, true);
+    }
+  });
+  const chainMenuBtn = h('button', { id: 'shape-chain-menu', class: 'small icon-btn', 'aria-label': 'Chain actions', title: 'Save, rename, export / import chains; options' }, '⋯');
+  const menuItem = (id: string, label: string, onclick: () => void, disabled = false, note = '') =>
+    h('button', { id, role: 'menuitem', class: 'menu-item', disabled, onclick }, h('b', {}, label), note ? h('span', {}, note) : null);
+  popupMenu('shape-chain-actions', chainMenuBtn, () => {
+    const c = chain();
+    const saved = model.savedChainNamed(c.name);
+    const isFactory = !saved && FACTORY_CHAINS.some((f) => f.chain.name === c.name);
+    const srcChain = (() => {
+      const t = source();
+      return t ? recipeChain(t.recipe) : null;
+    })();
+    const saveAs = () => {
+      const name = prompt('Save the chain as', isFactory ? `${c.name} (mine)` : c.name);
+      if (name === null) return;
+      if (model.savedChainNamed(name.trim()) && !confirm(`Replace your saved chain “${name.trim()}”?`)) return;
+      const r = model.saveShapeChain(name);
+      flash(r ? `Saved “${r.chain.name}”` : 'Not saved: the name is empty or your list is full', !r);
+    };
+    return [
+      menuItem('shape-chain-save', saved ? `Save “${c.name}”` : 'Save…', () => {
+        if (!saved || isFactory) return saveAs();
+        model.saveShapeChain(c.name);
+        flash(`Saved “${c.name}”`);
+      }),
+      menuItem('shape-chain-saveas', 'Save as…', saveAs),
+      menuItem('shape-chain-rename', 'Rename…', () => {
+        const name = prompt('Chain name', c.name);
+        if (name !== null && name.trim()) setChain((x) => ({ ...x, name: name.trim() }));
+      }),
+      menuItem(
+        'shape-chain-delete',
+        saved ? `Delete “${saved.chain.name}”` : 'Delete saved chain',
+        () => {
+          if (saved && confirm(`Delete your saved chain “${saved.chain.name}”? (The chain being edited stays.)`)) model.deleteShapeChain(saved.id);
+        },
+        !saved,
+      ),
+      menuItem('shape-chain-new', 'New chain', () => loadChain({ ...EMPTY_CHAIN, seed: randomSeed() })),
+      menuItem(
+        'shape-chain-from-recipe',
+        'Load the selection’s chain',
+        () => srcChain && loadChain(srcChain),
+        !srcChain,
+        srcChain ? srcChain.name : 'the selection wasn’t shaped',
+      ),
+      menuItem('shape-chain-export', 'Export chains…', () => downloadBytes(new TextEncoder().encode(chainsFile([c, ...model.shapeChains.map((x) => x.chain).filter((x) => x.name !== c.name)])), 'mkwavez-shapes.json'), false, 'this one + yours'),
+      menuItem('shape-chain-import', 'Import chains…', () => chainFile.click()),
+      menuItem('shape-chain-realign', `${c.realign ? '✓ ' : ''}Realign phase`, () => setChain((x) => ({ ...x, realign: !x.realign })), false, c.realign ? 'results in sine phase, like other waveforms' : 'results keep the drawn phase'),
+    ];
   });
   const list = h('div', { id: 'shape-steps', class: 'shape-steps', role: 'listbox', 'aria-label': 'Steps (Alt+↑/↓ moves, Space turns on / off, Delete removes)' });
   const addBtn = h('button', { id: 'shape-add', class: 'shape-add', title: 'Add a step after the selected one' }, '+ Add step');
   const chainCol = h(
     'div',
     { class: 'gen-lib shape-chain' },
-    h('div', { class: 'gen-lib-head' }, h('span', { class: 'gen-lib-title' }, 'Chain'), chainPick),
+    h('div', { class: 'gen-lib-head' }, h('span', { class: 'gen-lib-title' }, 'Chain'), chainPick, chainMenuBtn, chainFile),
     list,
     h('div', { class: 'shape-chain-foot' }, addBtn),
   );
@@ -269,6 +345,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const info = stepInfo(s.op);
     return info.draws ?? (s.op === 'harmSet' || s.op === 'harmMod' ? 'harm' : null);
   };
+  /** Index of the selection at the last sync (a vanished step's neighbour is selected). */
+  let lastSelIndex = 0;
   /** The step the view last followed: a newly selected step (any way) brings its view. */
   let viewFor: string | null = null;
 
@@ -537,7 +615,14 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       kids.push(sep(), drawTools(), resetDraw());
     } else if (s.op === 'harmSet') {
       kids.push(
-        select('shape-hmode', 'What to do with the set', Object.entries(MODE_LABELS) as [keyof typeof MODE_LABELS, string][], (x) => (x.op === 'harmSet' ? x.mode : 'keep'), (mode, x) => ({ ...x, mode }) as Step),
+        select(
+          'shape-hmode',
+          'What to do with the set',
+          Object.entries(MODE_LABELS) as [keyof typeof MODE_LABELS, string][],
+          (x) => (x.op === 'harmSet' ? x.mode : 'keep'),
+          // Removing a set rarely means removing the fundamental (the pitch): switching to Remove leaves it out of the set.
+          (mode, x) => ({ ...x, mode, ...(mode === 'remove' && x.op === 'harmSet' && x.mode !== 'remove' ? { fundamental: false } : {}) }) as Step,
+        ),
         select(
           'shape-hset',
           'Which harmonics',
@@ -600,7 +685,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         if (cur) updateStep(cur.id, (x) => ({ ...x, fundamental: fund.checked }) as Step);
       });
       syncs.push((x) => (fund.checked = x.op === 'harmSet' && x.fundamental));
-      kids.push(h('label', { class: 'shape-check' }, fund, 'Fundamental'));
+      kids.push(h('label', { class: 'shape-check', title: 'Whether harmonic 1 belongs to the set (Remove takes it out)' }, fund, 'Fundamental in set'));
       if (s.mode === 'add' || s.mode === 'replace') {
         if (s.set.kind !== 'drawn')
           kids.push(sep(), range('shape-hlaw', 'Law 1/kᵖ', LAW_RANGE[0], LAW_RANGE[1], 0.05, (x) => (x.op === 'harmSet' ? x.law : 1), (v, x) => ({ ...x, law: v }) as Step, (v) => `p ${v.toFixed(2)}`));
@@ -767,22 +852,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     return p;
   };
   /** Harmonic magnitudes in dB relative to `ref` (the stronger of input / output). */
-  const dbOf = (x: ArrayLike<number>): Float64Array => {
-    const n = x.length;
-    const m = new Float64Array(KMAX + 1);
-    // Direct DFT over KMAX harmonics (cheap enough for one plot).
-    for (let k = 1; k <= KMAX; k++) {
-      let re = 0;
-      let im = 0;
-      const w = (2 * Math.PI * k) / n;
-      for (let i = 0; i < n; i += 1) {
-        re += x[i] * Math.cos(w * i);
-        im -= x[i] * Math.sin(w * i);
-      }
-      m[k] = Math.hypot(re, im);
-    }
-    return m;
-  };
+  const dbOf = (x: ArrayLike<number>): Float64Array => harmonicMagnitudes(x, KMAX);
   const toDb = (m: Float64Array, ref: number) => Array.from(m, (v, k) => (k === 0 || ref <= 0 ? HARM_DB[0] : clamp(20 * Math.log10(Math.max(v, 1e-300) / ref), HARM_DB[0], 0)));
   const bars = (g: CanvasRenderingContext2D, db: number[], w: number, h: number, color: string, frac: number) => {
     g.fillStyle = color;
@@ -1074,7 +1144,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       drawing = { pt: q, raw: null, stepId: s.id, stroke: strokeNo, draw: { tool: 'curve', pts } };
       commitDraw(drawing.draw);
     } else {
-      drawing = { pt: null, raw: [p], stepId: s.id, stroke: strokeNo, draw: { tool: 'free', pts: [p] } };
+      // Committed once the stroke has length (a tap changes nothing).
+      drawing = { pt: null, raw: [p], stepId: s.id, stroke: strokeNo, draw: d };
     }
   });
   edCanvas.addEventListener('pointermove', (e) => {
@@ -1089,7 +1160,9 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       drawing.draw = { tool: drawing.draw.tool, pts };
     } else if (drawing.raw) {
       drawing.raw.push(p);
-      drawing.draw = { tool: 'free', pts: resampleStroke(drawing.raw) };
+      const pts = resampleStroke(drawing.raw);
+      if (pts.length < 2) return;
+      drawing.draw = { tool: 'free', pts };
     }
     commitDraw(drawing.draw);
   });
@@ -1103,7 +1176,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const d = drawing.draw;
     // A click without a drag (line tool): a horizontal line across the whole cycle at that level.
     if (d.tool === 'line' && d.pts.length === 2 && Math.abs(d.pts[1][0] - d.pts[0][0]) < 0.01) commitDraw({ tool: 'line', pts: [[0, d.pts[0][1]], [1, d.pts[0][1]]] });
-    else commitDraw(d);
+    else if (d.tool !== 'free' || d.pts.length > 1) commitDraw(d);
+    // A freehand tap (no stroke) leaves the drawing as it was.
     drawing = null;
     model.endGesture();
     mainDirty = true;
@@ -1144,7 +1218,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const flash = flasher(status);
   const strip = buildStrip('shape-strip', {
     onShow: () => {
-      mainDirty = true;
+      mainDirty = thumbsDirty = true;
     },
   });
   const batchBox = h(
@@ -1156,14 +1230,15 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
 
   const cardLabel = (i: number, n: number) => {
     const sw = chain().steps.find((s) => s.on && s.amountEnd !== undefined);
-    if (n <= 1 || !sw) return 'result';
+    if (n <= 1) return 'result';
+    if (!sw) return `#${i + 1}`;
     return `#${i + 1} · ${pct(stepAmount(sw, batchUOf({ index: i, count: n })))}`;
   };
   let stripSig = '';
   const syncBatch = () => {
     const n = batchN();
     const sweeps = n > 1;
-    const sig = JSON.stringify([n, chain().steps.map((s) => (s.on ? [s.amount, s.amountEnd] : 0))]);
+    const sig = JSON.stringify([n, chain().steps.map((s) => (s.on ? [s.amount, s.amountEnd] : 0)), chain().varySeed]);
     if (sig !== stripSig) {
       const atEnd = strip.shown() >= strip.cards.length - 1;
       stripSig = sig;
@@ -1209,17 +1284,22 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     while (j.next < j.n && performance.now() < deadline) computeOne(j, j.next++);
   };
 
+  const silent = (t: GeneratedTable) => !t.data.some((v) => v !== 0);
+  const SILENT = 'The result is silent: nothing added (check steps that replace or multiply by zero)';
   const addShown = () => {
     const j = currentJob();
     if (!j) return;
     const i = Math.min(strip.shown(), j.n - 1);
-    if (!model.addTables([computeOne(j, i)], false).length) return; // refused (Timeline full): the notice says why
+    const t = computeOne(j, i);
+    if (silent(t)) return flash(SILENT, true);
+    if (!model.addTables([t], false).length) return; // refused (Timeline full): the notice says why
     flash(j.n > 1 ? `Added #${i + 1} to the Timeline (the source stays selected)` : 'Added to the Timeline (the source stays selected)');
   };
   const addBatch = () => {
     const j = currentJob();
     if (!j) return;
     const tables = Array.from({ length: j.n }, (_, i) => computeOne(j, i));
+    if (tables.some(silent)) return flash(SILENT, true);
     if (!model.addTables(tables, false).length) return;
     flash(`Added ${tables.length} waveforms to the Timeline (the source stays selected)`);
   };
@@ -1274,7 +1354,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   watchVisibility(el);
 
   const syncAll = () => {
-    if (!chain().steps.some((s) => s.id === selId)) selId = chain().steps[Math.min(Math.max(0, selIndex()), chain().steps.length - 1)]?.id ?? null;
+    if (!chain().steps.some((s) => s.id === selId)) selId = chain().steps[Math.min(lastSelIndex, chain().steps.length - 1)]?.id ?? null;
+    lastSelIndex = Math.max(0, selIndex());
     const cur = sel();
     if (cur && `${cur.id}:${cur.op}` !== viewFor) {
       viewFor = `${cur.id}:${cur.op}`;
