@@ -384,3 +384,8 @@ viz('cross-pm', {
   axis: (i) => ['0', `φ = ${f2(2 * i.u)}·sin p·sin 3p`, '2π'],
   draw: (g, w, h, i, c) => modulator(g, w, h, c, (p) => 2 * i.u * Math.sin(p) * Math.sin(3 * p), 2.1),
 });
+
+viz('fm-sweep', {
+  axis: (i) => ['0', `φ = ${f2(4 * i.u)}·sin 2p`, '2π'],
+  draw: (g, w, h, i, c) => modulator(g, w, h, c, (p) => 4 * i.u * Math.sin(2 * p), 4.2),
+});
