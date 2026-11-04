@@ -2130,6 +2130,33 @@ async function shapeChecks(page, tlCount) {
   c = await chain();
   assert(c.steps.length === 4 && !c.steps.some((s) => s.op === 'gain'), 'steps can be taken out (menu and ×)');
 
+  // Harmonics: a set's numbers, a drawn set painted on the plot, a limit curve drawn there.
+  await page.click('#shape-step-3');
+  await page.fill('#shape-hof', '3, 5');
+  c = await chain();
+  assert(JSON.stringify(c.steps[2].set) === '{"kind":"multiples","of":[3,5]}' && (await page.textContent('#shape-step-3')).includes('multiples of 3, 5'), 'typing harmonic numbers updates the set');
+  await page.selectOption('#shape-hset', 'drawn');
+  assert((await chain()).steps[2].set.kind === 'drawn' && (await page.isVisible('#shape-hdraw-clear')), 'Drawn bars: From input / Clear offered');
+  await page.click('#shape-hdraw-clear');
+  assert((await chain()).steps[2].set.mags.every((v) => v === -60), 'Clear removes every bar');
+  u = await undoDepth();
+  const hb = await (await page.$('#shape-ed')).boundingBox();
+  await page.mouse.move(hb.x + 5, hb.y + hb.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(hb.x + hb.width * 0.5, hb.y + hb.height * 0.6, { steps: 15 });
+  await page.mouse.up();
+  const mags = (await chain()).steps[2].set.mags;
+  assert(mags.slice(0, 30).every((v) => v > -60) && mags.slice(40).every((v) => v === -60) && mags[0] > mags[30], `painting bars sets a falling run of harmonics (${mags.slice(0, 4)})`);
+  assert((await undoDepth()) === u + 1, 'one painted stroke is one undo step');
+  await page.click('#shape-hdraw-input');
+  assert((await chain()).steps[2].set.mags.some((v) => v > -60), 'From input copies the input’s harmonics');
+  await page.click('#shape-step-4');
+  await page.click('#shape-lmode-fit');
+  await page.click('#shape-tool-curve');
+  await page.mouse.click(hb.x + hb.width * 0.5, hb.y + hb.height * 0.3);
+  c = await chain();
+  assert(c.steps[3].mode === 'fit' && c.steps[3].draw.tool === 'curve' && c.steps[3].draw.pts.length === 3, 'limit step: Fit, a curve point added on the Harmonics plot');
+
   // Load a factory chain (one undo step).
   u = await undoDepth();
   await page.selectOption('#shape-chains', 'f:clip-ramp');

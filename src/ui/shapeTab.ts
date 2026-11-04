@@ -87,7 +87,7 @@ const hex = (s: number) => (s >>> 0).toString(16).padStart(8, '0');
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const TOOL_LABELS: Record<DrawTool, string> = { line: 'Line', curve: 'Curve', free: 'Free' };
-const SET_LABELS = { multiples: 'Multiples of', list: 'List', odd: 'Odd', even: 'Even', primes: 'Primes', fibonacci: 'Fibonacci', drawn: 'Drawn' } as const;
+const SET_LABELS = { multiples: 'Multiples of', list: 'List', odd: 'Odd', even: 'Even', primes: 'Primes', fibonacci: 'Fibonacci', drawn: 'Drawn bars' } as const;
 const MODE_LABELS = { keep: 'Keep only', remove: 'Remove', add: 'Add', replace: 'Replace with' } as const;
 const MOD_LABELS: Record<HarmModKind, string> = { shift: 'Shift', stretch: 'Stretch', tilt: 'Tilt', mirror: 'Mirror', randomize: 'Randomize' };
 const LIMIT_LABELS = { limit: 'Limit', floor: 'Floor', fit: 'Fit', scale: 'Scale' } as const;
@@ -181,6 +181,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     if (f) {
       model.setShapeChain(f.chain);
       selId = f.chain.steps[0]?.id ?? null;
+      viewFor = null;
       syncAll();
       flash(`Loaded “${f.chain.name}”`);
     }
@@ -203,9 +204,6 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const at = selIndex() + 1;
     model.setShapeChain({ ...c, steps: [...c.steps.slice(0, at), s, ...c.steps.slice(at)] });
     selId = s.id;
-    const info = stepInfo(op);
-    if (info.draws) view = info.draws;
-    else if (op === 'harmSet' || op === 'harmMod') view = 'harm';
     syncAll();
   };
   popupMenu('shape-add-menu', addBtn, () => {
@@ -264,14 +262,15 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const selectStep = (id: string) => {
     if (selId === id && sel()?.id === id) return;
     selId = id;
-    const s = sel();
-    if (s) {
-      const info = stepInfo(s.op);
-      if (info.draws) view = info.draws;
-      else if (s.op === 'harmSet' || s.op === 'harmMod') view = 'harm';
-    }
     syncAll();
   };
+  /** The view a step works in (its drawing's, harmonics for harmonic steps); null = keep the current one. */
+  const viewOf = (s: Step): View | null => {
+    const info = stepInfo(s.op);
+    return info.draws ?? (s.op === 'harmSet' || s.op === 'harmMod' ? 'harm' : null);
+  };
+  /** The step the view last followed: a newly selected step (any way) brings its view. */
+  let viewFor: string | null = null;
 
   let rowSig = '';
   let dragId: string | null = null;
@@ -542,10 +541,16 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         select(
           'shape-hset',
           'Which harmonics',
-          (Object.entries(SET_LABELS) as [keyof typeof SET_LABELS, string][]).filter(([k]) => k !== 'drawn'),
-          (x) => (x.op === 'harmSet' ? (x.set.kind === 'drawn' ? 'multiples' : x.set.kind) : 'multiples'),
+          Object.entries(SET_LABELS) as [keyof typeof SET_LABELS, string][],
+          (x) => (x.op === 'harmSet' ? x.set.kind : 'multiples'),
           (kind, x) => {
             if (x.op !== 'harmSet') return x;
+            if (kind === 'drawn') {
+              // Start from the current set at its law (members audible, the rest absent).
+              const member = harmonicSet(x);
+              const mags = Array.from({ length: KMAX }, (_, i) => (member[i + 1] ? Math.max(HARM_DB[0] + 1, -20 * x.law * Math.log10(i + 1)) : HARM_DB[0]));
+              return { ...x, set: { kind, mags } } as Step;
+            }
             const of = x.set.kind === 'multiples' || x.set.kind === 'list' ? x.set.of : [2, 3];
             return { ...x, set: kind === 'multiples' || kind === 'list' ? { kind, of } : { kind } } as Step;
           },
@@ -565,6 +570,30 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         });
         kids.push(of);
       }
+      if (s.set.kind === 'drawn') {
+        const setMags = (mags: number[]) => {
+          const cur = sel();
+          if (cur && cur.op === 'harmSet') updateStep(cur.id, (x) => ({ ...x, set: { kind: 'drawn', mags } }) as Step);
+        };
+        kids.push(
+          h(
+            'button',
+            {
+              id: 'shape-hdraw-input',
+              class: 'small',
+              title: 'Set the bars to the input’s harmonics',
+              onclick: () => {
+                const st = stages();
+                if (!st) return;
+                const { di } = specs(st.inp, st.inp);
+                setMags(di.slice(1).map((v) => Math.round(v * 100) / 100));
+              },
+            },
+            'From input',
+          ),
+          h('button', { id: 'shape-hdraw-clear', class: 'small', title: 'Remove every bar', onclick: () => setMags(Array.from({ length: KMAX }, () => HARM_DB[0])) }, 'Clear'),
+        );
+      }
       const fund = h('input', { type: 'checkbox', id: 'shape-hfund' });
       fund.addEventListener('change', () => {
         const cur = sel();
@@ -573,7 +602,9 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       syncs.push((x) => (fund.checked = x.op === 'harmSet' && x.fundamental));
       kids.push(h('label', { class: 'shape-check' }, fund, 'Fundamental'));
       if (s.mode === 'add' || s.mode === 'replace') {
-        kids.push(sep(), range('shape-hlaw', 'Law 1/kᵖ', LAW_RANGE[0], LAW_RANGE[1], 0.05, (x) => (x.op === 'harmSet' ? x.law : 1), (v, x) => ({ ...x, law: v }) as Step, (v) => `p ${v.toFixed(2)}`));
+        if (s.set.kind !== 'drawn')
+          kids.push(sep(), range('shape-hlaw', 'Law 1/kᵖ', LAW_RANGE[0], LAW_RANGE[1], 0.05, (x) => (x.op === 'harmSet' ? x.law : 1), (v, x) => ({ ...x, law: v }) as Step, (v) => `p ${v.toFixed(2)}`));
+        else kids.push(sep());
         kids.push(select('shape-hphase', 'Phase of new harmonics', [['sine', 'Sine phase'], ['cos', 'Cosine phase'], ['schroeder', 'Schroeder'], ['random', 'Random (seeded)']] as const, (x) => (x.op === 'harmSet' ? x.phase : 'sine'), (phase, x) => ({ ...x, phase }) as Step));
       }
     } else if (s.op === 'harmMod') {
@@ -643,7 +674,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const syncParams = () => {
     const s = sel();
     const sig = s
-      ? JSON.stringify([s.id, s.op, s.op === 'harmSet' ? [s.mode === 'add' || s.mode === 'replace', s.set.kind === 'multiples' || s.set.kind === 'list'] : 0, s.op === 'harmMod' ? s.kind : 0])
+      ? JSON.stringify([s.id, s.op, s.op === 'harmSet' ? [s.mode === 'add' || s.mode === 'replace', s.set.kind === 'multiples' || s.set.kind === 'list', s.set.kind === 'drawn'] : 0, s.op === 'harmMod' ? s.kind : 0])
       : '';
     if (sig !== paramSig) {
       paramSig = sig;
@@ -781,6 +812,11 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       ? [clamp(px / w, 0, 1), clamp(((hh / 2 - py) / amp(hh)) * plotR, WAVE_Y[0], WAVE_Y[1])]
       : [clamp(((px / w) * KMAX + 0.5 - 1) / (KMAX - 1), 0, 1), clamp((-py / (hh - DOTS_H)) * -HARM_DB[0], HARM_DB[0], HARM_DB[1])];
   /** The drawing the plot edits now (null: this step draws in the other view, or not at all). */
+  /** The drawn-bars set step the Harmonics plot paints now, or null. */
+  const paintable = (): Extract<Step, { op: 'harmSet' }> | null => {
+    const s = sel();
+    return view === 'harm' && s && s.op === 'harmSet' && s.set.kind === 'drawn' ? s : null;
+  };
   const editable = (): Drawing | null => {
     const s = sel();
     if (!s || !('draw' in s)) return null;
@@ -831,7 +867,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const [g, w, hh] = fit(edCanvas, plotH());
     const grid = cssColor('--surface-2');
     const border = cssColor('--border');
-    const canDraw = !!editable();
+    const canDraw = !!editable() || !!paintable();
     edBox.classList.toggle('drawable', canDraw);
     if (!st) {
       edHint.hidden = false;
@@ -913,6 +949,21 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       bars(g, dout, w, hh - DOTS_H, cssColor('--accent'), 0.45);
       g.globalAlpha = 1;
       if (s && s.op === 'harmLimit') drawDrawing(g, s.draw, w, hh, false);
+      if (s && s.op === 'harmSet' && s.set.kind === 'drawn') {
+        // The painted level of each harmonic: a tick across its bar.
+        g.strokeStyle = cssColor('--v2');
+        g.lineWidth = 2;
+        g.beginPath();
+        const bw = (w / KMAX) * 0.8;
+        s.set.mags.forEach((db, i) => {
+          if (db <= HARM_DB[0]) return;
+          const y = Math.round(((hh - DOTS_H) * -db) / -HARM_DB[0]) + 0.5;
+          const cx = ((i + 0.5) / KMAX) * w;
+          g.moveTo(cx - bw / 2, y);
+          g.lineTo(cx + bw / 2, y);
+        });
+        g.stroke();
+      }
       legend.replaceChildren(
         h('span', {}, h('i', { class: 'shape-key-in' }), 'input'),
         h('span', {}, h('i', { class: 'shape-key-out' }), 'output'),
@@ -921,7 +972,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
       );
     }
     // Hint when this step has nothing to draw in this view.
-    const otherView = s && 'draw' in s && !canDraw;
+    const drawnSet = !!s && s.op === 'harmSet' && s.set.kind === 'drawn';
+    const otherView = !!s && ('draw' in s || drawnSet) && !canDraw;
     edHint.hidden = !otherView;
     if (otherView) edHint.textContent = view === 'wave' ? 'This step draws on the harmonics: switch to Harmonics' : 'This step draws on the waveform: switch to Waveform';
     // Side: the other view.
@@ -958,7 +1010,38 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     updateStep(id, (x) => ({ ...x, draw: d }) as Step, key);
   };
   const ptsOf = (d: Drawing): [number, number][] => d.pts.map((p) => [p[0], p[1]]);
+  let painting: { stepId: string; stroke: number; mags: number[]; lastK: number } | null = null;
+  const paintAt = (e: PointerEvent) => {
+    if (!painting) return;
+    const r = edCanvas.getBoundingClientRect();
+    const [u, db0] = fromPx(e.clientX - r.left, e.clientY - r.top, r.width, r.height);
+    const k = clamp(Math.round(1 + u * (KMAX - 1)), 1, KMAX);
+    // The bottom few dB (and the dots row) remove the harmonic.
+    const db = db0 <= HARM_DB[0] + 2 ? HARM_DB[0] : Math.round(db0 * 10) / 10;
+    const k0 = painting.lastK;
+    const from = Math.min(k0, k);
+    const to = Math.max(k0, k);
+    const d0 = painting.mags[k0 - 1];
+    for (let j = from; j <= to; j++) {
+      const t = to === from ? 1 : (j - k0) / (k - k0);
+      painting.mags[j - 1] = j === k ? db : k0 === k ? db : d0 + (db - d0) * t;
+    }
+    painting.lastK = k;
+    const mags = painting.mags.slice();
+    updateStep(painting.stepId, (x) => ({ ...x, set: { kind: 'drawn', mags } }) as Step, `bars:${painting.stepId}:${painting.stroke}`);
+  };
   edCanvas.addEventListener('pointerdown', (e) => {
+    const ps = paintable();
+    if (ps && e.button <= 0) {
+      e.preventDefault();
+      edCanvas.setPointerCapture(e.pointerId);
+      const r = edCanvas.getBoundingClientRect();
+      const [u] = fromPx(e.clientX - r.left, e.clientY - r.top, r.width, r.height);
+      const set = ps.set as { kind: 'drawn'; mags: readonly number[] };
+      painting = { stepId: ps.id, stroke: ++strokeNo, mags: set.mags.slice(), lastK: clamp(Math.round(1 + u * (KMAX - 1)), 1, KMAX) };
+      paintAt(e);
+      return;
+    }
     const d = editable();
     const s = sel();
     if (!d || !s || e.button > 0) return;
@@ -995,6 +1078,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     }
   });
   edCanvas.addEventListener('pointermove', (e) => {
+    if (painting) return paintAt(e);
     if (!drawing) return;
     const r = edCanvas.getBoundingClientRect();
     const p = fromPx(e.clientX - r.left, e.clientY - r.top, r.width, r.height);
@@ -1010,6 +1094,11 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     commitDraw(drawing.draw);
   });
   const endDraw = () => {
+    if (painting) {
+      painting = null;
+      model.endGesture();
+      return;
+    }
     if (!drawing) return;
     const d = drawing.draw;
     // A click without a drag (line tool): a horizontal line across the whole cycle at that level.
@@ -1186,6 +1275,11 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
 
   const syncAll = () => {
     if (!chain().steps.some((s) => s.id === selId)) selId = chain().steps[Math.min(Math.max(0, selIndex()), chain().steps.length - 1)]?.id ?? null;
+    const cur = sel();
+    if (cur && `${cur.id}:${cur.op}` !== viewFor) {
+      viewFor = `${cur.id}:${cur.op}`;
+      view = viewOf(cur) ?? view;
+    }
     fillChainPick();
     renderList();
     syncParams();
