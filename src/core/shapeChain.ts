@@ -4,9 +4,9 @@
  * engine is pure and deterministic, shared by the preview, Add and renderRecipe().
  *
  * Pipeline: the source (a finished table) → each enabled step at its amount (swept across
- * a batch if it has amountEnd), band-limited to KMAX after every step, levels carried (no
- * normalising between steps) → shape() (DC off, band-limit, optional phase realign, peak
- * normalise). Seeds: each step's seed derives from the chain seed and the step's id, so
+ * a batch if it has amountEnd), band-limited to KMAX after every step, level and DC carried
+ * (no normalising between steps, so Gain drives and an offset makes a clip asymmetric) →
+ * shape() (DC off, band-limit, optional phase realign, peak normalise). Seeds: each step's seed derives from the chain seed and the step's id, so
  * adding, removing or reordering other steps doesn't change it; `varySeed` further derives
  * one per batch index.
  */

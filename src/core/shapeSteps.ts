@@ -385,9 +385,12 @@ function spectrum(x: ArrayLike<number>): { re: Float64Array; im: Float64Array } 
   return { re, im };
 }
 
-/** Bins 1..KMAX back to a real cycle (DC and everything above KMAX dropped). */
+/**
+ * Bins 0..KMAX back to a real cycle (everything above KMAX dropped). DC is kept: it carries
+ * between steps like the level does (so an offset then a clip is an asymmetric clip); the
+ * chain's finish (shape()) removes it.
+ */
 export function fromSpectrum(re: Float64Array, im: Float64Array): Float64Array {
-  re[0] = 0;
   im[0] = 0;
   for (let k = KMAX + 1; k <= N / 2; k++) {
     re[k] = 0;
@@ -401,7 +404,7 @@ export function fromSpectrum(re: Float64Array, im: Float64Array): Float64Array {
   return re;
 }
 
-/** DC removed and harmonics above KMAX dropped (what is heard); levels kept. */
+/** Harmonics above KMAX dropped (what is heard); level and DC kept (see fromSpectrum). */
 export function bandLimit(x: ArrayLike<number>): Float64Array {
   const { re, im } = spectrum(x);
   return fromSpectrum(re, im);

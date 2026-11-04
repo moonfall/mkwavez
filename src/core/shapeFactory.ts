@@ -55,6 +55,76 @@ export const FACTORY_CHAINS: readonly FactoryChain[] = [
       { id: 'limit', op: 'harmLimit', mode: 'limit', draw: { tool: 'curve', pts: [[0, 0], [0.4, -12], [1, -24]] } },
     ],
   }),
+  // A filter cutoff opening across the batch: the limit curve goes from steep to nearly flat.
+  f('lowpass-opening', {
+    name: 'Low-pass opening',
+    seed: 1,
+    steps: [
+      {
+        id: 'cutoff',
+        op: 'harmLimit',
+        mode: 'limit',
+        draw: { tool: 'free', pts: [[0, 0], [0.04, -30], [0.15, -54], [1, -60]] },
+        // Just above a saw's own spectrum (−20·log10 k): the batch ends fully open, not half way.
+        drawEnd: { tool: 'free', pts: [[0, 0], [0.1, -14], [0.4, -26], [1, -34]] },
+      },
+    ],
+  }),
+  // Buchla-style wavefolding: the drive into a fold rises across the batch; the top is tamed.
+  f('west-coast-fold', {
+    name: 'West-coast fold',
+    seed: 1,
+    steps: [
+      { id: 'drive', op: 'gain', value: 4, amount: 0, amountEnd: 1 },
+      { id: 'fold', op: 'fold', side: 'both', draw: { tool: 'line', pts: [[0, 0.5], [1, 0.5]] } },
+      { id: 'tame', op: 'harmLimit', mode: 'limit', draw: { tool: 'line', pts: [[0, -6], [1, -40]] } },
+    ],
+  }),
+  // Any source becomes a pulse: an offset slides the wave across a narrow clip, so the width sweeps.
+  f('pwm-anything', {
+    name: 'PWM from anything',
+    seed: 1,
+    steps: [
+      { id: 'offset', op: 'add', draw: { tool: 'line', pts: [[0, -0.8], [1, -0.8]] }, drawEnd: { tool: 'line', pts: [[0, 0.8], [1, 0.8]] } },
+      { id: 'clip', op: 'clip', side: 'both', draw: { tool: 'line', pts: [[0, 0.1], [1, 0.1]] } },
+    ],
+  }),
+  // A vowel morph: saw-like harmonics are fitted to an "ah" formant curve that becomes "ee".
+  f('talking-vowels', {
+    name: 'Talking vowels',
+    seed: 1,
+    steps: [
+      { id: 'richen', op: 'harmSet', mode: 'add', set: { kind: 'multiples', of: [1] }, fundamental: true, law: 1, amount: 0.5 },
+      {
+        id: 'vowel',
+        op: 'harmLimit',
+        mode: 'fit',
+        draw: { tool: 'curve', pts: [[0, -18], [0.07, 0], [0.1, -24], [0.127, -6], [0.2, -36], [1, -50]] },
+        drawEnd: { tool: 'curve', pts: [[0, -12], [0.028, 0], [0.08, -36], [0.28, -4], [0.4, -40], [1, -52]] },
+      },
+    ],
+  }),
+  // Gentle saturation, close to transparent: a good default for Shape on add.
+  f('tape-warmth', {
+    name: 'Tape warmth',
+    seed: 1,
+    steps: [
+      { id: 'drive', op: 'gain', value: 1.5 },
+      { id: 'sat', op: 'soft', side: 'both', knee: 0.3, draw: { tool: 'line', pts: [[0, 0.8], [1, 0.8]] } },
+      { id: 'tilt', op: 'harmMod', kind: 'tilt', value: -0.5 },
+    ],
+  }),
+  // N subtly different copies (seeded, varied per waveform): a wavetable that shimmers rather than morphs.
+  f('ensemble-drift', {
+    name: 'Ensemble drift',
+    seed: 1,
+    varySeed: true,
+    steps: [
+      { id: 'drift', op: 'harmMod', kind: 'randomize', value: 0.1 },
+      // Caps only sources brighter than a saw (0 dB at h1: the fundamental is never touched).
+      { id: 'tame', op: 'harmLimit', mode: 'limit', draw: { tool: 'line', pts: [[0, 0], [1, -36]] } },
+    ],
+  }),
 ];
 
 /** The chain a new session starts with. */

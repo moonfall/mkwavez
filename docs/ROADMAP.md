@@ -124,7 +124,9 @@ Generate → Shape edits waveforms with a chain of steps (design reviewed before
   Last batch, a voice window or a wavetable (Write back into a Frozen wavetable of yours,
   one undo step), result cards, Add / Add +N. Results are new waveforms ('shape' recipes);
   the source stays selected.
-- Chains: in the model with undo; factory chains; save / rename / delete, New, Load the
+- Chains: in the model with undo; factory chains (Warm fold organ, Soft clip, Clip ramp,
+  Odd only darker, Bright limited, Low-pass opening, West-coast fold, PWM from anything,
+  Talking vowels, Tape warmth, Ensemble drift); save / rename / delete, New, Load the
   selection's chain (from its recipe), export / import; realign phase option; saved with
   the session.
 - Shape on add: a Shape chip in Seed, Mutate and Breed batch rows shapes previews and adds

@@ -2,6 +2,8 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { defaultSessionState } from '../src/app/defaultSession';
 import { AppModel } from '../src/app/model';
 import { basicWave } from '../src/core/generators';
+import { harmonicMagnitudes } from '../src/core/fft';
+import { shapeFrom } from '../src/core/shape';
 import { decodeSession, encodeMeta, encodeWaveforms, type SessionMeta } from '../src/core/session';
 import { applyChain, normalizeChain, chainJson } from '../src/core/shapeChain';
 import { chainsFile, DEFAULT_CHAIN, FACTORY_CHAINS, MAX_SAVED_CHAINS, normalizeSavedChains, parseChainsFile } from '../src/core/shapeFactory';
@@ -213,5 +215,72 @@ describe('Preview batch wavetable', () => {
     expect([m.voice(a.id)!.windowStart, m.voice(a.id)!.windowEnd]).toEqual([0, 1]);
     expect([m.voice(b.id)!.windowStart, m.voice(b.id)!.windowEnd]).toEqual([1, 1]); // clamped
     expect(m.windowTables(m.voice(a.id)!).map((t) => t.data)).toEqual(four.slice(0, 2));
+  });
+});
+
+describe('factory chains', () => {
+  const N = 8;
+  const saw = basicWave('saw', 0);
+  const sine = basicWave('sine', 0);
+  const cheby = shapeFrom((i) => Math.cos(3 * Math.acos(0.95 * Math.sin((2 * Math.PI * i) / 2048))));
+  const centroid = (x: Float32Array) => {
+    const m = harmonicMagnitudes(x, 72);
+    let a = 0;
+    let b = 0;
+    for (let k = 1; k <= 72; k++) {
+      a += k * m[k] ** 2;
+      b += m[k] ** 2;
+    }
+    return a / b;
+  };
+  const batch = (id: string, src: Float32Array) => {
+    const c = FACTORY_CHAINS.find((f) => f.id === id)!.chain;
+    return Array.from({ length: N }, (_, i) => applyChain(src, c, { index: i, count: N }));
+  };
+  const maxDiff = (a: Float32Array, b: Float32Array) => a.reduce((m, v, i) => Math.max(m, Math.abs(v - b[i])), 0);
+
+  it('every factory chain gives finite, normalised waveforms on a saw, a sine and a rich wave', () => {
+    for (const f of FACTORY_CHAINS)
+      for (const src of [saw, sine, cheby])
+        for (const t of batch(f.id, src)) {
+          expect(t.every(Number.isFinite), f.id).toBe(true);
+          expect(peak(t), f.id).toBeCloseTo(1, 6);
+        }
+  });
+
+  it('Low-pass opening brightens steadily across the batch', () => {
+    for (const src of [saw, cheby]) {
+      const c = batch('lowpass-opening', src).map(centroid);
+      for (let i = 1; i < N; i++) expect(c[i]).toBeGreaterThanOrEqual(c[i - 1] - 1e-9);
+      expect(c[0]).toBeLessThan(c[N - 1] * 0.5);
+    }
+  });
+
+  it('PWM from anything sweeps the pulse width (an offset carries into the clip)', () => {
+    const duty = batch('pwm-anything', saw).map((t) => t.filter((v) => v > 0).length / t.length);
+    for (let i = 1; i < N; i++) expect(duty[i]).toBeGreaterThan(duty[i - 1]);
+    expect(duty[0]).toBeLessThan(0.2);
+    expect(duty[N - 1]).toBeGreaterThan(0.8);
+  });
+
+  it('Talking vowels moves the low formant down ("ah" → "ee"); West-coast fold gets brighter', () => {
+    const strongest = (t: Float32Array) => {
+      const m = harmonicMagnitudes(t, 72);
+      let best = 2;
+      for (let k = 2; k <= 30; k++) if (m[k] > m[best]) best = k;
+      return best;
+    };
+    const v = batch('talking-vowels', saw);
+    expect(strongest(v[0])).toBeGreaterThanOrEqual(5);
+    expect(strongest(v[N - 1])).toBeLessThanOrEqual(4);
+    const w = batch('west-coast-fold', sine).map(centroid);
+    expect(w[N - 1]).toBeGreaterThan(w[0] * 2);
+  });
+
+  it('Tape warmth stays close to its source; Ensemble drift gives N different copies of similar brightness', () => {
+    for (const src of [sine, cheby]) expect(maxDiff(batch('tape-warmth', src)[0], src)).toBeLessThan(0.3);
+    const e = batch('ensemble-drift', saw);
+    for (let i = 1; i < N; i++) expect(maxDiff(e[i], e[i - 1])).toBeGreaterThan(1e-3);
+    for (const t of e) expect(Math.abs(centroid(t) / centroid(saw) - 1)).toBeLessThan(0.15);
   });
 });

@@ -177,8 +177,9 @@ scripts/smoke.mjs       headless-Chrome smoke test (playwright-core)
   also `draw` and an optional `drawEnd` (the drawing moves from `draw` to `drawEnd` across a
   batch: `lerpDrawing`, points travelling along each drawing's span). The engine: each enabled
   step at its amount (`amountEnd` set = swept across a batch, u = index / (count − 1)) on
-  the working cycle, band-limited to KMAX after every step, levels carried (no normalising
-  between steps, so Gain drives a clip), then `shape()` (phase realign only if `realign`).
+  the working cycle, band-limited to KMAX after every step, level and DC carried (no
+  normalising between steps, so Gain drives a clip and an offset makes it asymmetric), then
+  `shape()` (DC off; phase realign only if `realign`).
   Amount 0 skips the step. A step's seed is `deriveSeed(chain seed, hash(step id))` (stable
   when other steps change), per batch index too when `varySeed`. Mutation steps align the
   cycle, mutate and rotate back, so the chain keeps its phase. `normalizeChain` clamps
