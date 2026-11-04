@@ -9,6 +9,8 @@ import type { ModelState } from '../core/session';
 import { DEFAULT_STEP_LENGTH, emptySteps, isStepLength, normalizeSteps, type SequenceData } from '../core/sequence';
 import { copyRecipe, IdAllocator, makeTable, type GeneratedTable, type TableId, type WaveTable } from '../core/table';
 import { appendWithEviction } from '../core/timeline';
+import { chainJson, normalizeChain, type ShapeChain } from '../core/shapeChain';
+import { DEFAULT_CHAIN } from '../core/shapeFactory';
 import { MAX_USER_PRESETS, presetPatch, resolvePresetWavetable, soundOf as presetSoundOf, type PresetSound, type VoicePreset } from '../core/presets';
 
 import { DEFAULT_SYNTH, SYNTH_AMP_DEFAULTS, type VoiceType } from '../core/synth';
@@ -64,7 +66,8 @@ import { windowIds } from '../core/wavetablePlayback';
  * 'undo' = undo depth changed (any snapshot or undo);
  * 'parents' = the Breed parent list changed (including tables dropping out of the timeline);
  * 'notice' = a non-blocking message for the user (`notice`), e.g. an add refused because
- * the Timeline is full of waveforms that wavetables use.
+ * the Timeline is full of waveforms that wavetables use;
+ * 'shape' = the Shape tab's chain changed (an edit, undo, load).
  */
 export type Topic =
   | 'timeline'
@@ -76,7 +79,8 @@ export type Topic =
   | 'undo'
   | 'parents'
   | 'notice'
-  | 'presets';
+  | 'presets'
+  | 'shape';
 
 export const MAX_VOICES = 8;
 
@@ -106,6 +110,7 @@ interface Snapshot {
    */
   sound: { id: number; sound: SynthSound } | null;
   steps: Map<number, readonly number[]>;
+  shapeChain: ShapeChain;
 }
 
 export class AppModel {
@@ -127,6 +132,8 @@ export class AppModel {
   notice = '';
   /** User voice presets (saved with the session; topic 'presets'). Factory presets live in core/presets.ts. */
   voicePresets: readonly VoicePreset[] = [];
+  /** The Shape tab's chain (normalised; edits are undo steps, a drag or stroke is one; topic 'shape'). */
+  shapeChain: ShapeChain = DEFAULT_CHAIN;
   readonly cap: number;
   private room: { tl: unknown; wts: unknown; n: number; ok: boolean } | null = null;
 
@@ -491,6 +498,25 @@ export class AppModel {
     this.gestureKey = null;
   }
 
+  // ---- Shape chain ----
+
+  /**
+   * Replace the Shape tab's chain (normalised). An undo step, unless nothing changed;
+   * calls with the same `gesture` key in a row (a slider drag, one drawn stroke) are one
+   * step until endGesture() or another action.
+   */
+  setShapeChain(next: ShapeChain, gesture?: string): void {
+    const n = normalizeChain(next);
+    if (chainJson(n) === chainJson(this.shapeChain)) return;
+    const key = gesture === undefined ? null : `shape:${gesture}`;
+    if (key === null || this.gestureKey !== key) {
+      this.snapshot();
+      this.gestureKey = key;
+    }
+    this.shapeChain = n;
+    this.emit('shape', 'undo');
+  }
+
   // ---- voice presets ----
 
   /**
@@ -842,6 +868,7 @@ export class AppModel {
       bWindows: new Map(this.voices.map((v) => [v.id, windowsOf(v.synth.b)])),
       sound: sv ? { id: sv.id, sound: soundOf(sv) } : null,
       steps: new Map(this.sequences.map((s) => [s.id, s.steps])),
+      shapeChain: this.shapeChain,
     });
     if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift();
   }
@@ -881,7 +908,18 @@ export class AppModel {
       const st = s.steps.get(q.id);
       return st ? { ...q, steps: st } : q;
     });
-    this.emit('timeline', 'wavetables', 'voices', 'sequences', 'selection', 'undo', ...(parentsChanged ? (['parents'] as Topic[]) : []));
+    const shapeChanged = s.shapeChain !== this.shapeChain;
+    this.shapeChain = s.shapeChain;
+    this.emit(
+      'timeline',
+      'wavetables',
+      'voices',
+      'sequences',
+      'selection',
+      'undo',
+      ...(parentsChanged ? (['parents'] as Topic[]) : []),
+      ...(shapeChanged ? (['shape'] as Topic[]) : []),
+    );
   }
 
   clearUndo(): void {

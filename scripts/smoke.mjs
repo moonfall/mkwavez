@@ -136,6 +136,8 @@ async function run(label, url, browser) {
   await wordingCheck(page, 'after Mutate');
   await breedChecks(page, tlCount, label);
   await wordingCheck(page, 'after Breed');
+  await shapeChecks(page, tlCount);
+  await wordingCheck(page, 'after Shape');
   await page.click('#add-voice');
   assert(await page.isVisible('#add-voice-menu'), '+ offers Synth or Simple');
   await page.click('#add-voice-simple');
@@ -2023,6 +2025,128 @@ const waitInk = (page, sel) =>
  * batches of copies); fits the Generate panel at 1440×900 and 1180×820 (no page or panel
  * scroll); the phone column has the compact library row and no overflow. Ends on Seed.
  */
+/**
+ * Generate → Shape (wide shell): the default chain's steps, step selection switches the
+ * plot's view, toggling / reordering / adding / duplicating / removing steps (each one undo
+ * step), drawing a line is one undo step per stroke, Sweep gives N cards and Add +N adds N
+ * 'shape' waveforms of the selection (which stays selected), deterministic re-adds, loading
+ * a factory chain, and the tab fits the Generate panel at 1440×900 and 1180×820.
+ */
+async function shapeChecks(page, tlCount) {
+  const M = (fn, arg) => page.evaluate(fn, arg);
+  const chain = () => M(() => window.mkwavez.model.shapeChain);
+  const undoDepth = () => M(() => window.mkwavez.model.undoDepth);
+  const genFits = () =>
+    M(() => {
+      const b = document.querySelector('#sec-generate-body');
+      return b.scrollHeight <= b.clientHeight + 1 && b.scrollWidth <= b.clientWidth + 1;
+    });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // Earlier checks fill the undo history to its cap; start empty so depth changes count.
+  await M(() => window.mkwavez.model.clearUndo());
+  await page.click('#tab-shape');
+  assert(await page.isVisible('#panel-shape'), 'Shape tab visible');
+  await waitInk(page, '#shape-ed');
+  assert(true, 'Shape plot renders');
+  assert((await genFits()) && (await fitsScreen(page)), '1440×900: Shape fits the Generate panel, no page scroll');
+  const c0 = await chain();
+  assert(c0.name === 'Warm fold organ' && (await page.$$('#shape-steps .shape-step')).length === 4, 'default chain: Warm fold organ, 4 steps');
+  const src = await M(() => ({ id: window.mkwavez.model.selectedId, idx: window.mkwavez.model.indexOf(window.mkwavez.model.selectedId) }));
+  assert((await page.textContent('#shape-src-no')).trim() === `#${src.idx + 1}`, 'source chip shows the Timeline selection');
+
+  // Selecting a harmonics step shows the Harmonics view.
+  await page.click('#shape-step-4');
+  assert(
+    (await page.textContent('#shape-title')).trim() === 'Step 4 · Limit to curve' && (await page.getAttribute('#shape-view-harm', 'aria-pressed')) === 'true',
+    'a limit step opens the Harmonics view',
+  );
+  await page.click('#shape-step-1');
+  assert((await page.getAttribute('#shape-view-wave', 'aria-pressed')) === 'true', 'a draw step opens the Waveform view');
+
+  // Toggle a step off: one undo step; undo turns it back on.
+  let u = await undoDepth();
+  await page.click('#shape-step-3 .shape-step-on');
+  assert((await chain()).steps[2].on === false && (await undoDepth()) === u + 1 && !!(await page.$('#shape-step-3.off')), 'the dot turns a step off (an undo step)');
+  await page.click('#undo');
+  assert((await chain()).steps[2].on === true, 'undo turns it back on');
+
+  // Draw a line on step 2 (soft clip): one undo step per stroke.
+  await page.click('#shape-step-2');
+  await page.click('#shape-tool-line');
+  u = await undoDepth();
+  const box = await (await page.$('#shape-ed')).boundingBox();
+  await page.mouse.move(box.x + 30, box.y + box.height * 0.3);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 30, box.y + box.height * 0.45, { steps: 10 });
+  await page.mouse.up();
+  const drawn = (await chain()).steps[1].draw;
+  assert(
+    drawn.tool === 'line' && drawn.pts.length === 2 && drawn.pts[0][0] < 0.1 && drawn.pts[1][0] > 0.9 && drawn.pts[0][1] > drawn.pts[1][1],
+    `dragging draws a line (${JSON.stringify(drawn.pts)})`,
+  );
+  assert((await undoDepth()) === u + 1, 'one stroke is one undo step');
+
+  // Sweep: N cards, Add +N adds N shape waveforms; the source stays selected.
+  await page.click('#shape-sweep');
+  assert((await chain()).steps[1].amountEnd !== undefined && (await page.isVisible('#shape-amount-end')), 'Sweep adds the batch end amount');
+  await page.waitForFunction(() => document.querySelectorAll('#shape-strip .gen-card').length === 8, null, { timeout: 3000 });
+  assert(await page.isVisible('#shape-add-batch'), 'Sweep gives N cards and Add +N');
+  const n0 = await tlCount();
+  await page.click('#shape-add-batch');
+  const added = await M(() =>
+    window.mkwavez.model.timeline.slice(-8).map((t) => ({ op: t.recipe.op, parents: t.recipe.parents, batch: t.recipe.batch, sum: Array.from(t.data).reduce((a, v) => a + v * v, 0) })),
+  );
+  assert(
+    (await tlCount()) === n0 + 8 && added.every((t, i) => t.op === 'shape' && t.parents[0] === src.id && t.batch.index === i && t.batch.count === 8),
+    'Add +8 adds 8 shape waveforms of the selection',
+  );
+  assert((await M(() => window.mkwavez.model.selectedId)) === src.id, 'the source stays selected');
+  assert(new Set(added.map((t) => t.sum.toFixed(6))).size > 1, 'swept results differ');
+  await page.click('#shape-strip .gen-card:nth-child(4)');
+  await page.click('#shape-add-shown');
+  const again = await M(() => Array.from(window.mkwavez.model.timeline.at(-1).data).reduce((a, v) => a + v * v, 0));
+  assert(again.toFixed(9) === added[3].sum.toFixed(9), 'Add shown re-adds card 4 bit-for-bit');
+  await page.click('#shape-sweep');
+  assert(!(await page.isVisible('#shape-add-batch')) && (await page.textContent('#shape-add-shown')).trim() === 'Add', 'without a sweep: one result, Add');
+
+  // Add, move, duplicate and delete steps.
+  await page.click('#shape-add');
+  await page.click('#shape-add-gain');
+  let c = await chain();
+  assert(c.steps.length === 5 && c.steps[2].op === 'gain' && (await page.textContent('#shape-title')).trim() === 'Step 3 · Gain', '+ Add step inserts after the selection and selects it');
+  await page.click('#shape-step-menu');
+  await page.click('#shape-step-up');
+  assert((await chain()).steps[1].op === 'gain', 'step menu: Move up');
+  await page.focus('#shape-step-2');
+  await page.keyboard.press('Alt+ArrowDown');
+  assert((await chain()).steps[2].op === 'gain', 'Alt+↓ moves the step down');
+  await page.click('#shape-step-menu');
+  await page.click('#shape-step-dup');
+  c = await chain();
+  assert(c.steps.length === 6 && c.steps[3].op === 'gain', 'step menu: Duplicate');
+  await page.click('#shape-step-menu');
+  await page.click('#shape-step-remove');
+  await page.click('#shape-step-3 .shape-step-x');
+  c = await chain();
+  assert(c.steps.length === 4 && !c.steps.some((s) => s.op === 'gain'), 'steps can be taken out (menu and ×)');
+
+  // Load a factory chain (one undo step).
+  u = await undoDepth();
+  await page.selectOption('#shape-chains', 'f:clip-ramp');
+  c = await chain();
+  assert(c.name === 'Clip ramp (sweep)' && c.steps.length === 2 && (await undoDepth()) === u + 1, 'loading a factory chain (an undo step)');
+  await page.waitForFunction(() => document.querySelectorAll('#shape-strip .gen-card').length === 8, null, { timeout: 3000 });
+  assert(true, 'a sweeping factory chain shows N cards');
+  await page.click('#undo');
+  assert((await chain()).name !== 'Clip ramp (sweep)', 'undo restores the previous chain');
+
+  await page.setViewportSize({ width: 1180, height: 820 });
+  await page.waitForTimeout(150);
+  assert((await genFits()) && (await fitsScreen(page)), '1180×820: Shape fits the Generate panel');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.click('#tab-seed');
+}
+
 async function breedChecks(page, tlCount, label) {
   const M = (fn, arg) => page.evaluate(fn, arg);
   const seedHex = async () => (await page.textContent('#breed-seed')).trim();

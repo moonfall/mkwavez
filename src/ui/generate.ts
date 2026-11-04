@@ -4,6 +4,7 @@ import { buildBreedPanel } from './breed';
 import { buildMutatePanel } from './mutate';
 import { MAX_BATCH } from './batch';
 import { buildSeedPanel } from './seed';
+import { buildShapePanel } from './shapeTab';
 
 export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameView } {
   const sec = panel('sec-generate', 'Generate', 'gen');
@@ -18,7 +19,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   const onCount = (fn: (n: number) => void) => countListeners.push(fn);
 
   // ---- tabs ----
-  const tabNames = ['Seed', 'Mutate', 'Breed', 'Sample'] as const;
+  const tabNames = ['Seed', 'Mutate', 'Breed', 'Shape', 'Sample'] as const;
   const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Generate methods' });
   const panels = new Map<string, HTMLElement>();
   const tabButtons = new Map<string, HTMLButtonElement>();
@@ -65,6 +66,15 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   });
   panels.set('Breed', breed.el);
 
+  // ---- Shape panel ----
+  const shapeTab = buildShapePanel(ctx, {
+    count: () => count,
+    setCount,
+    onCount,
+    active: () => sec.isOpen() && currentTab === 'Shape',
+  });
+  panels.set('Shape', shapeTab.el);
+
   // ---- placeholders ----
   const soon: Record<string, string> = {
     Sample: 'Extract single cycles from the microphone or an audio file.',
@@ -84,6 +94,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
   setTab(savedTab());
   sec.setStatus(() => {
     if (currentTab === 'Breed') return `Breed · ${ctx.model.breedParents.length} parents`;
+    if (currentTab === 'Shape') return `Shape · ${ctx.model.shapeChain.name}`;
     if (currentTab === 'Mutate') {
       const i = ctx.model.indexOf(ctx.model.selectedId);
       return i >= 0 ? `Mutate · source #${i + 1}` : 'Mutate';
@@ -100,6 +111,7 @@ export function buildGenerate(ctx: UiContext): { el: HTMLElement; view: FrameVie
         seed.view.frame(now);
         mutate.view.frame(now);
         breed.view.frame(now);
+        shapeTab.view.frame(now);
       },
     },
   };

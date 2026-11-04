@@ -2918,6 +2918,311 @@ button.gen-card.failed .gen-card-label::after {
   }
 }
 
+/* ================= shape (Generate → Shape) =================
+   Chain column (steps) | head (source, step, amount, sweep), step settings, the plot of the
+   selected step (Waveform / Harmonics) beside the other view, batch row + result cards. */
+.shape-chain {
+  min-width: 0;
+}
+.shape-chain-pick {
+  flex: 0 1 60%;
+  min-width: 0;
+  height: 26px;
+  font-size: 12px;
+}
+.shape-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  overflow-y: auto;
+  max-height: min(60vh, 520px);
+  overscroll-behavior: contain;
+}
+.shape-step {
+  display: grid;
+  grid-template-columns: 12px 14px minmax(0, 1fr) 40px 20px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 2px 3px 2px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.shape-step:hover {
+  background: var(--surface-2);
+}
+.shape-step.sel {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+.shape-step.drop {
+  border-top: 2px solid var(--accent);
+}
+.shape-step:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.shape-step-grip {
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
+  cursor: grab;
+  letter-spacing: -2px;
+}
+button.shape-step-on {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-2);
+  background: transparent;
+}
+button.shape-step-on.on {
+  background: var(--new);
+  border-color: var(--new);
+}
+.shape-step-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.shape-step-name b,
+.shape-step-name span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shape-step-name b {
+  font-weight: 500;
+  font-size: 12.5px;
+}
+.shape-step-name span {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.shape-step.off .shape-step-name b {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+canvas.shape-step-thumb {
+  width: 40px;
+  height: 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+button.shape-step-x {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+}
+button.shape-step-x:hover {
+  color: var(--danger);
+}
+.shape-empty {
+  margin: 8px 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.shape-chain-foot {
+  padding: 5px;
+  border-top: 1px solid var(--border);
+  display: flex;
+}
+button.shape-add {
+  flex: 1 1 auto;
+}
+#shape-add-menu {
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+}
+#shape-add-menu button {
+  padding: 3px 8px;
+}
+.add-voice-menu button.menu-group {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  padding: 8px 8px 2px;
+  opacity: 1;
+  cursor: default;
+}
+.add-voice-menu button.menu-group:hover {
+  background: none;
+}
+.shape-head {
+  flex-wrap: nowrap;
+}
+.shape-amount {
+  flex: 0 1 230px;
+  min-width: 140px;
+}
+.shape-end {
+  flex: 0 1 150px;
+  min-width: 110px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.shape-end[hidden] {
+  display: none;
+}
+.shape-end input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+button.shape-sweep {
+  flex: none;
+}
+button.shape-sweep.seg-on {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.shape-params {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-height: 28px;
+}
+.shape-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.shape-field input[type='range'] {
+  width: 90px;
+}
+.shape-val {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+  min-width: 34px;
+  font-variant-numeric: tabular-nums;
+}
+.shape-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+input.shape-of {
+  width: 90px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+input.shape-num {
+  width: 50px;
+}
+.shape-params select {
+  max-width: 220px;
+}
+.shape-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+}
+.shape-note {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.shape-ed-box.drawable canvas {
+  cursor: crosshair;
+  touch-action: none;
+}
+.shape-ed-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 3px 10px;
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mut-legend i.shape-key-draw {
+  border-top-color: var(--v2);
+}
+.mut-legend i.shape-key-in {
+  border-top: 6px solid var(--border-strong);
+}
+.mut-legend i.shape-key-out {
+  border-top: 6px solid var(--accent);
+}
+.shape-key-set {
+  color: var(--v2);
+}
+.shape .gen-seedbox {
+  flex: none;
+}
+
+/* Wide shell: the chain column fills the panel height (its list scrolls); one-row head. */
+@media (min-width: 900px) {
+  .shape-chain {
+    display: flex;
+    flex-direction: column;
+  }
+  .shape-steps {
+    flex: 1 1 0;
+    min-height: 0;
+    max-height: none;
+  }
+  .shape-head {
+    flex: none;
+    gap: 10px;
+  }
+  .shape-params {
+    flex: none;
+    flex-wrap: nowrap;
+    overflow: hidden;
+  }
+  .shape .gen-main {
+    container: shape-main / inline-size;
+  }
+}
+@container shape-main (max-width: 760px) {
+  .shape .gen-seedbox > span:first-child {
+    display: none;
+  }
+  .shape-end {
+    min-width: 90px;
+  }
+}
+@container shape-main (max-width: 700px) {
+  .shape .gen-batch-head {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+}
+@media (max-width: 899px) {
+  .shape-head {
+    flex-wrap: wrap;
+  }
+}
+
 /* ================= wavetables editor =================
    Edit expands the Wavetables panel over the whole Generate row (Generate hidden); the
    Timeline strip below stays visible as the drag source. Wide: list | view | write head.

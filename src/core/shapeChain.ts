@@ -112,14 +112,23 @@ export function freshStepId(c: ShapeChain): string {
 
 /**
  * The working cycle after each step (index i = after step i; a disabled step or one at
- * amount 0 passes its input on unchanged). Not normalised.
+ * amount 0 passes its input on unchanged). Not normalised. `reuse` = stages already
+ * computed for the same source, batch position and first `reuse.length` steps (the
+ * editor keeps them while a later step changes); computing resumes after them.
  */
-export function chainStages(src: ArrayLike<number>, c: ShapeChain, b: BatchPos): Float64Array<ArrayBufferLike>[] {
+export function chainStages(
+  src: ArrayLike<number>,
+  c: ShapeChain,
+  b: BatchPos,
+  reuse: readonly Float64Array<ArrayBufferLike>[] = [],
+): Float64Array<ArrayBufferLike>[] {
   if (src.length !== TABLE_SIZE) throw new Error(`chainStages: expected ${TABLE_SIZE} samples, got ${src.length}`);
   const u = batchUOf(b);
-  let x: Float64Array<ArrayBufferLike> = Float64Array.from(src);
-  const out: Float64Array<ArrayBufferLike>[] = [];
-  for (const s of c.steps) {
+  const from = Math.min(reuse.length, c.steps.length);
+  const out = reuse.slice(0, from);
+  let x: Float64Array<ArrayBufferLike> = from ? out[from - 1] : Float64Array.from(src);
+  for (let i = from; i < c.steps.length; i++) {
+    const s = c.steps[i];
     const a = stepAmount(s, u);
     if (s.on && a > 0) x = bandLimit(applyStep(s, x, a, stepSeed(c, s, b)));
     out.push(x);
