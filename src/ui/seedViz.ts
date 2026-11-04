@@ -9,6 +9,9 @@ import { KMAX } from '../core/constants';
 import {
   caRows,
   FM_ROUTINGS,
+  FRACTAL_BASES,
+  fractalBase,
+  fractalDecay,
   fmIndex,
   fmModulator,
   contourPoints,
@@ -44,6 +47,7 @@ import {
   supersawPhases,
   type Board,
   type FmParams,
+  type FractalParams,
   type LifeParams,
   type PdParams,
   type PolygonParams,
@@ -488,24 +492,21 @@ viz('pluck-position', {
   },
 });
 
-// Weierstrass: terms a^k·cos(2^k·p), k = 0…6, a = 0.4 + 0.4u, one row each.
-viz('weierstrass', {
-  axis: (i) => ['0', `a^k·cos(2^k·p) · a = ${f2(0.4 + 0.4 * i.u)}`, '2π'],
-  draw: (g, w, h, i, c) => {
-    const a = 0.4 + 0.4 * i.u;
-    const n = 7;
-    layers(g, w, h, c, n, (k, x) => Math.cos(Math.pow(2, k) * TAU * x), Array.from({ length: n }, (_, k) => Math.pow(a, k)));
+// Fractal sum (Weierstrass, Blancmange, …): the terms stacked, one row each at its amplitude
+// decay^k (the first highlighted).
+viz('mode:fractal', {
+  axis: (i) => {
+    const d = fractalDecay(i.params as unknown as FractalParams, i.index, i.count);
+    return ['0', `${Math.round(i.params.terms)} × ${FRACTAL_BASES[Math.round(i.params.base)]?.split(' (')[0].toLowerCase() ?? ''} · ratio ${i.params.ratio} · decay ${f2(d)}`, '1'];
   },
-});
-
-// Blancmange: terms a^k·tri(2^k·t), k = 0…5, one row each.
-viz('blancmange', {
-  axis: (i) => ['0', `a^k·tri(2^k·t) · a = ${f2(0.4 + 0.4 * i.u)}`, '1'],
   draw: (g, w, h, i, c) => {
-    const a = 0.4 + 0.4 * i.u;
-    const n = 6;
-    const tri = (v: number) => 4 * Math.abs(((v + 0.5) % 1) - 0.5) - 1;
-    layers(g, w, h, c, n, (k, x) => tri(Math.pow(2, k) * x), Array.from({ length: n }, (_, k) => Math.pow(a, k)));
+    const p = i.params;
+    const d = fractalDecay(p as unknown as FractalParams, i.index, i.count);
+    const K = clamp(Math.round(p.terms), 1, 10);
+    const base = fractalBase(p.base);
+    // Each base scaled to ±1 for drawing (the triangle's 0 … ½ centred).
+    const unit = Math.round(p.base) === 1 ? (k: number, t: number) => 4 * base(Math.pow(p.ratio, k), t) - 1 : (k: number, t: number) => base(Math.pow(p.ratio, k), t);
+    layers(g, w, h, c, K, unit, Array.from({ length: K }, (_, k) => Math.pow(d, k)));
   },
 });
 

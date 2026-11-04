@@ -19,6 +19,7 @@ import { DEFAULT_FM as FMD, FM_ROUTINGS, fmTable, type FmParams } from './fm';
 import { DEFAULT_PD as PDD, PD_SHAPES, pdTable, type PdParams } from './phaseDistortion';
 import { DEFAULT_RESONANCE as RSD, RESONANCE_WINDOWS, resonanceTable, type ResonanceParams } from './resonance';
 import { DEFAULT_SUPERFORMULA as SFD, superformulaTable, type SuperformulaParams } from './superformula';
+import { DEFAULT_FRACTAL as FRD, FRACTAL_BASES, fractalTable, type FractalParams } from './fractal';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
 import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
@@ -81,6 +82,28 @@ function nums<T extends object>(p: ModeParams, defaults: T): T {
 const opts = (labels: readonly string[]) => labels.map((l, i) => [i, l] as const);
 
 export const PARAM_MODES = [
+  {
+    mode: 'fractal',
+    id: 'fractal-sum',
+    cat: 'Fractal',
+    name: 'Fractal sum',
+    about:
+      'Terms of one base function, each Ratio times faster and Decay times quieter than the last (cosines: Weierstrass; ' +
+      'triangles: the blancmange). The batch sweeps the decay.',
+    params: [
+      { key: 'base', label: 'Base', min: 0, max: FRACTAL_BASES.length - 1, step: 1, value: FRD.base, options: opts(FRACTAL_BASES) },
+      { key: 'ratio', label: 'Ratio', min: 2, max: 5, step: 1, value: FRD.ratio },
+      { key: 'terms', label: 'Terms', min: 1, max: 10, step: 1, value: FRD.terms },
+      { key: 'decay', label: 'Decay', min: 0.05, max: 0.95, step: 0.01, value: FRD.decay },
+      { key: 'decayEnd', label: 'Batch → decay', min: 0.05, max: 0.95, step: 0.01, value: FRD.decayEnd },
+    ],
+    variants: [
+      { id: 'weierstrass', values: {} },
+      { id: 'blancmange', values: { base: 1, terms: 6 } },
+    ],
+    seeded: () => false,
+    render: (p, _seed, index, count) => fractalTable(nums<FractalParams>(p, FRD), index, count),
+  },
   {
     mode: 'superformula',
     id: 'superformula-shape',

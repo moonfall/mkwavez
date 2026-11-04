@@ -20,6 +20,7 @@ export * from './formulaPresets';
 export * from './glyph';
 export * from './life';
 export * from './perlin';
+export * from './fractal';
 export * from './superformula';
 export * from './resonance';
 export * from './phaseDistortion';
