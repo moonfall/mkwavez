@@ -1,6 +1,7 @@
 import { currentTheme, setTheme } from './canvas';
 import type { UiContext } from './context';
 import { h, icon, ICONS } from './dom';
+import { buildHoldNote } from './holdNote';
 import { SHORTCUTS } from './shortcuts';
 
 /** Start (audio first, on the first press) or stop the transport. */
@@ -103,6 +104,8 @@ export function buildTransport(ctx: UiContext, extra: Node | null = null): HTMLE
     h('span', { class: 'title' }, 'mkwavez'),
     play,
     tempo,
+    // Play and sustain a note on the selected voice (no MIDI keyboard needed).
+    buildHoldNote(ctx).el,
     undo,
     h('span', { class: 'grow' }),
     extra,

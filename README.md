@@ -263,7 +263,12 @@ switches (the choice is remembered).
     never holds more than 4096 waveforms: when all of them are used by wavetables, adds
     are refused (the Add buttons are disabled; a notice says which wavetables to clear).
 - **Voice**: one tab per voice (V1, V2 · muted, …, **+** adds a **Synth** or **Simple**
-  voice, × removes the selected one). Each voice is Simple or Synth (the type select: in
+  voice, × removes the selected one). **Hold** in the transport bar (key H) plays the note
+  picked beside it on the selected voice and sustains it until pressed again — no MIDI
+  keyboard needed (it starts audio, takes over from the voice's sequence like a held key,
+  and the transport can stay stopped); picking another note while it is held moves the
+  note. Each voice can hold its own note (on a phone the picker is hidden for room: Hold
+  plays the last picked note). Each voice is Simple or Synth (the type select: in
   the Simple panel's right column, right of the Synth panel's section tabs; switching a
   sounding voice crossfades, and is undoable). Sessions saved before Synth voices existed
   load every voice as Simple, sounding exactly as before.
@@ -301,7 +306,7 @@ switches (the choice is remembered).
   - **Presets** (the picker next to the section tabs): Init and seven factory sounds (Sub
     bass, Pluck, Evolving pad, Sync lead, Brass, Noise sweep, Converge swell) that play the
     built-in wavetables, then yours. Converge swell is made for a Converge batch: generate
-    one with many waveforms (it plays Last batch), hold a low note (D3 sounds D1) and a
+    one with many waveforms (it plays Last batch), hold a low note (D3 sounds D1; Hold works) and a
     one-shot Rise LFO sweeps the position and opens the filter over about 12 s. The ⋯ menu saves the voice as a preset, deletes the chosen one,
     copies / pastes voices and exports / imports your presets (a `.json` file). Your
     presets are saved with the session. Applying one is undoable.
@@ -436,6 +441,7 @@ when other modifier keys are held. Controls show theirs in tooltips (and `aria-k
 | Space | Play / stop (also while a button has focus; a focused checkbox still toggles) |
 | `[` / `]` | Previous / next voice tab (wraps) |
 | M | Mute / unmute the selected voice |
+| H | Hold / release a note on the selected voice (Hold in the transport bar; the note picker beside it chooses the note) |
 | Shift+← / Shift+→ | Move the selected waveform one place earlier / later in the Timeline |
 | Ctrl/⌘+← / Ctrl/⌘+→ | Scroll the Timeline strip to its beginning / end (the selection stays) |
 | Ctrl/⌘+D | Copy the selected waveform to the end (while the Timeline strip has focus) |

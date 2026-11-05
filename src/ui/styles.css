@@ -498,6 +498,29 @@ canvas {
   border-color: var(--accent);
   color: var(--accent-text);
 }
+/* Hold: the note picker and Hold button (holdNote.ts). */
+.hold {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  align-items: stretch;
+}
+.hold[hidden] {
+  display: none;
+}
+select.hold-note {
+  /* As tall as the Hold button. */
+  height: auto;
+  width: 62px;
+  padding: 0 2px 0 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.hold-key[aria-pressed='true'] {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
 @media (max-width: 640px) {
   .transport .status,
   .undo-label {
@@ -517,7 +540,12 @@ canvas {
     gap: 8px;
   }
   .tempo input {
-    width: 90px;
+    width: 72px;
+  }
+  /* Room for Hold: the number says it's the tempo; Hold plays the note picked on a wider screen. */
+  .bpm-label,
+  select.hold-note {
+    display: none;
   }
 }
 

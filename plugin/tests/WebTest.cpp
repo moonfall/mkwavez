@@ -6,7 +6,7 @@
 //  3. host automation of a voice parameter reaches the page's model (and its saved project);
 //  4. the saved state restores in a fresh instance — the page reloads the project with the
 //     samples from the native state, without the tables being re-sent;
-//  5. the engine plays the result (a MIDI note sounds).
+//  5. the engine plays the result (a MIDI note sounds; the page's Hold button holds one).
 // Usage: xvfb-run -a mkwavez_web_test
 #include "../source/PluginProcessor.h"
 #include "../source/State.h"
@@ -240,6 +240,15 @@ int main(int argc, const char* argv[]) {
             a.render(1);
             return previewTables() == 0 && a.doc([](const auto& d) { return !d.voices.empty() && d.voices[0].wavetableId != 6; });
         }, 10000, "undo puts V1 back, and the preview tables leave the engine");
+
+        // 6c. The transport bar's Hold plays and sustains a note without MIDI; pressing it
+        //     again releases the note.
+        a.render(40);
+        a.web()->evaluate("document.getElementById('hold-key').click()");
+        waitFor([&] { return a.render(4) > 0.005; }, 10000, "Hold in the page sustains a note in the engine (no MIDI)");
+        check(a.render(40) > 0.005, "the held note keeps sounding");
+        a.web()->evaluate("document.getElementById('hold-key').click()");
+        waitFor([&] { return a.render(4) < 1e-4; }, 10000, "pressing Hold again releases it");
 
         // 7. Browser features the plugin replaces: in-page confirm / prompt (embedded web views
         //    don't all have them), native save (session export) and open (session import).

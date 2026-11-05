@@ -10,12 +10,18 @@
 #include <juce_core/juce_core.h>
 
 #include <functional>
+#include <set>
+#include <utility>
 
 class WebLink {
 public:
     using Emit = std::function<void(const juce::var&)>;
 
     explicit WebLink(MkwavezProcessor& p);
+    /** Releases the notes the page holds (its Hold button): nothing is left sounding without a UI. */
+    ~WebLink();
+    WebLink(const WebLink&) = delete;
+    WebLink& operator=(const WebLink&) = delete;
 
     /** One message from the page (message thread). Replies go to `emit`. */
     void handle(const juce::var& message, const Emit& emit);
@@ -39,6 +45,7 @@ private:
     void applyBatch(const juce::var& ops);
     void setVoiceParams(const mkwavez::VoiceParams& v);
     void setParam(const juce::String& id, float value);
+    void releaseHeldNotes();
     juce::var transportMessage(bool playing, double bpm) const;
 
     MkwavezProcessor& proc;
@@ -50,5 +57,7 @@ private:
     std::array<std::array<float, params::VOICE_FIELD_COUNT>, params::VOICE_SLOTS> sentVoice{};
     std::array<std::array<float, params::SYNTH_FIELD_COUNT>, params::VOICE_SLOTS> sentSynth{};
     bool sentPlaying = false;
+    /** (voice id, note) the page holds. */
+    std::set<std::pair<int, int>> heldNotes;
     double sentBpm = 0;
 };

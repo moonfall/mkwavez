@@ -342,6 +342,10 @@ Open:
   timbre rather than true detuned beating — unison on the oscillator adds that. Factory
   preset Converge swell (osc A on Last batch, two octaves down, Rise LFO → position and
   cutoff).
+- Hold: a note picker and Hold toggle in the transport bar (key H) play and sustain a note
+  on the selected voice without a MIDI keyboard (one held note per voice; the picker moves
+  a held note). In the plugin the page's notes reach the engine through a queue (`midi` op
+  → `uiNotes`), released when the page reloads or the editor closes.
 
 Decisions / deviations:
 - New voices from "+" are offered as Synth (first in the menu) or Simple; both start on

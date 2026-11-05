@@ -86,6 +86,8 @@ public:
     // ---- web UI support (message thread) ----
     WebMidiSettings& webMidi() { return midiSettings; }
     mkwavez::SpscQueue<CcMessage>& ccMessages() { return ccQueue; }
+    /** Notes the web UI holds (its Hold button): note on / off events for the audio thread. */
+    mkwavez::SpscQueue<mkwavez::MidiVoiceEvent>& uiNotes() { return uiNoteQueue; }
     /**
      * The web UI's saved session (src/core/session.ts: meta JSON + waveform records as JSON,
      * keyed by id), written by its autosave through WebLink and saved with the plugin state.
@@ -120,6 +122,7 @@ private:
     LiveStatus status;
     WebMidiSettings midiSettings;
     mkwavez::SpscQueue<CcMessage> ccQueue{1024};
+    mkwavez::SpscQueue<mkwavez::MidiVoiceEvent> uiNoteQueue{256};
     juce::CriticalSection sessionLock;
     Session session;
     std::atomic<int> stateGen{0};

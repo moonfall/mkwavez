@@ -89,11 +89,27 @@ WebLink::WebLink(MkwavezProcessor& p) : proc(p) {
     for (auto& s : sentSynth) s.fill(std::numeric_limits<float>::quiet_NaN());
 }
 
+WebLink::~WebLink() { releaseHeldNotes(); }
+
+void WebLink::releaseHeldNotes() {
+    for (const auto& [voice, note] : heldNotes) {
+        MidiVoiceEvent m;
+        m.type = MidiVoiceEvent::noteOff;
+        m.voiceId = voice;
+        m.note = note;
+        proc.uiNotes().push(m);
+    }
+    heldNotes.clear();
+}
+
 void WebLink::handle(const juce::var& m, const Emit& emit) {
     ++handledCount;
     const auto type = m.getProperty("type", {}).toString();
-    if (type == "hello")
+    if (type == "hello") {
+        // A (re)loaded page holds nothing.
+        releaseHeldNotes();
         sendInit(emit);
+    }
     else if (type == "session/put" || type == "session/commit") {
         proc.withSession([&](MkwavezProcessor::Session& s) {
             if (type == "session/commit") {
@@ -303,8 +319,26 @@ void WebLink::applyBatch(const juce::var& ops) {
                                                 "lfo1Depth", "lfo2Rate", "lfo2Depth", "lfo3Rate", "lfo3Depth",
                                                 "macro1", "macro2", "macro3", "macro4"};
             for (int i = 0; i < CC_PARAM_COUNT; ++i) ms.cc[(size_t) i] = (int) num(cc, keys[i], -1);
+        } else if (type == "midi") {
+            // The page's Hold button: note on / off for a voice (host MIDI is routed natively).
+            if (const auto* evs = op.getProperty("events", {}).getArray()) {
+                for (const auto& ev : *evs) {
+                    const auto t = ev.getProperty("type", {}).toString();
+                    if (t != "noteOn" && t != "noteOff") continue;
+                    MidiVoiceEvent m;
+                    m.type = t == "noteOn" ? MidiVoiceEvent::noteOn : MidiVoiceEvent::noteOff;
+                    m.voiceId = (int) num(ev, "voiceId", -1);
+                    m.note = juce::jlimit(0, 127, (int) num(ev, "note", 60));
+                    m.velocity = juce::jlimit(0, 127, (int) num(ev, "velocity", 0));
+                    if (m.type == MidiVoiceEvent::noteOn)
+                        heldNotes.insert({m.voiceId, m.note});
+                    else
+                        heldNotes.erase({m.voiceId, m.note});
+                    proc.uiNotes().push(m);
+                }
+            }
         }
-        // 'midi' / 'voice/patch': the page doesn't send them in plugin mode (host MIDI is routed natively).
+        // 'voice/patch': the page doesn't send it in plugin mode (host MIDI is routed natively).
     }
     static const bool trace = juce::SystemStats::getEnvironmentVariable("MKWAVEZ_WEB_DEBUG", {}) == "2";
     if (trace) {

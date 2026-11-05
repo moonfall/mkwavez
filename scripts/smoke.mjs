@@ -2003,8 +2003,9 @@ async function wordingCheck(page, where) {
 /**
  * Keyboard shortcuts (wide shell, transport running): Space plays / stops even with a button
  * focused (without clicking it) but types in a text field; [ / ] step through the voice tabs
- * (wrapping); M mutes the selected voice; Shift+← / → move the selected waveform in the
- * Timeline (Timeline wavetable in step, Timeline windows unchanged, strip reveals it, one
+ * (wrapping); M mutes the selected voice; H / Hold holds a note on it (the note picker
+ * moves it); Shift+← / → move the selected waveform in the Timeline (Timeline wavetable in
+ * step, Timeline windows unchanged, strip reveals it, one
  * undo step, no-op at the ends, ignored in text fields, not taken by the batch strip);
  * Ctrl/⌘+← / → scroll the Timeline strip to its beginning / end (selection unchanged);
  * extra modifiers are ignored; the controls advertise their shortcuts.
@@ -2129,6 +2130,28 @@ async function shortcutChecks(page) {
   await page.press('#seed-search', 'Escape');
   await blur();
   assert((await sel()) === 1, 'back on V1');
+
+  // H / Hold: play and sustain a note on the selected voice (notes outside the sequence's
+  // A minor pentatonic, so they can't be the sequence's).
+  const playsNote = (n) => page.waitForFunction((n) => window.mkwavez.bridge.status.voices.some((s) => s.id === 1 && s.note === n && s.env > 0.05), n, { timeout: 5000 });
+  const holdPressed = () => page.getAttribute('#hold-key', 'aria-pressed');
+  assert(await page.isVisible('#hold-key'), 'the transport bar has a Hold button');
+  await page.selectOption('#hold-note', '65');
+  await blur();
+  await page.keyboard.press('h');
+  await playsNote(65);
+  assert((await holdPressed()) === 'true', 'H holds the picked note (F4) on V1 and Hold shows pressed');
+  await page.selectOption('#hold-note', '66');
+  await playsNote(66);
+  assert(true, 'picking another note while held moves the held note');
+  await blur();
+  await page.keyboard.press(']');
+  assert((await holdPressed()) === 'false', 'on V2, Hold is not pressed (V1 keeps its note)');
+  await page.keyboard.press('[');
+  assert((await holdPressed()) === 'true', 'back on V1, Hold shows its held note');
+  await page.click('#hold-key');
+  await page.waitForFunction(() => !window.mkwavez.bridge.status.voices.some((s) => s.id === 1 && s.note === 66 && s.env > 0.05), null, { timeout: 5000 });
+  assert((await holdPressed()) === 'false', 'clicking Hold releases it');
 
   // Shift+← / →: move the selected waveform.
   const state = () =>

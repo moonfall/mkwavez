@@ -152,6 +152,8 @@ void MkwavezProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
                           !std::equal(r.voiceIds, r.voiceIds + r.voiceCount, routing.voiceIds);
     routing = r;
     if (retarget) router.retarget(routing, [&](const MidiVoiceEvent& ev) { e->applyMidi(ev); });
+    // Notes held from the web UI (whether or not MIDI input is on).
+    for (MidiVoiceEvent ev; uiNoteQueue.pop(ev);) e->applyMidi(ev);
 
     // Render up to each MIDI event's sample offset, then apply it (sample-accurate). Stereo
     // (Synth voices pan / spread); a mono bus gets the mid.

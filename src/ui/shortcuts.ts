@@ -5,6 +5,7 @@ import type { UiContext } from './context';
  *  - Space            play / stop (also while a button has focus: it doesn't click it)
  *  - [ / ]            previous / next voice tab (wrapping)
  *  - M                mute / unmute the selected voice
+ *  - H                hold / release a note on the selected voice (the transport bar's Hold)
  *  - Shift+← / →      move the selected waveform one place earlier / later in the Timeline
  *  - Ctrl/⌘+← / →     scroll the Timeline strip to its beginning / end (selection unchanged)
  *  - A / N            Add shown / Add batch in the open Generate tab (with Shift too, so it
@@ -24,6 +25,7 @@ export const SHORTCUTS = {
   prevVoice: '[',
   nextVoice: ']',
   mute: 'M',
+  hold: 'H',
   moveLeft: 'Shift+ArrowLeft',
   moveRight: 'Shift+ArrowRight',
   timelineStart: 'Control+ArrowLeft Meta+ArrowLeft',
@@ -82,16 +84,19 @@ export function installShortcuts(ctx: UiContext, actions: ShortcutActions, targe
    * Option, e.g. AltGr+8 / 9 on German keyboards), else by physical key (`e.code`) when no
    * modifier is held and the key types none of ours (non-Latin layouts).
    */
-  const keyOf = (e: KeyboardEvent): '[' | ']' | 'm' | null => {
+  const keyOf = (e: KeyboardEvent): '[' | ']' | 'm' | 'h' | null => {
     if (e.metaKey) return null;
     const altGr = e.getModifierState?.('AltGraph') ?? false;
     // AltGr arrives as Ctrl+Alt on Windows; Option on macOS as Alt.
     if (e.key === '[' || e.key === ']') return e.ctrlKey && !altGr ? null : e.key;
     if (e.ctrlKey || e.altKey || altGr) return null;
     if (e.key === 'm' || e.key === 'M') return 'm';
+    if (e.key === 'h' || e.key === 'H') return 'h';
     if (e.code === 'BracketLeft') return '[';
     if (e.code === 'BracketRight') return ']';
     if (e.code === 'KeyM') return 'm';
+    // Only for non-Latin layouts: on Latin ones the key types its own letter.
+    if (e.code === 'KeyH' && !/^[\x20-\x7e]$/.test(e.key)) return 'h';
     return null;
   };
 
@@ -137,6 +142,11 @@ export function installShortcuts(ctx: UiContext, actions: ShortcutActions, targe
     if (k === 'm') {
       const v = ui.voiceId === null ? undefined : model.voice(ui.voiceId);
       if (v && !e.repeat) model.updateVoice(v.id, { mute: !v.mute });
+      return true;
+    }
+    if (k === 'h') {
+      const btn = document.getElementById('hold-key');
+      if (!e.repeat && btn instanceof HTMLButtonElement && !btn.closest('[hidden]')) btn.click();
       return true;
     }
     return false;
