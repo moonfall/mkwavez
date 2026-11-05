@@ -16,7 +16,7 @@ function model(): AppModel {
 
 describe('factory presets', () => {
   it('Init plus six; each applies (one undo step), plays the built-in wavetables, and renders finite, audible output', () => {
-    expect(FACTORY_PRESETS.map((p) => p.name)).toEqual(['Init', 'Sub bass', 'Pluck', 'Evolving pad', 'Sync lead', 'Brass', 'Noise sweep']);
+    expect(FACTORY_PRESETS.map((p) => p.name)).toEqual(['Init', 'Sub bass', 'Pluck', 'Evolving pad', 'Sync lead', 'Brass', 'Noise sweep', 'Converge swell']);
     for (const p of FACTORY_PRESETS) {
       const m = model();
       const v = m.voices[0];

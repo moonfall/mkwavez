@@ -53,6 +53,11 @@ import {
   superformulaRadius,
   supersawLevel,
   supersawPhases,
+  CONVERGE_CHORDS,
+  convergePitch,
+  convergeTones,
+  convergeVoices,
+  type ConvergeParams,
   SYNC_WAVES,
   syncRatio,
   syncWave,
@@ -403,6 +408,42 @@ viz('supersaw', {
     g.globalAlpha = 1;
     rules(g, s, w, h, [i.u], [], c.accent);
     at(i.u).forEach((v, j) => dot(g, s.x(i.u), s.y(frac(v)), 2.5, j === (V - 1) / 2 ? c.accent : c.line));
+  },
+});
+
+// Converge: each voice's pitch (harmonics, log scale) across the batch (time →), the chord's
+// tones as guides, the shown moment marked.
+viz('converge', {
+  axis: (i) => [
+    'u 0',
+    `${Math.round(i.params.voices)} voices → ${CONVERGE_CHORDS[clamp(Math.round(i.params.chord), 0, CONVERGE_CHORDS.length - 1)].toLowerCase()} · ${Math.round(i.params.span)} oct`,
+    '1',
+  ],
+  draw: (g, w, h, i, c) => {
+    const p = i.params as unknown as ConvergeParams;
+    const voices = convergeVoices(p, i.seed);
+    const tones = convergeTones(p.chord, p.span);
+    const lo = Math.log2(Math.max(1, Math.min(p.low, p.high, tones[0]))) - 0.3;
+    const hi = Math.log2(Math.max(p.low, p.high, tones[tones.length - 1])) + 0.3;
+    const s = scale(w, h, 0, 1, lo, hi);
+    rules(g, s, w, h, [], tones.map(Math.log2), c.grid);
+    const steps = Math.min(240, Math.ceil(w));
+    g.lineWidth = 1;
+    g.strokeStyle = c.line;
+    g.globalAlpha = 0.55;
+    for (const v of voices) {
+      g.beginPath();
+      for (let k = 0; k <= steps; k++) {
+        const u = k / steps;
+        const y = s.y(Math.log2(convergePitch(v, u, p.wobble)));
+        if (k) g.lineTo(s.x(u), y);
+        else g.moveTo(s.x(u), y);
+      }
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+    rules(g, s, w, h, [i.u], [], c.accent);
+    for (const v of voices) dot(g, s.x(i.u), s.y(Math.log2(convergePitch(v, i.u, p.wobble))), 2, c.accent);
   },
 });
 

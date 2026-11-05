@@ -87,7 +87,10 @@ switches (the choice is remembered).
 
 - **Generate → Seed**: pick from the library (basic waves; Supersaw, a detuned stack of
   1–15 saws, squares or triangles whose voices drift apart across the batch so the
-  wavetable beats like the stack; formula presets by category — many are starting
+  wavetable beats like the stack; Converge, a seeded cluster of up to 48 voices in a band
+  of harmonics that wander, then glide one by one onto a chord spread over the octaves —
+  the batch is the arc, so a slow sweep through it plays cluster → swell → chord;
+  formula presets by category — many are starting
   points in a focused parameter space instead of fixed formulas, each reproducing its
   original preset at its defaults (at N = 8 where the preset stepped by n): Waveshaper
   (the Shapers), Superformula, FM / PM (FM sweep, Nested FM, Cross PM), Phase distortion,
@@ -295,9 +298,11 @@ switches (the choice is remembered).
     aftertouch, key, per-note random) → destination (A / B pitch, position X / Y, level,
     sub / noise level, cutoff, resonance, drive, amp, pan, LFO rates) × a bipolar amount
     (double-click resets it).
-  - **Presets** (the picker next to the section tabs): Init and six factory sounds (Sub
-    bass, Pluck, Evolving pad, Sync lead, Brass, Noise sweep) that play the built-in
-    wavetables, then yours. The ⋯ menu saves the voice as a preset, deletes the chosen one,
+  - **Presets** (the picker next to the section tabs): Init and seven factory sounds (Sub
+    bass, Pluck, Evolving pad, Sync lead, Brass, Noise sweep, Converge swell) that play the
+    built-in wavetables, then yours. Converge swell is made for a Converge batch: generate
+    one with many waveforms (it plays Last batch), hold a low note (D3 sounds D1) and a
+    one-shot Rise LFO sweeps the position and opens the filter over about 12 s. The ⋯ menu saves the voice as a preset, deletes the chosen one,
     copies / pastes voices and exports / imports your presets (a `.json` file). Your
     presets are saved with the session. Applying one is undoable.
 - **Sequence**: follows the selected voice tab: its 8-row pentatonic step grid (rows
@@ -394,6 +399,7 @@ Seed tab, **ƒ Functions** in the legend opens this list.
 | `square(x)` | band-limited square: odd harmonics at 1/k (Square) |
 | `pulse(x, width)` | pulse, +1 for the first `width` (0 … 1) of the cycle, else −1; band-limited by the pipeline like the Pulse preset |
 | `supersaw(x, voices, drift, outer, wave, phases, seed?)` | detuned stack of 1–15 voices (wave 0 saw · 1 square · 2 triangle), the outermost `drift` cycles off the centre and at level `outer`; phases 0 random · 1 spread · 2 aligned (Supersaw: drift = detune·u) |
+| `converge(x, voices, low, high, chord, span, hold, arrive, spread, wobble, bright, t, seed?)` | 1–48 saw-like voices (overtones k^−bright) starting at seeded harmonics in [low, high], wandering ± `wobble` semitones, each gliding between `hold` and `arrive` (staggered by `spread`) onto the tones of a chord (0 root + fifth · 1 major · 2 minor · 3 sus4 · 4 octaves) over `span` octaves; `t` 0 … 1 is the moment (Converge: t = u) |
 | `polygon(x, sides, star, roundness, rotation, read)` | polygon or star {sides/star} (a shared factor draws a compound); read 0 radius vs angle / 1 the x of the outline traced at constant speed; roundness 0 … 1 rounds the corners; rotation in turns (Polygon) |
 | `shaper(x, curve, amount, bias, level, input)` | waveshaper: curve 0 tanh · 1 Chebyshev Tₖ (amount = order) · 2 power (amount = exponent) · 3 hard clip · 4 wavefold, applied to level·input + bias; input 0 sine · 1 triangle · 2 saw (Waveshaper: Soft clip, Chebyshev, Superellipse, Shaped PWM) |
 | `fm(x, carrier, ratio, index, ratio2, amount2, routing)` | sin(carrier·x + index·M) with M = sin(ratio·x) and a second modulator at `ratio2`, `amount2`: routing 0 into the modulator (nested) · 1 times it (ring) · 2 into the carrier (FM / PM: FM sweep, Nested FM, Cross PM) |

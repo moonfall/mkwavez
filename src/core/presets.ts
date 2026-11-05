@@ -93,7 +93,7 @@ export function resolvePresetWavetable(wavetables: readonly Wavetable[], id: num
   return wavetables.find((w) => !w.builtin && w.name === ref.name && w.shape === ref.shape);
 }
 
-/** Init plus six starting points; all on the built-in wavetables (Timeline, Last batch, Grid). */
+/** Init plus seven starting points; all on the built-in wavetables (Timeline, Last batch, Grid). */
 export const FACTORY_PRESETS: readonly VoicePreset[] = [
   factory('init', 'Init', {}),
   factory(
@@ -196,6 +196,32 @@ export const FACTORY_PRESETS: readonly VoicePreset[] = [
       mods: mods({ src: 'lfo1', dst: 'cutoff', amt: 0.55 }, { src: 'lfo1', dst: 'pan', amt: 0.5 }),
     },
     { attack: 0.3, decay: 0.5, sustain: 1, release: 1.2 },
+  ),
+  // For a Converge batch (Generate → Seed → Converge, many waveforms, then this on Last
+  // batch): one key plays the whole arc — a Rise LFO sweeps the position once over ~12 s
+  // while the filter opens and the level swells; two octaves down, so D3 sounds D1.
+  factory(
+    'converge',
+    'Converge swell',
+    {
+      poly: 1,
+      aOct: -2,
+      aLevel: 0.85,
+      aUnison: 4,
+      aDetune: 10,
+      aSpread: 0.8,
+      width: 1.4,
+      filterMode: 'lp24',
+      cutoff: 900,
+      resonance: 0.1,
+      envAmount: 0,
+      keyTrack: 0.3,
+      velAmount: 0,
+      velAmp: 0.3,
+      lfos: lfos({ shape: 'rise', rate: 0.08, retrig: true }),
+      mods: mods({ src: 'lfo1', dst: 'posA', amt: 1 }, { src: 'lfo1', dst: 'cutoff', amt: 0.45 }),
+    },
+    { a: src(LAST_BATCH_WAVETABLE_ID, 0), attack: 3, decay: 1, sustain: 1, release: 4 },
   ),
 ];
 

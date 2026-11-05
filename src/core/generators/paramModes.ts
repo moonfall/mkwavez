@@ -23,6 +23,7 @@ import { DEFAULT_FRACTAL as FRD, FRACTAL_BASES, fractalTable, type FractalParams
 import { DEFAULT_SYNC as SYD, SYNC_WAVES, syncTable, type SyncParams } from './sync';
 import { DEFAULT_SERIES as SRD, SERIES_PHASES, SERIES_SETS, seriesTable, type SeriesParams } from './series';
 import { DEFAULT_SEQUENCE as SQ, SEQ_SOURCES, sequenceTable, type SequenceParams } from './sequences';
+import { CONVERGE_CHORDS, CONVERGE_MAX_VOICES, convergeTable, DEFAULT_CONVERGE as CV, type ConvergeParams } from './converge';
 import { DEFAULT_SUPERSAW as SS, SUPERSAW_MAX_VOICES, SUPERSAW_PHASES, SUPERSAW_WAVES, supersawTable, type SupersawParams } from './supersaw';
 
 export interface SeedParam {
@@ -286,6 +287,32 @@ export const PARAM_MODES = [
     ],
     seeded: (p) => Math.round(num(p, 'phases')) === 0,
     render: (p, seed, index, count) => supersawTable(nums<SupersawParams>(p, SS), seed, index, count),
+  },
+  {
+    mode: 'converge',
+    id: 'converge',
+    cat: 'Basic',
+    name: 'Converge',
+    // Right after Supersaw (both follow Pulse, in this order).
+    after: 'pulse',
+    about:
+      'A cluster of voices at seeded pitches in a band (harmonics of the played note), wandering, that glide one by one ' +
+      'onto a chord spread over the octaves. Each waveform is one moment and the batch is the whole arc: use many ' +
+      'waveforms, play low (around D1–D2) and sweep the position slowly (e.g. a Rise LFO).',
+    params: [
+      { key: 'voices', label: 'Voices', min: 1, max: CONVERGE_MAX_VOICES, step: 1, value: CV.voices },
+      { key: 'low', label: 'Cluster from (harmonic)', min: 1, max: 36, step: 0.5, value: CV.low },
+      { key: 'high', label: 'Cluster to (harmonic)', min: 1, max: 48, step: 0.5, value: CV.high },
+      { key: 'chord', label: 'Chord', min: 0, max: CONVERGE_CHORDS.length - 1, step: 1, value: CV.chord, options: opts(CONVERGE_CHORDS) },
+      { key: 'span', label: 'Chord span (octaves)', min: 1, max: 6, step: 1, value: CV.span },
+      { key: 'hold', label: 'Cluster holds until', min: 0, max: 0.9, step: 0.01, value: CV.hold },
+      { key: 'arrive', label: 'All arrived by', min: 0.1, max: 1, step: 0.01, value: CV.arrive },
+      { key: 'spread', label: 'Arrival spread', min: 0, max: 1, step: 0.01, value: CV.spread },
+      { key: 'wobble', label: 'Cluster wobble (± semitones)', min: 0, max: 3, step: 0.05, value: CV.wobble },
+      { key: 'bright', label: 'Voice rolloff k^−r', min: 0.5, max: 3, step: 0.05, value: CV.bright },
+    ],
+    seeded: () => true,
+    render: (p, seed, index, count) => convergeTable(nums<ConvergeParams>(p, CV), seed, index, count),
   },
   {
     mode: 'polygon',

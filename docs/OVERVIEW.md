@@ -43,7 +43,7 @@ as a native plugin (VST3 / AU / CLAP / LV2 / Standalone) whose editor is the sam
 ## Making waveforms (Generate)
 
 - **Seed** — a searchable library: band-limited basic waves and parameter modes —
-  supersaw, FM / PM, phase distortion, resonance (CZ-style), hard sync, waveshaper,
+  supersaw, converge (a seeded cluster gliding onto a chord across the batch), FM / PM, phase distortion, resonance (CZ-style), hard sync, waveshaper,
   harmonic series, superformula, fractal sum, polygon, Perlin noise (the classic formula
   presets now open as starting points of the matching mode), 1D and Life-like cellular automata, dynamical systems (logistic /
   sine / circle / Hénon / tent), Karplus-Strong snapshots, additive designer, number

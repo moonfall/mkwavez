@@ -13,7 +13,8 @@ src/
     perlin.ts           improved Perlin noise, fBm, seeded NoiseField, loop-seamless pnoise
     generators/         basic, formula (FormulaFn interface only), Perlin, CA, presets,
                         paramModes.ts (further parameter modes: library entry + pure
-                        render(params, seed, index, count); dynamical.ts, …; each
+                        render(params, seed, index, count); dynamical.ts,
+                        supersaw.ts, converge.ts, …; each
                         generator also exposes its raw cycle before shape(), e.g.
                         caRawGenerations, karplusRaw, rdRaw),
                         waveFunctions.ts (the formulas' waveform functions sine() …

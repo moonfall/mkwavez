@@ -41,6 +41,7 @@ import { rdRaw, rdState } from './reactionDiffusion';
 import { sequenceRaw, sequenceValuesAt } from './sequences';
 import { SPLINE_MAX_POINTS, splinePointsAt, splineRaw } from './spline';
 import { SUPERSAW_MAX_VOICES, supersawRaw } from './supersaw';
+import { CONVERGE_CHORDS, CONVERGE_MAX_VOICES, convergeRaw, DEFAULT_CONVERGE as CV } from './converge';
 import { POLYGON_MAX_OFFSET, POLYGON_MAX_SIDES, polygonRaw } from './polygon';
 import { SHAPERS, SHAPER_INPUTS, shaperRaw } from './shaper';
 import { SERIES_PHASES, SERIES_SETS, seriesRaw } from './series';
@@ -68,6 +69,21 @@ export interface WaveFunctions {
   superformula(x: number, m?: number, n1?: number, n2?: number, n3?: number, offset?: number): number;
   fractal(x: number, base?: number, ratio?: number, terms?: number, decay?: number): number;
   sync(x: number, wave?: number, ratio?: number): number;
+  converge(
+    x: number,
+    voices?: number,
+    low?: number,
+    high?: number,
+    chord?: number,
+    span?: number,
+    hold?: number,
+    arrive?: number,
+    spread?: number,
+    wobble?: number,
+    bright?: number,
+    t?: number,
+    seed?: number,
+  ): number;
   series(x: number, set?: number, highest?: number, rolloff?: number, phases?: number, pluck?: number): number;
   perlin(x: number, freq?: number, z?: number, oct?: number, pers?: number, seed?: number): number;
   ca(x: number, rule?: number, cells?: number, gen?: number, seed?: number): number;
@@ -130,6 +146,12 @@ export const WAVE_FUNCTION_DOCS: readonly WaveFunctionDoc[] = [
     about: 'Σ decay^k·f(ratio^k·x), base 0 cosine · 1 triangle · 2 sine · 3 square, terms 1–16 (Fractal sum)',
   },
   { name: 'sync', sig: 'sync(x, wave, ratio)', about: 'hard-synced slave 0 sine · 1 triangle · 2 saw · 3 square at `ratio` (Hard sync)' },
+  {
+    name: 'converge',
+    sig: 'converge(x, voices, low, high, chord, span, hold, arrive, spread, wobble, bright, t, seed?)',
+    about:
+      'a cluster of voices (harmonics low–high) gliding onto a chord (0 root + fifth · 1 major · 2 minor · 3 sus4 · 4 octaves) over `span` octaves; t = time 0–1 (Converge)',
+  },
   {
     name: 'series',
     sig: 'series(x, set, highest, rolloff, phases, pluck)',
@@ -401,6 +423,13 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
   const resonanceC = cycleFn('resonance', ([win, ratio]) => resonanceRaw(n(win), n(ratio)));
   const superformulaC = cycleFn('superformula', ([m, n1, n2, n3, offset]) => superformulaRaw(n(m), n(n1), n(n2), n(n3), n(offset)));
   const fractalC = cycleFn('fractal', ([base, ratio, terms, decay]) => fractalRaw(n(base), n(ratio), n(terms), n(decay)));
+  const convergeC = cycleFn('converge', ([voices, low, high, chord, span, hold, arrive, spread, wobble, bright, t, s]) =>
+    convergeRaw(
+      { voices: n(voices), low: n(low), high: n(high), chord: n(chord), span: n(span), hold: n(hold), arrive: n(arrive), spread: n(spread), wobble: n(wobble), bright: n(bright) },
+      n(t),
+      n(s),
+    ),
+  );
   const syncC = cycleFn('sync', ([wave, ratio]) => syncRaw(n(wave), n(ratio)));
   const seriesC = cycleFn('series', ([set, highest, rolloff, phases, pluck]) => seriesRaw(n(set), n(highest), n(rolloff), n(phases), n(pluck)));
   const glyphC = cycleFn('glyph', ([contour, skew]) => glyphRaw(contourPoints(String(contour)), n(skew)));
@@ -467,6 +496,21 @@ export function waveFunctions(seed: number, memo = new CycleMemo(), check: () =>
         num('fractal', 'ratio', ratio, 2, -16, 16),
         Math.round(num('fractal', 'terms', terms, 7, 1, 16)),
         num('fractal', 'decay', decay, 0.5),
+      ]),
+    converge: (x, voices, low, high, chord, span, hold, arrive, spread, wobble, bright, t, s) =>
+      convergeC(phase('converge', x), [
+        Math.round(num('converge', 'voices', voices, CV.voices, 1, CONVERGE_MAX_VOICES)),
+        num('converge', 'low', low, CV.low, 1, 72),
+        num('converge', 'high', high, CV.high, 1, 72),
+        Math.round(num('converge', 'chord', chord, CV.chord, 0, CONVERGE_CHORDS.length - 1)),
+        num('converge', 'span', span, CV.span, 0, 7),
+        num('converge', 'hold', hold, CV.hold, 0, 1),
+        num('converge', 'arrive', arrive, CV.arrive, 0, 1),
+        num('converge', 'spread', spread, CV.spread, 0, 1),
+        num('converge', 'wobble', wobble, CV.wobble, 0, 12),
+        num('converge', 'bright', bright, CV.bright, 0, 4),
+        num('converge', 't', t, 0, 0, 1),
+        seedOf('converge', s),
       ]),
     sync: (x, wave, ratio) =>
       syncC(phase('sync', x), [Math.round(num('sync', 'wave', wave, 0, 0, SYNC_WAVES.length - 1)), num('sync', 'ratio', ratio, 2, -256, 256)]),

@@ -334,6 +334,14 @@ Open:
   high) and a separate bend-down range (Mix page "Note" row and Bend pair; full view Output
   "Priority", "Bend ↓"). Deferred (no room without moving controls): fixed pitch per
   oscillator, unison blend / detune curve / stacks, glide by rate.
+- Stage 13 (Converge): a Seed mode (Basic, after Supersaw) and formula function
+  `converge()`: up to 48 seeded voices in a band of harmonics, wandering, that glide on
+  staggered schedules onto a harmonic chord (root + fifth, major, minor, sus4, octaves)
+  over 1–6 octaves; each table is one moment, the batch the arc. Voices sit on whole
+  harmonics (a glide moves energy between neighbours, equal power), so the cluster is a
+  timbre rather than true detuned beating — unison on the oscillator adds that. Factory
+  preset Converge swell (osc A on Last batch, two octaves down, Rise LFO → position and
+  cutoff).
 
 Decisions / deviations:
 - New voices from "+" are offered as Synth (first in the menu) or Simple; both start on

@@ -449,7 +449,7 @@ describe('formula recipes', () => {
   });
 
   it('documents every function', () => {
-    expect(WAVE_FUNCTION_NAMES.length).toBe(25);
+    expect(WAVE_FUNCTION_NAMES.length).toBe(26);
     for (const d of WAVE_FUNCTION_DOCS) expect(d.sig.startsWith(`${d.name}(x`)).toBe(true);
     const fx = waveFunctions(1) as unknown as Record<string, unknown>;
     for (const n of WAVE_FUNCTION_NAMES) expect(typeof fx[n]).toBe('function');

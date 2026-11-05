@@ -79,6 +79,8 @@ export function modeFormula(entry: SeedEntry, p: Readonly<Record<string, number>
       return pulseExpr(p.width, p.widthEnd);
     case 'supersaw':
       return `supersaw(p, ${lit(p.voices)}, ${lerpExpr(0, p.detune)}, ${lit(p.outer)}, ${lit(p.wave)}, ${lit(p.phases)})`;
+    case 'converge':
+      return `converge(p, ${[p.voices, p.low, p.high, p.chord, p.span, p.hold, p.arrive, p.spread, p.wobble, p.bright].map(lit).join(', ')}, u)`;
     case 'polygon': {
       const b = Math.round(p.batch);
       const sides = b === 0 ? stepExpr(Math.round(p.sides), 1) : lit(Math.round(p.sides));

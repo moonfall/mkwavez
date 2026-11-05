@@ -37,6 +37,7 @@ export * from './shaper';
 export * from './simCache';
 export * from './spline';
 export * from './supersaw';
+export * from './converge';
 export * from './waveFunctions';
 export * from './asFormula';
 

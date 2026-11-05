@@ -187,7 +187,7 @@ export function seedParams(entry: SeedEntry, over: Readonly<Record<string, numbe
 }
 
 /** Formula calls that may use the seed: pnoise() and the seeded waveform functions. */
-const SEEDED_CALL = /\b(pnoise|perlin|ca|ks|additive|rd|life|spline|supersaw)\s*\(/;
+const SEEDED_CALL = /\b(pnoise|perlin|ca|ks|additive|rd|life|spline|supersaw|converge)\s*\(/;
 
 /**
  * True when the seed changes the result: Perlin, CA, a formula (or a basic preset's
