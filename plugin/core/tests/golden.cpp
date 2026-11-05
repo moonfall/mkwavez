@@ -187,14 +187,17 @@ TEST("golden: synth helpers (reflect, limiter, drive, resonance, cutoff, LFO wav
     CHECK_SEQ(rf, "reflect01", 1e-15);
     CHECK_SEQ(sl, "softLimit", 1e-15);
     CHECK_SEQ(dr, "drive", 1e-14);
-    std::vector<double> rk, cg, lw, fo;
+    std::vector<double> rk, cg, lw, ly, fo;
     for (double r : {-1.0, 0.0, 0.15, 0.5, 0.99, 1.0, 2.0}) rk.push_back(resonanceK(r));
     for (double f : {1.0, 20.0, 440.0, 2400.0, 12000.0, 23000.0, 30000.0}) {
         cg.push_back(cutoffG(f, 44100));
         cg.push_back(cutoffG(f, 96000));
     }
     for (int sh = 0; sh < LFO_SHAPE_COUNT; ++sh)
-        for (double ph : {0.0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.99}) lw.push_back(lfoWave((LfoShape) sh, ph, 0.7, -0.3));
+        for (double ph : {0.0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.99}) {
+            lw.push_back(lfoWave((LfoShape) sh, ph, 0.7, -0.3));
+            ly.push_back(lfoWaveY((LfoShape) sh, ph, 0.7, -0.3, 0.4, -0.6));
+        }
     Prng r(11);
     for (int mode = 0; mode < 5; ++mode) {
         MultiFilter f;
@@ -207,6 +210,7 @@ TEST("golden: synth helpers (reflect, limiter, drive, resonance, cutoff, LFO wav
     CHECK_SEQ(rk, "resK", 1e-15);
     CHECK_SEQ(cg, "cutoffG", 1e-12);
     CHECK_SEQ(lw, "lfoWave", 1e-14);
+    CHECK_SEQ(ly, "lfoWaveY", 1e-14);
     CHECK_SEQ(fo, "svf", 1e-9);
 }
 
@@ -243,7 +247,7 @@ TEST("golden: resolveMix (400 random wavetables and queries)") {
 
 // ---- engine scenarios (opcodes as in tests/golden.test.ts) ----
 
-const char* const SCENARIOS[] = {"sequence", "midi2d", "steplen", "synth", "synthEdit", "synthGuard", "stereo", "poly", "warp", "macros", "modplus", "mpe", "phase", "mono", "rows"};
+const char* const SCENARIOS[] = {"sequence", "midi2d", "steplen", "synth", "synthEdit", "synthGuard", "stereo", "poly", "warp", "macros", "modplus", "mpe", "phase", "mono", "lfo2d", "rows"};
 /** Synth voices: the same bound as the rest (measured: well under it). */
 constexpr double SYNTH_TOL = 2e-6;
 

@@ -10,8 +10,8 @@
 
 namespace mkwavez {
 
-enum class LfoShape : uint8_t { sine, tri, saw, square, sh, smooth, rise, fall };
-inline constexpr int LFO_SHAPE_COUNT = 8;
+enum class LfoShape : uint8_t { sine, tri, saw, square, sh, smooth, rise, fall, fig8, lissajous, squarePath, walk };
+inline constexpr int LFO_SHAPE_COUNT = 12;
 
 /** Tempo-synced LFO divisions (order = LFO_DIVS in TS). */
 inline constexpr int LFO_DIV_COUNT = 16;
@@ -38,7 +38,9 @@ struct LfoParams {
 };
 
 /** Shapes a stereo phase applies to (S&H / smooth random draw one value for both sides). */
-inline bool isPeriodicShape(LfoShape s) { return s != LfoShape::sh && s != LfoShape::smooth && s != LfoShape::rise && s != LfoShape::fall; }
+inline bool isPeriodicShape(LfoShape s) {
+    return s != LfoShape::sh && s != LfoShape::smooth && s != LfoShape::rise && s != LfoShape::fall && s != LfoShape::walk;
+}
 /** One-shot shapes: one cycle from each note, then hold the end value. */
 inline bool isOneShot(LfoShape s) { return s == LfoShape::rise || s == LfoShape::fall; }
 
@@ -49,9 +51,9 @@ enum class ModEnvMode : uint8_t { ad, adsr };
 /** Sources (order = MOD_SOURCES in TS). */
 enum ModSource : int8_t {
     SRC_NONE = -1, SRC_LFO1, SRC_LFO2, SRC_LFO3, SRC_FENV, SRC_PENV, SRC_MENV, SRC_VEL, SRC_WHEEL, SRC_AT, SRC_KEY, SRC_RAND,
-    SRC_MACRO1, SRC_MACRO2, SRC_MACRO3, SRC_MACRO4, SRC_GATE, SRC_SLIDE
+    SRC_MACRO1, SRC_MACRO2, SRC_MACRO3, SRC_MACRO4, SRC_GATE, SRC_SLIDE, SRC_LFO1Y, SRC_LFO2Y, SRC_LFO3Y
 };
-inline constexpr int N_SOURCES = 17;
+inline constexpr int N_SOURCES = 20;
 /** Destinations (order = MOD_DESTS in TS). */
 enum ModDest : int8_t {
     DST_NONE = -1, DST_PITCH_A, DST_PITCH_B, DST_POS_A, DST_POSY_A, DST_POS_B, DST_POSY_B, DST_LEVEL_A, DST_LEVEL_B, DST_SUB,
@@ -84,6 +86,16 @@ inline double reflect01(double p) {
     return x;
 }
 
+/** The square path's X (axis 0) or Y (axis 1): the rectangle's edges, clockwise from (−1, −1). */
+inline double squarePath(double phase, int axis) {
+    const double q = phase * 4;
+    const int k = ((int) std::floor(q)) % 4;
+    const double t = q - std::floor(q);
+    const double x = k == 0 ? -1 + 2 * t : k == 1 ? 1 : k == 2 ? 1 - 2 * t : -1;
+    const double y = k == 0 ? -1 : k == 1 ? -1 + 2 * t : k == 2 ? 1 : 1 - 2 * t;
+    return axis == 0 ? x : y;
+}
+
 /** LFO waveform at phase 0..1; S&H / smooth random use this (cur) and the previous (prev) cycle's value. */
 inline double lfoWave(LfoShape shape, double phase, double cur = 0, double prev = 0) {
     switch (shape) {
@@ -98,6 +110,38 @@ inline double lfoWave(LfoShape shape, double phase, double cur = 0, double prev 
         }
         case LfoShape::rise: return phase;
         case LfoShape::fall: return 1 - phase;
+        case LfoShape::fig8: return std::sin(2 * PI * phase);
+        case LfoShape::lissajous: return std::sin(2 * PI * 3 * phase);
+        case LfoShape::squarePath: return squarePath(phase, 0);
+        case LfoShape::walk: {
+            const double t = 0.5 - 0.5 * std::cos(PI * phase);
+            return prev + (cur - prev) * t;
+        }
+    }
+    return 0;
+}
+
+/** An LFO's Y output (see lfoWaveY in modulation.ts). */
+inline double lfoWaveY(LfoShape shape, double phase, double cur = 0, double prev = 0, double curY = 0, double prevY = 0) {
+    switch (shape) {
+        case LfoShape::fig8: return std::sin(4 * PI * phase);
+        case LfoShape::lissajous: return std::sin(2 * PI * 2 * phase);
+        case LfoShape::squarePath: return squarePath(phase, 1);
+        case LfoShape::walk: {
+            const double t = 0.5 - 0.5 * std::cos(PI * phase);
+            return prevY + (curY - prevY) * t;
+        }
+        case LfoShape::sine:
+        case LfoShape::tri:
+        case LfoShape::saw:
+        case LfoShape::square: {
+            const double q = phase + 0.25;
+            return lfoWave(shape, q >= 1 ? q - 1 : q);
+        }
+        case LfoShape::sh:
+        case LfoShape::smooth:
+        case LfoShape::rise:
+        case LfoShape::fall: return lfoWave(shape, phase, cur, prev);
     }
     return 0;
 }

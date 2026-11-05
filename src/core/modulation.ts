@@ -9,8 +9,8 @@
  * fall (1 → 0) run one cycle from each note and then hold — envelopes with the LFO's rate,
  * fade and depth.
  */
-export type LfoShape = 'sine' | 'tri' | 'saw' | 'square' | 'sh' | 'smooth' | 'rise' | 'fall';
-export const LFO_SHAPES: readonly LfoShape[] = ['sine', 'tri', 'saw', 'square', 'sh', 'smooth', 'rise', 'fall'];
+export type LfoShape = 'sine' | 'tri' | 'saw' | 'square' | 'sh' | 'smooth' | 'rise' | 'fall' | 'fig8' | 'lissajous' | 'squarePath' | 'walk';
+export const LFO_SHAPES: readonly LfoShape[] = ['sine', 'tri', 'saw', 'square', 'sh', 'smooth', 'rise', 'fall', 'fig8', 'lissajous', 'squarePath', 'walk'];
 export const LFO_SHAPE_LABELS: Readonly<Record<LfoShape, string>> = {
   sine: 'Sine',
   tri: 'Triangle',
@@ -20,6 +20,10 @@ export const LFO_SHAPE_LABELS: Readonly<Record<LfoShape, string>> = {
   smooth: 'Smooth random',
   rise: 'Rise (once)',
   fall: 'Fall (once)',
+  fig8: 'Figure 8 (2D)',
+  lissajous: 'Lissajous 3:2 (2D)',
+  squarePath: 'Square path (2D)',
+  walk: 'Random walk (2D)',
 };
 
 /** Tempo-synced LFO cycle lengths (whole notes; T = triplet, D = dotted). */
@@ -75,7 +79,12 @@ export const DEFAULT_LFO: LfoParams = { shape: 'sine', rate: 2, sync: false, div
 
 /** Shapes a stereo phase applies to (the random ones draw one value per cycle for both sides). */
 export function isPeriodicShape(shape: LfoShape): boolean {
-  return shape !== 'sh' && shape !== 'smooth' && shape !== 'rise' && shape !== 'fall';
+  return shape !== 'sh' && shape !== 'smooth' && shape !== 'rise' && shape !== 'fall' && shape !== 'walk';
+}
+
+/** Random shapes (a new value per cycle; no fixed path). */
+export function isRandomShape(shape: LfoShape): boolean {
+  return shape === 'sh' || shape === 'smooth' || shape === 'walk';
 }
 
 /** One-shot shapes: one cycle from each note (always restarted), then hold their end value. */
@@ -92,7 +101,7 @@ export function lfoRateHz(l: LfoParams, bpm: number): number {
 /** Mod envelope: AD (attack, then decay to 0; ignores the gate) or ADSR (follows the gate). */
 export type ModEnvMode = 'ad' | 'adsr';
 
-export const MOD_SOURCES = ['lfo1', 'lfo2', 'lfo3', 'fenv', 'penv', 'menv', 'vel', 'wheel', 'at', 'key', 'rand', 'macro1', 'macro2', 'macro3', 'macro4', 'gate', 'slide'] as const;
+export const MOD_SOURCES = ['lfo1', 'lfo2', 'lfo3', 'fenv', 'penv', 'menv', 'vel', 'wheel', 'at', 'key', 'rand', 'macro1', 'macro2', 'macro3', 'macro4', 'gate', 'slide', 'lfo1Y', 'lfo2Y', 'lfo3Y'] as const;
 export type ModSource = (typeof MOD_SOURCES)[number];
 export const MOD_SOURCE_LABELS: Readonly<Record<ModSource, string>> = {
   lfo1: 'LFO 1',
@@ -112,6 +121,9 @@ export const MOD_SOURCE_LABELS: Readonly<Record<ModSource, string>> = {
   macro4: 'Macro 4',
   gate: 'Gate',
   slide: 'Slide (MPE)',
+  lfo1Y: 'LFO 1 Y',
+  lfo2Y: 'LFO 2 Y',
+  lfo3Y: 'LFO 3 Y',
 };
 
 export const MOD_DESTS = [
@@ -262,5 +274,57 @@ export function lfoWave(shape: LfoShape, phase: number, cur = 0, prev = 0): numb
       return phase;
     case 'fall':
       return 1 - phase;
+    // 2D paths (X here, Y in lfoWaveY).
+    case 'fig8':
+      return Math.sin(2 * Math.PI * phase);
+    case 'lissajous':
+      return Math.sin(2 * Math.PI * 3 * phase);
+    case 'squarePath':
+      return squarePath(phase, 0);
+    case 'walk': {
+      const t = 0.5 - 0.5 * Math.cos(Math.PI * phase);
+      return prev + (cur - prev) * t;
+    }
+  }
+}
+
+/** The square path's X (axis 0) or Y (axis 1): the rectangle's edges, clockwise from (−1, −1). */
+function squarePath(phase: number, axis: 0 | 1): number {
+  const q = phase * 4;
+  const k = Math.floor(q) % 4;
+  const t = q - Math.floor(q);
+  // Corners (−1,−1) → (1,−1) → (1,1) → (−1,1).
+  const x = k === 0 ? -1 + 2 * t : k === 1 ? 1 : k === 2 ? 1 - 2 * t : -1;
+  const y = k === 0 ? -1 : k === 1 ? -1 + 2 * t : k === 2 ? 1 : 1 - 2 * t;
+  return axis === 0 ? x : y;
+}
+
+/**
+ * An LFO's second output (Y; matrix sources LFO 1–3 Y). The 2D paths have their own Y
+ * (figure 8: sin 2φ; Lissajous 3:2: sin 2·2πφ; square path; random walk: a second smooth
+ * random, `curY` / `prevY`); periodic shapes give the same wave a quarter cycle on (sine →
+ * a circle); S&H, smooth random and the one-shots give X again.
+ */
+export function lfoWaveY(shape: LfoShape, phase: number, cur = 0, prev = 0, curY = 0, prevY = 0): number {
+  switch (shape) {
+    case 'fig8':
+      return Math.sin(4 * Math.PI * phase);
+    case 'lissajous':
+      return Math.sin(2 * Math.PI * 2 * phase);
+    case 'squarePath':
+      return squarePath(phase, 1);
+    case 'walk': {
+      const t = 0.5 - 0.5 * Math.cos(Math.PI * phase);
+      return prevY + (curY - prevY) * t;
+    }
+    case 'sine':
+    case 'tri':
+    case 'saw':
+    case 'square': {
+      const q = phase + 0.25;
+      return lfoWave(shape, q >= 1 ? q - 1 : q);
+    }
+    default:
+      return lfoWave(shape, phase, cur, prev);
   }
 }

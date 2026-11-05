@@ -17,6 +17,11 @@
 
 import {
   DEFAULT_LFO,
+  isOneShot,
+  isRandomShape,
+  lfoRateHz,
+  lfoWave,
+  lfoWaveY,
   EMPTY_SLOT,
   LFO_COUNT,
   LFO_DIVS,
@@ -492,4 +497,45 @@ export function normalizeSynth(raw: unknown, fallbackSource: OscSource = DEFAULT
 /** Semitone offset of an oscillator's tuning (octave, coarse, fine). */
 export function oscSemis(oct: number, coarse: number, fine: number): number {
   return oct * 12 + coarse + fine / 100;
+}
+
+/**
+ * The path the LFO routes of a voice trace on one oscillator's X / Y position (for the X/Y
+ * pad): the summed matrix offsets [x, y] at time t (seconds) from the LFOs' start phases,
+ * over one period of the slowest LFO routed (at most 20 s). Only LFO sources (X and Y
+ * outputs) with a fixed path count — random shapes and other sources are left out; fade-in
+ * is ignored. Null when no LFO moves that oscillator's position.
+ */
+export function lfoPath(s: SynthParams, osc: 'a' | 'b', bpm: number): { span: number; at(t: number): [number, number] } | null {
+  const dx = osc === 'a' ? 'posA' : 'posB';
+  const dy = osc === 'a' ? 'posYA' : 'posYB';
+  const routes: { n: number; y: boolean; toY: boolean; amt: number }[] = [];
+  for (const m of s.mods) {
+    if (m.amt === 0 || (m.dst !== dx && m.dst !== dy)) continue;
+    const hit = /^lfo([123])(Y?)$/.exec(m.src);
+    if (!hit) continue;
+    const n = Number(hit[1]) - 1;
+    if (isRandomShape(s.lfos[n].shape)) continue;
+    routes.push({ n, y: hit[2] === 'Y', toY: m.dst === dy, amt: m.amt });
+  }
+  if (!routes.length) return null;
+  let slowest = Infinity;
+  for (const r of routes) slowest = Math.min(slowest, lfoRateHz(s.lfos[r.n], bpm));
+  const span = Math.min(20, 1 / Math.max(0.05, slowest));
+  return {
+    span,
+    at(t) {
+      let x = 0;
+      let y = 0;
+      for (const r of routes) {
+        const l = s.lfos[r.n];
+        const p = l.phase + lfoRateHz(l, bpm) * t;
+        const ph = isOneShot(l.shape) ? Math.min(1, p) : p - Math.floor(p);
+        const v = (r.y ? lfoWaveY(l.shape, ph) : lfoWave(l.shape, ph)) * l.depth * r.amt;
+        if (r.toY) y += v;
+        else x += v;
+      }
+      return [x, y];
+    },
+  };
 }

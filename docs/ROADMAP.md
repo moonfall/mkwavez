@@ -327,6 +327,9 @@ Open:
   configuration, a per-voice MPE bend-range setting.
 - Stage 10 (oscillator gaps, part 1): unison up to 8 copies per oscillator; oscillator
   phase per note — free / reset / random (Mix page "Phase", full view Mix "Phase").
+- Stage 12 (2D LFOs): a Y output per LFO (matrix sources LFO 1–3 Y), path shapes figure 8,
+  Lissajous 3:2, square path, random walk; the Synth X/Y pad draws the routed path. No new
+  knobs.
 - Stage 11 (oscillator gaps, part 2): note priority for monophonic voices (last / low /
   high) and a separate bend-down range (Mix page "Note" row and Bend pair; full view Output
   "Priority", "Bend ↓"). Deferred (no room without moving controls): fixed pitch per

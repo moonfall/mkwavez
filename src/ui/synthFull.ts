@@ -10,7 +10,7 @@
 import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
 import { TABLE_SIZE } from '../core/constants';
-import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MACRO_KEYS, MAX_POLY, MAX_UNISON, NOTE_PRIORITIES, NOTE_PRIORITY_LABELS, PHASE_MODE_LABELS, PHASE_MODES, WARP_LABELS, WARP_MODES, type FilterMode, type NotePriority, type OscSource, type PhaseMode, type SynthParams } from '../core/synth';
+import { CUTOFF_MAX, CUTOFF_MIN, FILTER_ENV_OCTAVES, FILTER_MODE_LABELS, FILTER_MODES, FILTER_SPREAD_OCTAVES, MACRO_KEYS, MAX_POLY, MAX_UNISON, lfoPath, NOTE_PRIORITIES, NOTE_PRIORITY_LABELS, PHASE_MODE_LABELS, PHASE_MODES, WARP_LABELS, WARP_MODES, type FilterMode, type NotePriority, type OscSource, type PhaseMode, type SynthParams } from '../core/synth';
 import { isOneShot, isPeriodicShape, LFO_DIVS, LFO_RATE_MAX_HZ, LFO_RATE_MIN_HZ, LFO_SHAPE_LABELS, LFO_SHAPES, type LfoDiv, type LfoParams, type LfoShape } from '../core/modulation';
 import type { VoicePatch, VoiceParams } from '../core/voice';
 import { shapeLabel } from '../core/wavetable';
@@ -58,7 +58,7 @@ export function oscDrawer(model: AppModel, bridge: AudioBridge, which: () => 'a'
     const color = cssColor(voiceColorVar(v.id - 1));
     const hh = Math.max(40, box.clientHeight || 110);
     if (wt.shape !== '1d') {
-      pad.draw(oscView(v, osc), wt, hh, { pos: oscPositions(model, bridge, v, osc), mix: (out) => oscMix(model, bridge, v, osc, out) });
+      pad.draw(oscView(v, osc), wt, hh, { pos: oscPositions(model, bridge, v, osc), mix: (out) => oscMix(model, bridge, v, osc, out), path: lfoPath(v.synth, osc, model.bpm) });
       label.textContent = `Osc ${osc.toUpperCase()}`;
       return;
     }

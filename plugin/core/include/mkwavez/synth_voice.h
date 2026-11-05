@@ -131,6 +131,7 @@ private:
     double dstR[N_DESTS]{};
     double gainTargetR = 0;
     double lfoPhase[LFO_COUNT]{}, lfoCur[LFO_COUNT]{}, lfoPrev[LFO_COUNT]{}, lfoAge[LFO_COUNT]{}, lfoOut[LFO_COUNT]{};
+    double lfoOutY[LFO_COUNT]{}, lfoOutYR[LFO_COUNT]{}, lfoCurY[LFO_COUNT]{}, lfoPrevY[LFO_COUNT]{};
     Prng modRng;
     double noteRand = 0;
     double src[N_SOURCES]{};

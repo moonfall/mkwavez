@@ -193,6 +193,10 @@ void SynthVoice::noteOn(const VoiceParams& p, double notePitch, double velocity,
                 lfoPhase[i] = l.phase;
                 lfoPrev[i] = lfoCur[i];
                 lfoCur[i] = modRng.bipolar();
+                if (l.shape == LfoShape::walk) {
+                    lfoPrevY[i] = lfoCurY[i];
+                    lfoCurY[i] = modRng.bipolar();
+                }
             }
         }
     }
@@ -314,6 +318,10 @@ void SynthVoice::stepLfos(const SynthParams& s, double bpm, int block, double be
             ph -= std::floor(ph);
             lfoPrev[i] = lfoCur[i];
             lfoCur[i] = modRng.bipolar();
+            if (l.shape == LfoShape::walk) {
+                lfoPrevY[i] = lfoCurY[i];
+                lfoCurY[i] = modRng.bipolar();
+            }
         } else if (ph < 0)
             ph -= std::floor(ph);
         lfoPhase[i] = ph;
@@ -323,13 +331,17 @@ void SynthVoice::stepLfos(const SynthParams& s, double bpm, int block, double be
         const double dm = dst[DST_LFO1_DEPTH + i];
         const double depth = dm != 0 ? clamp01(l.depth + dm) : l.depth;
         lfoOut[i] = lfoWave(l.shape, ph, lfoCur[i], lfoPrev[i]) * depth * fade;
+        lfoOutY[i] = lfoWaveY(l.shape, ph, lfoCur[i], lfoPrev[i], lfoCurY[i], lfoPrevY[i]) * depth * fade;
         if (l.stereo > 0 && depth > 0 && isPeriodicShape(l.shape)) {
             double phR = ph + l.stereo;
             if (phR >= 1) phR -= 1;
             lfoOutR[i] = lfoWave(l.shape, phR, lfoCur[i], lfoPrev[i]) * depth * fade;
+            lfoOutYR[i] = lfoWaveY(l.shape, phR) * depth * fade;
             st = true;
-        } else
+        } else {
             lfoOutR[i] = lfoOut[i];
+            lfoOutYR[i] = lfoOutY[i];
+        }
     }
     lfoStereo = st;
 }
@@ -352,6 +364,9 @@ void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
     src[SRC_LFO1] = lfoOut[0];
     src[SRC_LFO2] = lfoOut[1];
     src[SRC_LFO3] = lfoOut[2];
+    src[SRC_LFO1Y] = lfoOutY[0];
+    src[SRC_LFO2Y] = lfoOutY[1];
+    src[SRC_LFO3Y] = lfoOutY[2];
     src[SRC_FENV] = fenv.value;
     src[SRC_PENV] = penv.value;
     src[SRC_MENV] = menv.value;
@@ -373,6 +388,9 @@ void SynthVoice::control(const VoiceParams& p, const SynthControl& c) {
         srcR[SRC_LFO1] = lfoOutR[0];
         srcR[SRC_LFO2] = lfoOutR[1];
         srcR[SRC_LFO3] = lfoOutR[2];
+        srcR[SRC_LFO1Y] = lfoOutYR[0];
+        srcR[SRC_LFO2Y] = lfoOutYR[1];
+        srcR[SRC_LFO3Y] = lfoOutYR[2];
         applyMatrix(s.mods, srcR, dstR);
         dR = dstR;
     }

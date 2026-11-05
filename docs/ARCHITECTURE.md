@@ -782,6 +782,15 @@ MIDIInput.onmidimessage ─► MidiController.handle ─► parseMidi ─► Mid
   them jump (a slow division can take up to about a cycle to lock; only forward wraps start
   a new S&H cycle); LFO-rate modulation multiplies their speed (unlocked while it is non-zero,
   then they glide back into lock). Denormal-range filter / pink state is flushed per block.
+- 2D LFOs: every Synth LFO has a second output Y (matrix sources LFO 1–3 Y; `lfoWaveY`).
+  The path shapes have their own Y — figure 8 (sin φ, sin 2φ), Lissajous 3:2 (sin 3φ,
+  sin 2φ), square path (the rectangle's edges, clockwise from (−1, −1)), random walk (X and
+  Y separate smooth randoms; the walk draws its Y value after X's at each cycle, and only it
+  does, so other shapes' random sequences are unchanged); periodic shapes give the wave a
+  quarter cycle on (sine X / Y = a circle); S&H, smooth random and the one-shots give X
+  again. Depth, fade and the stereo phase apply to Y too. The X/Y pad draws a Synth
+  oscillator's path (`lfoPath`: the LFO routes to its X / Y positions summed over one
+  period of the slowest LFO, at most 20 s; random shapes and other sources left out).
 - Modulation additions: one-shot LFO shapes rise (0 → 1) and fall (1 → 0) run one cycle
   from each note (always restarted, whatever Retrig says; no random draws) and hold their
   end — extra AD envelopes with the LFO's rate, fade and depth. The Gate source is 1 while a

@@ -1,5 +1,6 @@
 import type { AppModel } from '../app/model';
 import type { AudioBridge } from '../audio/bridge';
+import { reflect01 } from '../core/modulation';
 import { modulatedPosition, type VoiceParams } from '../core/voice';
 import type { Wavetable } from '../core/wavetable';
 import { Mix } from '../core/wavetablePlayback';
@@ -94,7 +95,12 @@ export function createVoicePad(model: AppModel, bridge: AudioBridge, id = 'voice
    * override where the dot comes from (a Synth voice's osc B: pass a voice-shaped view of
    * its source with no LFO, its live position and its mix).
    */
-  const draw = (v: VoiceParams, wt: Wavetable, hh: number, o: { pos?: { x: number; y: number; live: boolean }; mix?: (out: Mix) => Mix } = {}) => {
+  const draw = (
+    v: VoiceParams,
+    wt: Wavetable,
+    hh: number,
+    o: { pos?: { x: number; y: number; live: boolean }; mix?: (out: Mix) => Mix; path?: { span: number; at(t: number): [number, number] } | null } = {},
+  ) => {
     const [g, w, H] = fit(canvas, hh);
     const rows = rowSpan(wt, v);
     const dpr = window.devicePixelRatio || 1;
@@ -136,23 +142,35 @@ export function createVoicePad(model: AppModel, bridge: AudioBridge, id = 'voice
     g.strokeStyle = color;
     g.lineWidth = 2;
     g.strokeRect(rx + 1, ry + 1, rw - 2, rh - 2);
-    // LFO path: both LFOs over one period of the slower one (at most 20 s).
-    const span = Math.min(20, 1 / Math.max(0.02, Math.min(v.lfoRate, v.lfoRateY)));
-    g.setLineDash([3, 3]);
-    g.lineWidth = 1;
-    g.globalAlpha = 0.8;
-    g.beginPath();
-    const N = 240;
-    for (let i = 0; i <= N; i++) {
-      const t = (i / N) * span;
-      const ux = modulatedPosition(v.position, v.lfoDepth, v.lfoPhase + 2 * Math.PI * v.lfoRate * t);
-      const uy = modulatedPosition(v.positionY, v.lfoDepthY, v.lfoPhaseY + 2 * Math.PI * v.lfoRateY * t);
-      if (i) g.lineTo(px(ux, uy), py(uy));
-      else g.moveTo(px(ux, uy), py(uy));
+    // LFO path: a Synth oscillator's routed LFOs (`o.path`; null = none), else the Simple
+    // voice's two LFOs over one period of the slower one (at most 20 s).
+    if (o.path !== null) {
+      const path = o.path;
+      const span = path ? path.span : Math.min(20, 1 / Math.max(0.02, Math.min(v.lfoRate, v.lfoRateY)));
+      g.setLineDash([3, 3]);
+      g.lineWidth = 1;
+      g.globalAlpha = 0.8;
+      g.beginPath();
+      const N = path ? 480 : 240;
+      for (let i = 0; i <= N; i++) {
+        const t = (i / N) * span;
+        let ux: number;
+        let uy: number;
+        if (path) {
+          const [ox, oy] = path.at(t);
+          ux = reflect01(v.position + ox);
+          uy = reflect01(v.positionY + oy);
+        } else {
+          ux = modulatedPosition(v.position, v.lfoDepth, v.lfoPhase + 2 * Math.PI * v.lfoRate * t);
+          uy = modulatedPosition(v.positionY, v.lfoDepthY, v.lfoPhaseY + 2 * Math.PI * v.lfoRateY * t);
+        }
+        if (i) g.lineTo(px(ux, uy), py(uy));
+        else g.moveTo(px(ux, uy), py(uy));
+      }
+      g.stroke();
+      g.setLineDash([]);
+      g.globalAlpha = 1;
     }
-    g.stroke();
-    g.setLineDash([]);
-    g.globalAlpha = 1;
     // Dot: the played position (the chosen cell in Step).
     const pos = o.pos ?? voicePositions(model, bridge, v);
     let dx = px(pos.x, pos.y);

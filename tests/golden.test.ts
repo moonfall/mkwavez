@@ -19,7 +19,7 @@ import { describe, expect, it } from 'vitest';
 import { Adsr } from '../src/core/engine/adsr';
 import { emptyStatus, SynthEngine } from '../src/core/engine/engine';
 import { cutoffG, driveSample, MultiFilter, resonanceK, softLimit } from '../src/core/engine/svf';
-import { lfoWave, reflect01 } from '../src/core/modulation';
+import { lfoWave, lfoWaveY, reflect01 } from '../src/core/modulation';
 import { basicWave } from '../src/core/generators/basic';
 import { midiNoteFreq, velocityGain } from '../src/core/midi';
 import { buildMipSet, mipLevelFor } from '../src/core/mipmap';
@@ -94,6 +94,9 @@ function synthUnitCases() {
   const lw: number[] = [];
   for (const sh of LFO_SHAPES) for (const ph of [0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.99]) lw.push(lfoWave(sh, ph, 0.7, -0.3));
   record('array', 'lfoWave', lw);
+  const ly: number[] = [];
+  for (const sh of LFO_SHAPES) for (const ph of [0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.99]) ly.push(lfoWaveY(sh, ph, 0.7, -0.3, 0.4, -0.6));
+  record('array', 'lfoWaveY', ly);
   // Filters: an impulse + noise through each mode at a few settings (state carries across).
   const r = new Prng(11);
   const fo: number[] = [];
@@ -956,6 +959,53 @@ const SCENARIOS: Scenario[] = [
       [2500, OP.noteOn, 2, 67, 100], // higher: V2 moves to 67
       [3500, OP.noteOff, 2, 67], // back to 60
       [9000, OP.allNotesOff, -1],
+    ],
+  },
+  {
+    // 2D LFOs: figure 8 (X → A pos X, Y → A pos Y) on a 2D grid, a random walk (retriggered)
+    // over B's grid, a square path and a Lissajous (Y with a stereo phase → cutoff, X →
+    // level), and a sine's quarter-cycle Y; then the shapes switched while a note holds.
+    name: 'lfo2d',
+    sampleRate: 48000,
+    frames: 16000,
+    ops: [
+      ...WAVES.map((_, i): Op => [0, OP.table, i + 1, i]),
+      wavetableOp(0, 0, '2d', 'blend', [
+        [1, 2, 3],
+        [4, 5, 6],
+        [3, 1, 2],
+      ]),
+      ...[0, 8000].map((frame, k): Op =>
+        voiceOp(frame, {
+          id: 1,
+          type: 'synth',
+          windowEnd: 2,
+          windowEndY: 2,
+          position: 0.5,
+          positionY: 0.5,
+          synth: synth({
+            poly: 2,
+            b: { windowEnd: 2, windowEndY: 2, position: 0.5, positionY: 0.5 },
+            bLevel: 0.4,
+            lfos: [
+              { shape: k ? 'squarePath' : 'fig8', rate: 2.5 },
+              { shape: 'walk', rate: 6, retrig: true },
+              { shape: k ? 'sine' : 'lissajous', rate: 1.5, stereo: 0.25 },
+            ],
+            mods: [
+              { src: 'lfo1', dst: 'posA', amt: 0.4 },
+              { src: 'lfo1Y', dst: 'posYA', amt: 0.4 },
+              { src: 'lfo2', dst: 'posB', amt: 0.5 },
+              { src: 'lfo2Y', dst: 'posYB', amt: 0.5 },
+              { src: 'lfo3Y', dst: 'cutoff', amt: 0.3 },
+              { src: 'lfo3', dst: 'levelB', amt: -0.3 },
+            ],
+          }),
+        }),
+      ),
+      [20, OP.noteOn, 1, 50, 100],
+      [4000, OP.noteOn, 1, 57, 90],
+      [12000, OP.allNotesOff, -1],
     ],
   },
   {

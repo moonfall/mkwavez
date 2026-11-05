@@ -79,7 +79,8 @@ play up to 8 notes at once (or 1: monophonic, legato and glide between held note
   and unison 1–8, a warp mode — sync, formant, bend, squeeze, quantize, fold; B can
   hard-sync and FM A), sub, noise, ring; multimode ZDF filter with drive and key
   tracking; a stereo path (oscillator pan, stereo phase / position, noise width, filter
-  spread, stereo LFOs); amp / filter / pitch / mod envelopes; three LFOs (tempo-syncable)
+  spread, stereo LFOs); amp / filter / pitch / mod envelopes; three LFOs
+  (tempo-syncable; each with a second Y output and 2D path shapes)
   and an 8-slot mod matrix; glide; presets; a full knob view when the panel has room.
 - **Preview and Selection wavetables** — voices can play the Timeline selection, or the
   waveform / whole batch Generate is showing, before anything is added.

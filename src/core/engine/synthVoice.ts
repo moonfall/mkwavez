@@ -35,6 +35,7 @@ import {
   isOneShot,
   isPeriodicShape,
   lfoWave,
+  lfoWaveY,
   MOD_CUTOFF_OCTAVES,
   MOD_DETUNE_CENTS,
   MOD_LFO_RATE_OCTAVES,
@@ -409,6 +410,11 @@ export class SynthVoice {
   private dW1 = 0;
   /** The right channel's LFO outputs (an LFO's stereo phase; equal to lfoOut otherwise). */
   readonly lfoOutR = new Float64Array(LFO_COUNT);
+  /** The LFOs' second (Y) outputs, left / right, and the random walk's Y values (this / the previous cycle). */
+  readonly lfoOutY = new Float64Array(LFO_COUNT);
+  readonly lfoOutYR = new Float64Array(LFO_COUNT);
+  private readonly lfoCurY = new Float64Array(LFO_COUNT);
+  private readonly lfoPrevY = new Float64Array(LFO_COUNT);
   /** Some LFO has a stereo phase this block (the matrix is summed for the right channel too). */
   private lfoStereo = false;
   private readonly modRng: Prng;
@@ -510,6 +516,7 @@ export class SynthVoice {
           this.lfoPhase[i] = l.phase;
           this.lfoPrev[i] = this.lfoCur[i];
           this.lfoCur[i] = this.modRng.bipolar();
+          if (l.shape === 'walk') this.walkY(i);
         }
       }
     }
@@ -524,6 +531,12 @@ export class SynthVoice {
   }
 
   private blockLen = 64;
+
+  /** The random walk's next Y value (its own draw after X's; only this shape draws it). */
+  private walkY(i: number): void {
+    this.lfoPrevY[i] = this.lfoCurY[i];
+    this.lfoCurY[i] = this.modRng.bipolar();
+  }
 
   /**
    * A note's oscillator phases (phase mode Reset / Random): both oscillators' centres and
@@ -669,6 +682,7 @@ export class SynthVoice {
         ph -= Math.floor(ph);
         this.lfoPrev[i] = this.lfoCur[i];
         this.lfoCur[i] = this.modRng.bipolar();
+        if (l.shape === 'walk') this.walkY(i);
       } else if (ph < 0) ph -= Math.floor(ph); // steered back across 0: same cycle
 
       this.lfoPhase[i] = ph;
@@ -679,13 +693,18 @@ export class SynthVoice {
       const dm = this.dst[D.lfo1Depth + i];
       const depth = dm ? clamp01(l.depth + dm) : l.depth;
       this.lfoOut[i] = lfoWave(l.shape, ph, this.lfoCur[i], this.lfoPrev[i]) * depth * fade;
+      this.lfoOutY[i] = lfoWaveY(l.shape, ph, this.lfoCur[i], this.lfoPrev[i], this.lfoCurY[i], this.lfoPrevY[i]) * depth * fade;
       if (l.stereo > 0 && depth > 0 && isPeriodicShape(l.shape)) {
         // The right channel's copy runs `stereo` cycles ahead.
         let phR = ph + l.stereo;
         if (phR >= 1) phR -= 1;
         this.lfoOutR[i] = lfoWave(l.shape, phR, this.lfoCur[i], this.lfoPrev[i]) * depth * fade;
+        this.lfoOutYR[i] = lfoWaveY(l.shape, phR) * depth * fade;
         stereo = true;
-      } else this.lfoOutR[i] = this.lfoOut[i];
+      } else {
+        this.lfoOutR[i] = this.lfoOut[i];
+        this.lfoOutYR[i] = this.lfoOutY[i];
+      }
     }
     this.lfoStereo = stereo;
   }
@@ -714,6 +733,9 @@ export class SynthVoice {
     src[S.lfo1] = this.lfoOut[0];
     src[S.lfo2] = this.lfoOut[1];
     src[S.lfo3] = this.lfoOut[2];
+    src[S.lfo1Y] = this.lfoOutY[0];
+    src[S.lfo2Y] = this.lfoOutY[1];
+    src[S.lfo3Y] = this.lfoOutY[2];
     src[S.fenv] = this.fenv.value;
     src[S.penv] = this.penv.value;
     src[S.menv] = this.menv.value;
@@ -739,6 +761,9 @@ export class SynthVoice {
       sr[S.lfo1] = this.lfoOutR[0];
       sr[S.lfo2] = this.lfoOutR[1];
       sr[S.lfo3] = this.lfoOutR[2];
+      sr[S.lfo1Y] = this.lfoOutYR[0];
+      sr[S.lfo2Y] = this.lfoOutYR[1];
+      sr[S.lfo3Y] = this.lfoOutYR[2];
       applyMatrix(s.mods, sr, this.dstR);
       dR = this.dstR;
     }
