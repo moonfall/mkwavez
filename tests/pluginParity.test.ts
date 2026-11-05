@@ -3,7 +3,7 @@
  * C++ enums (plugin/core). The golden renders drive the engine by index, so a name missing
  * on the native side would pass them and silently do nothing in the plugin (as MPE Slide's
  * matrix source once did). This reads the C++ sources and checks them against src/core,
- * so it runs with the web tests on every push (the plugin build itself is on demand).
+ * without a native build (Pages runs it on every push; Plugin's golden job runs it first).
  */
 import synthJson from '../plugin/source/SynthJson.cpp?raw';
 import synthH from '../plugin/core/include/mkwavez/synth.h?raw';

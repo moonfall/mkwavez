@@ -4,9 +4,13 @@
 # WebKitGTK on Linux, WKWebView on macOS, WebView2 on Windows (SDK fetched by CMake).
 name: Plugin
 
-# On demand only: Actions → Plugin → Run workflow (pick the branch). Pushes don't start
-# it; the web app's tests (golden test included) run on every push to main in pages.yml.
+# Runs on pushes and pull requests that touch the plugin, the web app it embeds or the
+# golden test; also on demand (Actions → Plugin → Run workflow, any branch).
 on:
+  push:
+    paths: ['plugin/**', 'src/**', 'index.html', 'package*.json', 'vite.config.ts', 'tests/golden.test.ts', 'tests/pluginParity.test.ts', '.github/workflows/plugin.yml']
+  pull_request:
+    paths: ['plugin/**', 'src/**', 'index.html', 'package*.json', 'vite.config.ts', 'tests/golden.test.ts', 'tests/pluginParity.test.ts', '.github/workflows/plugin.yml']
   workflow_dispatch:
 
 concurrency:
@@ -14,7 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The TS core must still produce the golden numbers the C++ port is tested against.
+  # The TS core must still produce the golden numbers the C++ port is tested against, and
+  # the native names / enums must still match it (pluginParity).
   golden:
     runs-on: ubuntu-latest
     steps:
@@ -24,7 +29,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx vitest run tests/golden.test.ts
+      - run: npx vitest run tests/golden.test.ts tests/pluginParity.test.ts
 
   build:
     strategy:
