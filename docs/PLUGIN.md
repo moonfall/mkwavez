@@ -194,6 +194,11 @@ addressing table map) instead of Maps.
   prompt / confirm answer correctly; Session → Export writes a `.mkwz` through the native
   save path and Session → Import reads it back through the native open path (the test
   bypasses the dialogs with `MKWAVEZ_TEST_SAVE_DIR` / `MKWAVEZ_TEST_OPEN_FILE`).
+- **Names and enums** (`tests/pluginParity.test.ts`, with the web tests on every push):
+  every `SynthJson` name table (sources, destinations, LFO shapes, warps…), the C++ enums
+  the engine indexes by, the CC map keys, the automatable host parameters and every Synth
+  / LFO field, against `src/core` and `src/plugin/host.ts`. The golden renders use
+  indices, so a name missing on the native side would pass them and do nothing.
 - **Page side** (`tests/pluginHost.test.ts`, vitest with a fake JUCE backend, running
   main.ts's plugin boot): fresh / restored / unrestorable / silent native side, record
   wire format, autosave to native, transport echo suppression, automation, init values.
@@ -235,6 +240,12 @@ for the plugin; `plugin/core` stays the audio engine (and a base for hardware la
 - The sequencer follows the host's play state and tempo, not its bar position. With the
   host playing, Stop in the page can't stop it (the host transport wins).
 - Without the editor open nothing generates (generation is UI-driven, as in the browser).
+- Generate → Sample: audio files open through the native dialog (up to 256 MB) and are
+  decoded by the platform web view's Web Audio, so the formats depend on it (WebKitGTK:
+  the installed GStreamer plugins). Live input and tab capture need `getUserMedia` /
+  `getDisplayMedia`, which embedded web views may not offer; the tab then doesn't offer
+  them. Its audition player is a page `AudioContext`, which plays to the system output, not
+  through the host. Resample (an offline render of a voice) works as in the browser.
 - Undo history isn't saved (as in the browser). The plugin state holds every waveform's
   samples twice (the engine document and the session records); fine for typical sessions,
   ~75 MB at the 4096 cap. A session that can't be restored (e.g. saved by a newer

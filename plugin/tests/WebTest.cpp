@@ -191,11 +191,15 @@ int main(int argc, const char* argv[]) {
         a.render(40, [](int b, juce::MidiBuffer& m) {
             if (b == 0) m.addEvent(juce::MidiMessage::allNotesOff(1), 0);
         });
-        a.web()->evaluate("mkwavez.model.updateVoice(1, { type: 'synth', synth: { ...mkwavez.model.voice(1).synth, aUnison: 3, aSpread: 1, pan: 0.4, cutoff: 3000 } })");
+        // Matrix slot 1: MPE Slide → cutoff (the newest source: names are decoded by SynthJson).
+        a.web()->evaluate("const s1 = mkwavez.model.voice(1).synth; mkwavez.model.updateVoice(1, { type: 'synth', synth: { ...s1, aUnison: 3, aSpread: 1, pan: 0.4, cutoff: 3000, "
+                          "mods: s1.mods.map((m, i) => (i === 0 ? { src: 'slide', dst: 'cutoff', amt: 0.5 } : m)) } })");
         waitFor([&] {
             a.render(1);
             return a.doc([](const auto& d) { return !d.voices.empty() && d.voices[0].type == mkwavez::VoiceType::synth && d.voices[0].synth.aUnison == 3; });
         }, 10000, "a Synth voice set in the page reaches the engine document");
+        check(a.doc([](const auto& d) { return d.voices[0].synth.mods[0].src == mkwavez::SRC_SLIDE && d.voices[0].synth.mods[0].dst == mkwavez::DST_CUTOFF; }),
+              "its matrix route (MPE Slide → cutoff) reaches the engine");
         const auto [lr, synthRms] = a.renderStereo(60, [](int b, juce::MidiBuffer& m) {
             if (b == 0) m.addEvent(juce::MidiMessage::noteOn(1, 52, (juce::uint8) 110), 0);
         });
@@ -297,6 +301,8 @@ int main(int argc, const char* argv[]) {
         const int tables = b.doc([](const auto& d) { return (int) d.tables.size(); });
         check(b.doc([](const auto& d) { return !d.voices.empty() && d.voices[0].type == mkwavez::VoiceType::synth && d.voices[0].synth.aUnison == 3; }),
               "the restored engine (before the editor opens) has the Synth voice");
+        check(b.doc([](const auto& d) { return !d.voices.empty() && d.voices[0].synth.mods[0].src == mkwavez::SRC_SLIDE; }),
+              "and its MPE Slide matrix route (saved natively by name)");
         const auto [lr0, rms0] = b.renderStereo(60, [](int blk, juce::MidiBuffer& m) {
             if (blk == 0) m.addEvent(juce::MidiMessage::noteOn(1, 52, (juce::uint8) 110), 0);
         });

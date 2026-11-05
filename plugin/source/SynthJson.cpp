@@ -1,6 +1,7 @@
 #include "SynthJson.h"
 
 #include <cmath>
+#include <iterator>
 
 using namespace mkwavez;
 
@@ -19,11 +20,16 @@ const char* const WARP_MODES[] = {"none", "sync", "formant", "bend", "squeeze", 
 const char* const LFO_SHAPES[] = {"sine", "tri", "saw", "square", "sh", "smooth", "rise", "fall"};
 const char* const LFO_DIVS[] = {"8/1", "4/1", "2/1", "1/1", "1/2", "1/2D", "1/2T", "1/4", "1/4D", "1/4T", "1/8", "1/8D", "1/8T", "1/16", "1/16T", "1/32"};
 const char* const MOD_SOURCES[] = {"lfo1", "lfo2", "lfo3", "fenv", "penv", "menv", "vel", "wheel", "at", "key", "rand",
-                                   "macro1", "macro2", "macro3", "macro4", "gate"};
+                                   "macro1", "macro2", "macro3", "macro4", "gate", "slide"};
 const char* const MOD_DESTS[] = {"pitchA", "pitchB", "posA", "posYA", "posB", "posYB", "levelA", "levelB", "sub", "noise",
                                  "cutoff", "res", "drive", "amp", "pan", "lfo1Rate", "lfo2Rate", "lfo3Rate",
                                  "panA", "panB", "fSpread", "warpA", "warpB",
                                  "fm", "ring", "sat", "width", "detuneA", "detuneB", "lfo1Depth", "lfo2Depth", "lfo3Depth"};
+// Names by engine index: a name missing here decodes as "none" (the slot silently does
+// nothing), which the golden renders can't see (they use indices). tests/pluginParity.test.ts
+// checks every table against src/core; these check the lengths against the engine's enums.
+static_assert(std::size(MOD_SOURCES) == (size_t) N_SOURCES, "MOD_SOURCES must name every ModSource");
+static_assert(std::size(MOD_DESTS) == (size_t) N_DESTS, "MOD_DESTS must name every ModDest");
 
 template <size_t N>
 int indexOf(const char* const (&list)[N], const juce::var& v, int fallback) {
