@@ -21,16 +21,20 @@ const char* const synthLabels[SYNTH_FIELD_COUNT] = {
     "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Cutoff", "Resonance", "Filter env", "Drive", "Osc A level", "Osc B level", "Osc A warp", "Osc B warp",
     "FM B to A", "Pan", "Width", "Glide"};
 
-/** Start values per slot, as the web app's start state (src/main.ts); V4 is extra (muted). */
+/**
+ * Start values per slot. V1 is the plugin's start voice (src/app/defaultSession.ts
+ * pluginSessionState: a Synth voice, hence the Synth amp envelope); V2–V4 are as the
+ * browser's start state and only apply once the page adds those voices.
+ */
 struct SlotDefaults {
     float position, lfoDepth, lfoRate, octave;
-    bool mute;
+    bool mute, synth;
 };
 constexpr SlotDefaults slotDefaults[VOICE_SLOTS] = {
-    {0.3f, 0.6f, 0.25f, 0, false},
-    {0.75f, 0.3f, 0.11f, 1, true},
-    {0.5f, 0.9f, 1.2f, -1, true},
-    {0.5f, 0.5f, 0.25f, 0, true},
+    {0.3f, 0.6f, 0.25f, 0, false, true},
+    {0.75f, 0.3f, 0.11f, 1, true, false},
+    {0.5f, 0.9f, 1.2f, -1, true, false},
+    {0.5f, 0.5f, 0.25f, 0, true, false},
 };
 
 /** Exponential mapping (rates, times): skew so the slider centre is the geometric mean. */
@@ -125,6 +129,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
     auto group = std::make_unique<AudioProcessorParameterGroup>("global", "Global", " | ");
     group->addChild(std::make_unique<AudioParameterBool>(ParameterID{play, 1}, "Play", false));
     group->addChild(std::make_unique<AudioParameterBool>(ParameterID{hostSync, 1}, "Host sync", true));
+    // Off by default: in a DAW the voices play the host's MIDI, and the internal sequences
+    // run only from the page's Play (projects saved before this follow their Host sync).
+    group->addChild(std::make_unique<AudioParameterBool>(ParameterID{seqFollow, 1}, "Sequencer follows host", false));
     group->addChild(std::make_unique<AudioParameterFloat>(ParameterID{bpm, 1}, "BPM", NormalisableRange<float>(20, 400, 0.1f), 132.0f));
     group->addChild(std::make_unique<AudioParameterBool>(ParameterID{omni, 1}, "MIDI omni", true));
     group->addChild(std::make_unique<AudioParameterInt>(ParameterID{midiVoice, 1}, "MIDI voice", 1, VOICE_SLOTS, 1));
@@ -159,10 +166,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
         g->addChild(std::make_unique<AudioParameterInt>(id(octave), lbl(octave), -3, 3, (int) sd.octave));
         g->addChild(unit(level, (float) d.level));
         g->addChild(std::make_unique<AudioParameterBool>(id(mute), lbl(mute), sd.mute));
-        g->addChild(time(attack, 0.001f, 2, d.attack));
-        g->addChild(time(decay, 0.005f, 4, d.decay));
-        g->addChild(unit(sustain, (float) d.sustain));
-        g->addChild(time(release, 0.005f, 4, d.release));
+        const auto& amp = mkwavez::SYNTH_AMP_DEFAULTS;
+        g->addChild(time(attack, 0.001f, 2, sd.synth ? amp.attack : d.attack));
+        g->addChild(time(decay, 0.005f, 4, sd.synth ? amp.decay : d.decay));
+        g->addChild(unit(sustain, (float) (sd.synth ? amp.sustain : d.sustain)));
+        g->addChild(time(release, 0.005f, 4, sd.synth ? amp.release : d.release));
         // Synth voice params (the synth block; a Simple voice keeps them for when it becomes Synth).
         const mkwavez::SynthParams ds;
         auto sid = [&](SynthField f) { return ParameterID{synthId(s, f), 1}; };
@@ -201,6 +209,7 @@ Pointers::Pointers(juce::AudioProcessorValueTreeState& s) {
         for (int f = 0; f < SYNTH_FIELD_COUNT; ++f) synth[(size_t) slot][(size_t) f] = s.getRawParameterValue(synthId(slot, (SynthField) f));
     play = s.getRawParameterValue(params::play);
     hostSync = s.getRawParameterValue(params::hostSync);
+    seqFollow = s.getRawParameterValue(params::seqFollow);
     bpm = s.getRawParameterValue(params::bpm);
     omni = s.getRawParameterValue(params::omni);
     midiVoice = s.getRawParameterValue(params::midiVoice);

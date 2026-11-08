@@ -58,8 +58,9 @@ const maxId = (recs: Iterable<{ id: number }>) => {
 export async function restoreSession<S extends RestoreStore>(
   openStore: () => Promise<S>,
   acquireLock: () => Promise<boolean>,
+  /** The session to start when there is nothing to restore (the plugin has its own). */
+  fresh: () => SessionState = () => ({ model: defaultSessionState(), ui: {} }),
 ): Promise<Boot<S>> {
-  const fresh = (): SessionState => ({ model: defaultSessionState(), ui: {} });
   const off = (text: string): Boot<S> => ({
     state: fresh(),
     store: null,

@@ -30,6 +30,12 @@ inline constexpr double FM_DEPTH = 1.5;
 inline constexpr double FILTER_ENV_OCTAVES = 6;
 inline constexpr double FILTER_VEL_OCTAVES = 4;
 inline constexpr double FILTER_SPREAD_OCTAVES = 2;
+
+/** A new Synth voice's amp envelope (SYNTH_AMP_DEFAULTS in src/core/synth.ts). */
+struct AmpEnvelope {
+    double attack, decay, sustain, release;
+};
+inline constexpr AmpEnvelope SYNTH_AMP_DEFAULTS{0.004, 0.4, 0.7, 0.25};
 inline constexpr double CUTOFF_MIN = 20;
 inline constexpr double CUTOFF_MAX = 20000;
 

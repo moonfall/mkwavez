@@ -1,5 +1,5 @@
 import { generateBasic } from '../core/generators';
-import type { ModelState } from '../core/session';
+import type { ModelState, SessionState } from '../core/session';
 import { LAST_BATCH_WAVETABLE_ID } from '../core/wavetable';
 import { AppModel } from './model';
 
@@ -31,4 +31,31 @@ export function defaultSessionState(): ModelState {
   model.addSequence(v3.id, [0, -1, -1, -1, 0, -1, -1, -1, 3, -1, -1, -1, 2, -1, -1, -1]);
   model.select(model.timeline[0].id);
   return model.exportState();
+}
+
+/**
+ * The plugin's fresh session: the same five waveforms and one Synth voice (V1, on Last
+ * batch) that the host's MIDI plays. Its sequence is kept for the page's Play (the internal
+ * sequencer doesn't follow the host's transport by default). The UI opens on V1 with the
+ * Voice panel maximized, so it shows the Synth's full view (Restore brings back the other
+ * panels, with the Sequence panel collapsed).
+ */
+export function pluginSessionState(): ModelState {
+  const model = new AppModel();
+  model.addTables(
+    (['sine', 'tri', 'saw', 'square', 'p25'] as const).map((w) => generateBasic(w, 0)),
+    false,
+  );
+  const v1 = model.addVoice({ type: 'synth', wavetableId: LAST_BATCH_WAVETABLE_ID, windowStart: 0, windowEnd: 4, position: 0.3, lfoDepth: 0.6, lfoRate: 0.25, octave: 0 })!;
+  model.addSequence(v1.id, [0, -1, 3, -1, 4, 4, -1, 2, 0, -1, 5, 4, -1, 3, 2, -1]);
+  model.select(model.timeline[0].id);
+  return model.exportState();
+}
+
+/** UI prefs of the plugin's fresh session (layout: see ui/layout.ts LayoutState). */
+export const PLUGIN_UI_PREFS = { layoutWide: { collapsed: ['gen', 'wt', 'tl', 'seq'], max: 'voice', restore: ['seq'] } } as const;
+
+export function pluginSession(): SessionState {
+  const model = pluginSessionState();
+  return { model, ui: { ...PLUGIN_UI_PREFS, voiceId: model.voices[0]?.id ?? null } };
 }

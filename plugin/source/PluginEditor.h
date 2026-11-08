@@ -34,12 +34,12 @@ private:
     juce::LookAndFeel_V4 lnf;
 
     juce::Label title;
-    juce::ToggleButton play{"Play"}, hostSync{"Host sync"}, omni{"Omni"};
+    juce::ToggleButton play{"Play"}, hostSync{"Host sync"}, seqFollow{"Seq follows host"}, omni{"Omni"};
     juce::Slider bpm{juce::Slider::LinearBar, juce::Slider::TextBoxLeft};
     juce::Slider midiVoice{juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft};
     juce::Slider gain{juce::Slider::LinearBar, juce::Slider::TextBoxLeft};
     juce::Label bpmLabel, midiLabel, gainLabel, stepLabel;
-    std::unique_ptr<ButtonAttachment> playAtt, syncAtt, omniAtt;
+    std::unique_ptr<ButtonAttachment> playAtt, syncAtt, followAtt, omniAtt;
     std::unique_ptr<SliderAttachment> bpmAtt, midiAtt, gainAtt;
 
     std::array<juce::TextButton, params::VOICE_SLOTS> tabs;

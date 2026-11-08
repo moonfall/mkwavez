@@ -85,7 +85,8 @@ WebEditor::WebEditor(MkwavezProcessor& p) : AudioProcessorEditor(&p), proc(p), w
 
     setResizable(true, true);
     setResizeLimits(640, 480, 2880, 1800);
-    setSize(1200, 780);
+    // Wide enough for the Synth's full view in the maximized Voice panel (a fresh instance's layout).
+    setSize(1280, 800);
     startTimerHz(30);
 }
 

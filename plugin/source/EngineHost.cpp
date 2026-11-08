@@ -38,25 +38,20 @@ Document Document::makeDefault() {
     d.wavetables.push_back({0, "Timeline", PackedWavetable::fromIds(ids)});
     d.wavetables.push_back({1, "Last batch", PackedWavetable::fromIds(ids)});
 
-    // As src/main.ts; parameters (position, LFOs, level, mute, ADSR, octave) come from
-    // the plugin's parameter defaults, which match these.
+    // As src/app/defaultSession.ts pluginSessionState: one Synth voice on Last batch (the
+    // host's MIDI plays it). Position, LFOs, level, mute, ADSR and octave come from the
+    // plugin's parameter defaults for V1, which match; osc B reads the same window a
+    // quarter further on, as AppModel.addVoice sets it.
     VoiceParams v1;
     v1.id = 1;
+    v1.type = VoiceType::synth;
     v1.wavetableId = 1;
     v1.windowEnd = 4;
-    VoiceParams v2;
-    v2.id = 2;
-    v2.windowStart = 1;
-    v2.windowEnd = 4;
-    v2.lfoPhase = 1.5;
-    VoiceParams v3;
-    v3.id = 3;
-    v3.windowEnd = 2;
-    v3.lfoPhase = 3;
-    VoiceParams v4;
-    v4.id = 4;
-    v4.windowEnd = 4;
-    d.voices = {v1, v2, v3, v4};
+    v1.position = 0.3;
+    v1.synth.b.wavetableId = 1;
+    v1.synth.b.windowEnd = 4;
+    v1.synth.b.position = 0.55;
+    d.voices = {v1};
 
     auto seq = [](int32_t id, int32_t voice, std::vector<int> steps) {
         SequenceData s;
@@ -66,11 +61,8 @@ Document Document::makeDefault() {
         for (size_t i = 0; i < steps.size(); ++i) s.steps[i] = (int8_t) steps[i];
         return s;
     };
-    d.sequences = {
-        seq(1, 1, {0, -1, 3, -1, 4, 4, -1, 2, 0, -1, 5, 4, -1, 3, 2, -1}),
-        seq(2, 2, {-1, -1, 7, -1, -1, 5, -1, -1, -1, -1, 6, -1, 4, -1, -1, -1}),
-        seq(3, 3, {0, -1, -1, -1, 0, -1, -1, -1, 3, -1, -1, -1, 2, -1, -1, -1}),
-    };
+    // Kept for the page's Play (the sequencer doesn't follow the host's transport by default).
+    d.sequences = {seq(1, 1, {0, -1, 3, -1, 4, 4, -1, 2, 0, -1, 5, 4, -1, 3, 2, -1})};
     return d;
 }
 

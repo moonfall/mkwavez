@@ -13,6 +13,7 @@ import {
   packSessionFile,
   SessionError,
   unpackSessionFile,
+  type ModelState,
 } from '../core/session';
 import type { UiContext } from './context';
 import { h, icon } from './dom';
@@ -130,7 +131,7 @@ export function buildSessionMenu(ctx: UiContext, saver: Autosaver, hooks: Sessio
         'Start a new session?\n\nThis clears the current waveforms, wavetables, voices and sequences, and the autosaved copy (export first to keep them).',
       );
       if (!ok) return;
-      const state = defaultSessionState();
+      const state = freshModel();
       await saver.replace({ model: state, ui: { ...ui.exportPrefs(), voiceId: state.voices[0]?.id ?? null } }, applyUi);
     },
   };
@@ -235,6 +236,12 @@ export interface FileHost {
 }
 
 let fileHost: FileHost | null = null;
+let freshModel: () => ModelState = defaultSessionState;
+
+/** What Session → New starts (the plugin starts its own default: one Synth voice). */
+export function setDefaultSession(fn: () => ModelState): void {
+  freshModel = fn;
+}
 
 /** Inside the plugin: native save / open dialogs (embedded web views don't all do downloads). */
 export function setFileHost(h: FileHost): void {

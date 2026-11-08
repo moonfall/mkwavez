@@ -131,9 +131,16 @@ src/plugin/host.ts          plugin mode: PluginSessionStore (the session backend
   parameters each (13 voice fields, 16 Synth: the macros first); the page's voice edits set them, and automation flows back to the
   page's model (polled at 30 Hz, so nothing touches the web view from the audio thread).
   The init message carries the current values, so automation made while the editor was
-  closed wins over the saved project. Play / BPM work the same way; with Host sync the
-  sequencer follows the host's play state and tempo and the page shows the effective
-  transport. MIDI comes from the host: the native router applies it at the sample offset;
+  closed wins over the saved project. Play / BPM work the same way.
+- **Driven by the host's MIDI.** A fresh instance starts with one Synth voice (V1) that the
+  host's MIDI plays, in the Synth's full view: the Voice panel starts maximized (the editor
+  opens at 1280 × 800, wide enough for it), and its Restore button brings the other panels
+  back with the Sequence panel collapsed. The internal sequencer doesn't follow the host's transport unless
+  **Sequencer follows host** is on (off by default): it runs from the page's Play. **Host
+  sync** (on by default) makes the tempo follow the host (tempo-synced LFOs, and the
+  sequencer when it runs); the page shows the effective transport. Projects saved before
+  *Sequencer follows host* existed keep their old behaviour (it follows Host sync).
+  Session → New in the plugin starts the same one-voice session. MIDI comes from the host: the native router applies it at the sample offset;
   the page's MIDI panel shows "Host MIDI", and its settings (on / off, Omni, MPE, CC map; saved
   in the project) drive the native router; controller messages come back to the page for
   learn, the LED and the sliders.
@@ -144,7 +151,8 @@ src/plugin/host.ts          plugin mode: PluginSessionStore (the session backend
 | AudioWorklet + `audio/protocol.ts` | `WebLink` → `EngineHost` → lock-free SPSC → `SynthEngine` |
 | GC keeps a removed table alive while a voice fades it out | the engine retires pointers (`popRetired`) only once no voice plays them; `EngineHost::housekeeping` frees them |
 | Web MIDI (render-quantum jitter) | host MIDI, applied at its sample offset |
-| BPM / Play | host tempo / play state (Host sync) or the Play / BPM parameters |
+| BPM / Play | host tempo (Host sync) or the BPM parameter; the sequencer runs from Play, or with the host's transport when *Sequencer follows host* is on (off by default: MIDI plays the voices) |
+| start session: three Simple voices, each with a sequence | one Synth voice (Voice panel maximized, full view) played by the host's MIDI, its sequence kept for Play |
 | localStorage MIDI settings | saved with the plugin state |
 | IndexedDB autosave (one tab owns it) | the same autosave into the plugin state (one page per instance) |
 | `confirm()` / `prompt()` | an in-page dialog (`ui/dialogs.ts`): macOS WKWebView under JUCE answers them with false / null |
@@ -182,10 +190,14 @@ addressing table map) instead of Maps.
   bounds, SPSC ordering under a concurrent producer, MIDI routing / CC map cases.
 - **Host test** — the built VST3 through JUCE's VST3 host: instrument + MIDI, silent
   until played, note sounds / releases, note-on at its sample offset, block sizes 1–4096,
-  sample rates 22.05–96 kHz, a parameter (mute) takes effect, state round-trip renders
+  sample rates 22.05–96 kHz, a parameter (mute) takes effect; with the host's transport
+  playing the internal sequences stay silent and its MIDI plays the voice, until
+  *Sequencer follows host* is turned on (and off again); state round-trip renders
   identical samples, garbage state ignored, editor opens (under xvfb in CI).
 - **Web view, end to end** (`tests/WebTest.cpp`, Linux / WebKitGTK under xvfb): a fresh
-  instance's page syncs its start state into the native document and saves its project;
+  instance's page syncs its start state (one Synth voice, the Voice panel maximized in the
+  full view; Restore brings the other panels back) into the native document and saves its
+  project; older projects take *Sequencer follows host* from their Host sync;
   Seed → Add batch clicked in the page reaches the engine; host automation of a voice
   parameter reaches the page's model and saved project; the saved state restores in a new
   instance (same timeline, voice parameters, no tables re-sent) and an add there is saved
@@ -239,8 +251,10 @@ for the plugin; `plugin/core` stays the audio engine (and a base for hardware la
   can't be automated). Window, wavetable and interpolation aren't parameters.
 - Mapped MIDI CCs patch the engine voice at once and the page's model a frame later; the
   host parameter for that field follows only via the page (editor open).
-- The sequencer follows the host's play state and tempo, not its bar position. With the
-  host playing, Stop in the page can't stop it (the host transport wins).
+- With *Sequencer follows host* on, the sequencer follows the host's play state and tempo,
+  not its bar position, and with the host playing Stop in the page can't stop it (the host
+  transport wins). Tempo-synced LFOs lock their phase to the sequencer's clock only while it
+  runs; otherwise they run free at the host's tempo (as in the browser while stopped).
 - Without the editor open nothing generates (generation is UI-driven, as in the browser).
 - Generate → Sample: audio files open through the native dialog (up to 256 MB) and are
   decoded by the platform web view's Web Audio, so the formats depend on it (WebKitGTK:

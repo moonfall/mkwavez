@@ -63,6 +63,23 @@ std::unique_ptr<juce::AudioPluginInstance> load(juce::AudioPluginFormatManager& 
     return p;
 }
 
+/** A host transport: playing at 120 BPM (what a DAW reports while its transport runs). */
+struct HostPlayHead : juce::AudioPlayHead {
+    bool playing = true;
+    juce::Optional<PositionInfo> getPosition() const override {
+        PositionInfo info;
+        info.setIsPlaying(playing);
+        info.setBpm(120.0);
+        return info;
+    }
+};
+
+juce::AudioProcessorParameter* paramNamed(juce::AudioPluginInstance& p, const juce::String& name) {
+    for (auto* prm : p.getParameters())
+        if (prm->getName(64) == name) return prm;
+    return nullptr;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -151,11 +168,41 @@ int main(int argc, char** argv) {
     }
     check(synthParams == 5, "Synth voice parameters (macros, cutoff, warp, glide) per slot");
 
+    // Transport: by default the host's play button doesn't run the internal sequences (the
+    // start state has one on V1, audible from its first step); the host's MIDI plays the voices.
+    // The play head outlives the instances that point at it; stopped, it is like no transport.
+    static HostPlayHead head;
+    {
+        render(*p, 48000, 512, {}); // the previous note's release dies away
+        head.playing = true;
+        p->setPlayHead(&head);
+        auto* follow = paramNamed(*p, "Sequencer follows host");
+        check(follow != nullptr && follow->getValue() < 0.5f, "\"Sequencer follows host\" exists and is off by default");
+        const auto idle = render(*p, 24000, 512, {});
+        check(idle.finite && idle.rms < 1e-6, "host playing, no MIDI: the internal sequences stay silent (rms " + juce::String(idle.rms, 6) + ")");
+        const auto played = render(*p, 24000, 512, {{0, juce::MidiMessage::noteOn(1, 57, (juce::uint8) 100)}, {12000, juce::MidiMessage::noteOff(1, 57)}});
+        check(rmsOf(played.audio, 2000, 11000) > 0.01, "host playing: its MIDI plays the voice");
+        render(*p, 24000, 512, {});
+        if (follow) {
+            follow->setValueNotifyingHost(1.0f);
+            const auto seq = render(*p, 24000, 512, {});
+            check(seq.rms > 1e-3, "with \"Sequencer follows host\" on, the host's transport runs the sequences (rms " + juce::String(seq.rms, 4) + ")");
+            follow->setValueNotifyingHost(0.0f);
+            render(*p, 2400, 512, {});
+            const auto stopped = render(*p, 48000, 512, {});
+            check(rmsOf(stopped.audio, 36000, 48000) < 1e-5, "turned off again, the sequences stop");
+        }
+        head.playing = false;
+    }
+
     // State round-trip: change parameters, save, restore into a fresh instance, compare output.
     for (auto* prm : p->getParameters()) {
         if (prm->getName(64) == "V1 Position X") prm->setValueNotifyingHost(0.9f);
         if (prm->getName(64) == "V1 Macro 2") prm->setValueNotifyingHost(0.6f);
     }
+    // JUCE's VST3 host hands these changes to the plugin with the next process call (as a
+    // DAW's running engine does) once the instance has played; render one block first.
+    render(*p, 512, 512, {});
     juce::MemoryBlock state;
     p->getStateInformation(state);
     check(state.getSize() > 5 * 2048 * 4, "state holds the tables (" + juce::String((int) state.getSize()) + " bytes)");
@@ -181,6 +228,8 @@ int main(int argc, char** argv) {
         for (auto* prm : q->getParameters())
             if (prm->getName(64) == "V1 Macro 2") qmacro = prm->getValue();
         check(std::abs(qmacro - 0.6f) < 1e-4f, "synth parameter restored");
+        auto* fq = paramNamed(*q, "Sequencer follows host");
+        check(fq != nullptr && fq->getValue() < 0.5f, "\"Sequencer follows host\" restored (off, with Host sync on)");
         // Garbage state is ignored.
         const char junk[] = "not a state";
         q->setStateInformation(junk, sizeof junk);

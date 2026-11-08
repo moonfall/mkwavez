@@ -18,7 +18,8 @@ import { buildGenerate } from './ui/generate';
 import { layout } from './ui/layout';
 import { buildMidi } from './ui/midi';
 import { buildSequences } from './ui/sequences';
-import { buildSessionMenu, downloadBytes, setFileHost, showNotice, stamp, type SessionHooks } from './ui/session';
+import { buildSessionMenu, downloadBytes, setDefaultSession, setFileHost, showNotice, stamp, type SessionHooks } from './ui/session';
+import { pluginSession, pluginSessionState } from './app/defaultSession';
 import { installShortcuts } from './ui/shortcuts';
 import { buildTimeline } from './ui/timeline';
 import { buildTransport, togglePlay } from './ui/transport';
@@ -39,6 +40,8 @@ if (plugin) {
   // native save / open dialogs.
   setDialogHost(pageDialogs());
   setFileHost(plugin.files);
+  // A fresh plugin instance (and Session → New in it): one Synth voice, opened in full.
+  setDefaultSession(pluginSessionState);
   plugin.onFileMessage = (text) => showNotice(text);
 }
 // Dark by default; an explicit choice (theme toggle) is remembered.
@@ -50,7 +53,7 @@ setTheme(storedTheme() ?? 'dark', false);
 const lock = new TabLock();
 if (plugin) await plugin.connect();
 const boot = plugin
-  ? await restoreSession(() => Promise.resolve(plugin.session), () => Promise.resolve(true))
+  ? await restoreSession(() => Promise.resolve(plugin.session), () => Promise.resolve(true), pluginSession)
   : await restoreSession(() => SessionStore.open(), () => lock.acquire());
 model.loadState(boot.state.model);
 ctx.ui.loadPrefs(boot.state.ui);

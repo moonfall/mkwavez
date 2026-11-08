@@ -26,9 +26,10 @@ MkwavezEditor::MkwavezEditor(MkwavezProcessor& p) : AudioProcessorEditor(&p), pr
     styleLabel(title, "mkwavez", 18.0f, theme::text);
     addAndMakeVisible(title);
 
-    for (auto* b : {&play, &hostSync, &omni}) addAndMakeVisible(*b);
+    for (auto* b : {&play, &hostSync, &seqFollow, &omni}) addAndMakeVisible(*b);
     playAtt = std::make_unique<ButtonAttachment>(s, params::play, play);
     syncAtt = std::make_unique<ButtonAttachment>(s, params::hostSync, hostSync);
+    followAtt = std::make_unique<ButtonAttachment>(s, params::seqFollow, seqFollow);
     omniAtt = std::make_unique<ButtonAttachment>(s, params::omni, omni);
 
     styleLabel(bpmLabel, "BPM");
@@ -81,7 +82,7 @@ MkwavezEditor::MkwavezEditor(MkwavezProcessor& p) : AudioProcessorEditor(&p), pr
     selectVoice(0);
     setResizable(true, true);
     setResizeLimits(720, 480, 1600, 1100);
-    setSize(900, 580);
+    setSize(1000, 580);
     startTimerHz(30);
 }
 
@@ -127,6 +128,7 @@ void MkwavezEditor::resized() {
     top.removeFromRight(8);
     play.setBounds(top.removeFromLeft(64));
     hostSync.setBounds(top.removeFromLeft(96));
+    seqFollow.setBounds(top.removeFromLeft(130));
     bpmLabel.setBounds(top.removeFromLeft(32));
     bpm.setBounds(top.removeFromLeft(100).reduced(0, 3));
     top.removeFromLeft(10);

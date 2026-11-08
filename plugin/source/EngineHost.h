@@ -39,7 +39,7 @@ struct Document {
     const WavetableData* wavetable(WavetableId id) const;
     const VoiceParams* voice(int32_t id) const;
 
-    /** The web app's start state: five basic tables, Timeline + Last batch, four voices (V1 unmuted), three sequences. */
+    /** The plugin's start state (src/app/defaultSession.ts pluginSessionState): five basic tables, Timeline + Last batch, one Synth voice, its sequence. */
     static Document makeDefault();
 };
 

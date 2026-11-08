@@ -7,7 +7,7 @@ import { NATIVE_EVENT, NativePort, type JuceBackend } from '../src/audio/nativeP
 import { DEFAULT_PERLIN, generatePerlin } from '../src/core/generators';
 import { encodeMeta, encodeWaveforms } from '../src/core/session';
 import { decodeRecord, encodeRecord, PluginHost } from '../src/plugin/host';
-import { defaultSessionState } from '../src/app/defaultSession';
+import { defaultSessionState, pluginSession } from '../src/app/defaultSession';
 
 /** A stand-in for JUCE's backend: records what the page sends, lets the test answer. */
 class FakeBackend implements JuceBackend {
@@ -46,7 +46,7 @@ async function boot(answer: (b: FakeBackend) => void) {
   const bridge = new AudioBridge(model, port);
   const host = new PluginHost(model, bridge, port);
   await host.connect();
-  const b = await restoreSession(() => Promise.resolve(host.session), () => Promise.resolve(true));
+  const b = await restoreSession(() => Promise.resolve(host.session), () => Promise.resolve(true), pluginSession);
   model.loadState(b.state.model);
   await host.start(b.restored);
   const saver = new Autosaver(model, () => ({}), b.store, immediate, { delay: 0, maxWait: 0 });
@@ -66,8 +66,9 @@ async function until(cond: () => boolean, ms = 2000): Promise<void> {
 afterEach(() => vi.useRealTimers());
 
 describe('PluginHost (plugin mode)', () => {
-  it('fresh instance: default session, every table sent raw, session autosaved to native', async () => {
-    const { backend, model, boot: b } = await boot((x) => x.reply({ type: 'init', meta: null, records: 0, sampleRate: 44100, engine: { tables: [1, 2, 3, 4, 5], wavetables: [0, 1], voices: [1, 2, 3, 4], sequences: [1, 2, 3] } }));
+  it("fresh instance: the plugin's default session, every table sent raw, session autosaved to native", async () => {
+    // The native start state (EngineHost makeDefault): 5 tables, one voice, its sequence.
+    const { backend, model, boot: b } = await boot((x) => x.reply({ type: 'init', meta: null, records: 0, sampleRate: 44100, engine: { tables: [1, 2, 3, 4, 5], wavetables: [0, 1], voices: [1], sequences: [1] } }));
     // The autosave (debounce 0 + idle callbacks) lands asynchronously: wait for its commit.
     await until(() => backend.sent.some((m) => m.type === 'session/commit'));
     await flush();
@@ -79,7 +80,13 @@ describe('PluginHost (plugin mode)', () => {
     expect(typeof added[0].data).toBe('string');
     const order = ops.map((o) => o.type);
     expect(order.indexOf('tables/addData')).toBeLessThan(order.indexOf('wavetable/set'));
-    expect(ops.some((o) => o.type === 'voice/remove' && o.id === 4)).toBe(true); // the engine's extra voice goes
+    // One Synth voice (and its sequence), as the native start state: nothing to remove.
+    expect(model.voices.map((v) => v.type)).toEqual(['synth']);
+    expect(model.sequences).toHaveLength(1);
+    expect(order).not.toContain('voice/remove');
+    expect(order).not.toContain('sequence/remove');
+    const v1 = ops.filter((o) => o.type === 'voice/set').map((o) => o.voice as { id: number; type: string }).find((v) => v.id === 1);
+    expect(v1?.type).toBe('synth');
     expect(order).not.toContain('tables/add'); // never mip sets
     const commits = backend.sent.filter((m) => m.type === 'session/commit');
     expect(commits.length).toBeGreaterThan(0);
@@ -159,9 +166,9 @@ describe('PluginHost (plugin mode)', () => {
   });
 
   it('applies the host parameter values sent with init over the saved session', async () => {
-    const { model } = await boot((x) => x.reply({ type: 'init', meta: null, records: 0, voices: [{ id: 2, patch: { position: 0.123, mute: false } }] }));
-    expect(model.voice(2)!.position).toBeCloseTo(0.123, 6);
-    expect(model.voice(2)!.mute).toBe(false);
+    const { model } = await boot((x) => x.reply({ type: 'init', meta: null, records: 0, voices: [{ id: 1, patch: { position: 0.123, mute: true } }] }));
+    expect(model.voice(1)!.position).toBeCloseTo(0.123, 6);
+    expect(model.voice(1)!.mute).toBe(true);
   });
 
   it('starts fresh if the native side never answers', async () => {

@@ -15,7 +15,7 @@ import hostTs from '../src/plugin/host.ts?raw';
 import { describe, expect, it } from 'vitest';
 import { CC_PARAMS } from '../src/core/midi';
 import { DEFAULT_LFO, LFO_DIVS, LFO_SHAPES, MOD_DESTS, MOD_SOURCES } from '../src/core/modulation';
-import { DEFAULT_SYNTH, FILTER_MODES, NOISE_TYPES, NOTE_PRIORITIES, PHASE_MODES, PITCH_TARGETS, SUB_WAVES, VOICE_TYPES, WARP_MODES } from '../src/core/synth';
+import { DEFAULT_SYNTH, SYNTH_AMP_DEFAULTS, FILTER_MODES, NOISE_TYPES, NOTE_PRIORITIES, PHASE_MODES, PITCH_TARGETS, SUB_WAVES, VOICE_TYPES, WARP_MODES } from '../src/core/synth';
 
 const headers = [synthH, modulationH, voiceH].join('\n');
 
@@ -89,6 +89,11 @@ describe('plugin parity (C++ names and enums vs src/core)', () => {
     expect(listAfter(parametersCpp, 'const char* const fieldIds[VOICE_FIELD_COUNT] =')).toEqual(listAfter(hostTs, 'const AUTOMATED = new Set<string>('));
     expect(listAfter(parametersCpp, 'const char* const synthIds[SYNTH_FIELD_COUNT] =')).toEqual(listAfter(hostTs, 'const SYNTH_AUTOMATED = new Set<string>('));
     for (const k of listAfter(parametersCpp, 'const char* const synthIds[SYNTH_FIELD_COUNT] =')) expect(Object.keys(DEFAULT_SYNTH)).toContain(k);
+  });
+
+  it("a new Synth voice's amp envelope matches (the plugin's start voice and V1's parameter defaults)", () => {
+    const m = /SYNTH_AMP_DEFAULTS\{([^}]*)\}/.exec(synthH);
+    expect(m?.[1].split(',').map(Number)).toEqual([SYNTH_AMP_DEFAULTS.attack, SYNTH_AMP_DEFAULTS.decay, SYNTH_AMP_DEFAULTS.sustain, SYNTH_AMP_DEFAULTS.release]);
   });
 
   it('SynthJson reads and writes every Synth and LFO field', () => {

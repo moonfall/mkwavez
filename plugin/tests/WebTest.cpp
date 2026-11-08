@@ -140,6 +140,34 @@ int main(int argc, const char* argv[]) {
     juce::String savedProject;
 
     {
+        // Projects saved before "Sequencer follows host" existed take it from their Host sync
+        // (on = the sequencer ran with the host, as it did then); current ones keep their own.
+        const auto restoredFollow = [](bool dropIt, bool hostSync) {
+            std::unique_ptr<MkwavezProcessor> src(dynamic_cast<MkwavezProcessor*>(createPluginFilter()));
+            juce::MemoryBlock st;
+            src->getStateInformation(st);
+            auto root = juce::ValueTree::readFromData(st.getData(), st.getSize());
+            for (auto ch : root) {
+                const auto follow = ch.getChildWithProperty("id", params::seqFollow);
+                if (!follow.isValid()) continue;
+                if (dropIt) ch.removeChild(follow, nullptr);
+                ch.getChildWithProperty("id", params::hostSync).setProperty("value", hostSync ? 1.0 : 0.0, nullptr);
+            }
+            juce::MemoryBlock edited;
+            {
+                juce::MemoryOutputStream os(edited, false);
+                root.writeToStream(os);
+            }
+            std::unique_ptr<MkwavezProcessor> dst(dynamic_cast<MkwavezProcessor*>(createPluginFilter()));
+            dst->setStateInformation(edited.getData(), (int) edited.getSize());
+            return dst->parameters().getRawParameterValue(params::seqFollow)->load() >= 0.5f;
+        };
+        check(restoredFollow(true, true), "a project saved before \"Sequencer follows host\", with Host sync on, follows the host");
+        check(!restoredFollow(true, false), "one with Host sync off doesn't");
+        check(!restoredFollow(false, true), "a current project keeps its own setting (off, with Host sync on)");
+    }
+
+    {
         Instance a;
         a.openEditor();
         check(a.web() != nullptr, "editor is the web view editor");
@@ -150,13 +178,35 @@ int main(int argc, const char* argv[]) {
         // 1. The page connects and syncs its start state.
         waitFor([&] { return a.web()->link().connected() && metaOf(*a.proc).isNotEmpty(); }, 30000, "page connected and autosaved its session");
         // Timeline, Last batch, Batches, Grid, Selection, Preview, Preview batch.
-        waitFor([&] { a.render(2); return a.doc([](const auto& d) { return d.wavetables.size() == 7 && d.voices.size() == 3; }); }, 10000,
-                "native document has the page's 7 built-in wavetables and 3 voices");
+        waitFor([&] { a.render(2); return a.doc([](const auto& d) { return d.wavetables.size() == 7 && d.voices.size() == 1; }); }, 10000,
+                "native document has the page's 7 built-in wavetables and its one voice");
+        check(a.doc([](const auto& d) { return d.voices[0].type == mkwavez::VoiceType::synth && !d.voices[0].mute; }), "the plugin starts with one (unmuted) Synth voice");
         check(a.doc([](const auto& d) { return (int) d.tables.size(); }) == 5, "5 start tables");
-        check(a.doc([](const auto& d) { return (int) d.sequences.size(); }) == 3, "3 sequences");
+        check(a.doc([](const auto& d) { return (int) d.sequences.size(); }) == 1, "its sequence (for the page's Play)");
         const auto meta = juce::JSON::parse(metaOf(*a.proc));
         check(meta.getProperty("format", {}).toString() == "mkwavez-session", "session meta saved");
         check(recordsOf(*a.proc) == 5, "5 waveform records saved (" + juce::String(recordsOf(*a.proc)) + ")");
+        // The Voice panel starts maximized, showing the Synth's full view.
+        {
+            juce::String view;
+            waitFor([&] {
+                view = "<pending>";
+                a.web()->evaluate("(document.getElementById('synth-panel') || {dataset: {}}).dataset.view || 'none'",
+                                  [&](juce::WebBrowserComponent::EvaluationResult r) { view = r.getResult() ? r.getResult()->toString() : juce::String("<error>"); });
+                waitFor([&] { return view != "<pending>"; }, 5000, {});
+                return view == "full";
+            }, 10000, "the Voice panel opens the Synth voice in its full view");
+            std::printf("     synth panel view: %s\n", view.toRawUTF8());
+            // Restore (as the panel's button): the other panels come back for the steps below.
+            a.web()->evaluate("mkwavez.layout.maximize('voice')");
+            waitFor([&] {
+                view = "<pending>";
+                a.web()->evaluate("document.querySelector('section.panel[data-panel=gen]').classList.contains('collapsed') ? 'collapsed' : 'open'",
+                                  [&](juce::WebBrowserComponent::EvaluationResult r) { view = r.getResult() ? r.getResult()->toString() : juce::String("<error>"); });
+                waitFor([&] { return view != "<pending>"; }, 5000, {});
+                return view == "open";
+            }, 5000, "Restore brings the Generate panel back");
+        }
 
         // 2. Generate in the page: Seed → Add batch (default N).
         a.web()->evaluate("document.getElementById('seed-add-batch').click()");
@@ -325,7 +375,7 @@ int main(int argc, const char* argv[]) {
         b.editor->addToDesktop(0);
         waitFor([&] { return b.web()->link().connected() && b.web()->link().handled() >= 3; }, 30000, "restored page connected");
         // The restored page's first sync reaches the engine (its model = the saved session).
-        waitFor([&] { b.render(1); return b.web()->link().handled() >= 2 && b.doc([](const auto& d) { return d.voices.size() == 3; }); }, 10000,
+        waitFor([&] { b.render(1); return b.web()->link().handled() >= 2 && b.doc([](const auto& d) { return d.voices.size() == 1; }); }, 10000,
                 "restored page synced");
         b.render(4);
         const auto p0 = juce::JSON::parse(savedProject);

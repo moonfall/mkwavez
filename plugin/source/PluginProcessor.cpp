@@ -1,5 +1,7 @@
 #include "PluginProcessor.h"
 
+#include <optional>
+
 #include "PluginEditor.h"
 #include "State.h"
 #if MKWAVEZ_WEBVIEW
@@ -80,8 +82,12 @@ void MkwavezProcessor::applyTransport(SynthEngine& e) {
             if (const auto b = pos->getBpm()) hostBpm = *b;
         }
     }
+    // Host sync: the tempo follows the host. The internal sequencer runs from Play, and with
+    // the host's transport only when "Sequencer follows host" is on (off by default: the
+    // voices play the host's MIDI).
     const bool sync = ptr.hostSync->load() >= 0.5f;
-    const bool playing = ptr.play->load() >= 0.5f || (sync && hostPlaying);
+    const bool follow = ptr.seqFollow->load() >= 0.5f;
+    const bool playing = ptr.play->load() >= 0.5f || (follow && hostPlaying);
     const double bpm = sync && hostBpm > 0 ? hostBpm : (double) ptr.bpm->load();
     if (playing != lastPlaying || std::abs(bpm - lastBpm) > 1e-9) {
         e.setTransport(playing, bpm);
@@ -206,7 +212,17 @@ void MkwavezProcessor::setStateInformation(const void* data, int sizeInBytes) {
     const auto root = juce::ValueTree::readFromData(data, (size_t) sizeInBytes);
     if (!root.hasType("mkwavez")) return;
     const auto saved = root.getChildWithName(apvts.state.getType());
+    // Projects saved before "Sequencer follows host" existed ran the sequencer with the host
+    // whenever Host sync was on (its default): keep that. Read before replaceState, which
+    // adopts `saved` as the parameter tree and adds the missing parameters to it.
+    std::optional<bool> legacyFollow;
+    if (saved.isValid() && !saved.getChildWithProperty("id", params::seqFollow).isValid()) {
+        const auto hs = saved.getChildWithProperty("id", params::hostSync);
+        legacyFollow = !hs.isValid() || (double) hs.getProperty("value", 1.0) >= 0.5;
+    }
     if (saved.isValid()) apvts.replaceState(saved);
+    if (legacyFollow)
+        if (auto* prm = apvts.getParameter(params::seqFollow)) prm->setValueNotifyingHost(*legacyFollow ? 1.0f : 0.0f);
     Document doc;
     const bool ok = state::fromValueTree(root.getChildWithName("document"), doc);
     if (ok) {

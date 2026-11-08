@@ -32,8 +32,9 @@ juce::String voiceLabel(VoiceField f);
 juce::String synthId(int slot, SynthField f);
 
 // Global parameter ids.
-inline const juce::String play = "play";          // run the sequencer (standalone / without host transport)
-inline const juce::String hostSync = "hostSync";  // follow the host's play state and tempo
+inline const juce::String play = "play";          // run the sequencer (the page's Play button)
+inline const juce::String hostSync = "hostSync";  // tempo follows the host
+inline const juce::String seqFollow = "seqFollow";// the sequencer also starts / stops with the host's transport
 inline const juce::String bpm = "bpm";            // tempo when not synced (or the host has none)
 inline const juce::String omni = "omni";          // MIDI: every channel → midiVoice; off: channel N → voice N
 inline const juce::String midiVoice = "midiVoice";// 1..VOICE_SLOTS
@@ -47,6 +48,7 @@ struct Pointers {
     std::array<std::array<std::atomic<float>*, SYNTH_FIELD_COUNT>, VOICE_SLOTS> synth{};
     std::atomic<float>* play = nullptr;
     std::atomic<float>* hostSync = nullptr;
+    std::atomic<float>* seqFollow = nullptr;
     std::atomic<float>* bpm = nullptr;
     std::atomic<float>* omni = nullptr;
     std::atomic<float>* midiVoice = nullptr;
