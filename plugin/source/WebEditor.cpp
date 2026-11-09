@@ -85,8 +85,10 @@ WebEditor::WebEditor(MkwavezProcessor& p) : AudioProcessorEditor(&p), proc(p), w
 
     setResizable(true, true);
     setResizeLimits(640, 480, 2880, 1800);
-    // Wide enough for the Synth's full view in the maximized Voice panel (a fresh instance's layout).
-    setSize(1280, 800);
+    // A fresh instance's layout (Generate, Timeline and Voice open) shows the Synth's full view
+    // at this size: every control (values under the knobs from about 1360–1500 wide, by the
+    // web view's fonts; on hover below that). Fits a 1440 × 900 screen.
+    setSize(1400, 880);
     startTimerHz(30);
 }
 

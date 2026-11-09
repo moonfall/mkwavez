@@ -36,9 +36,9 @@ export function defaultSessionState(): ModelState {
 /**
  * The plugin's fresh session: the same five waveforms and one Synth voice (V1, on Last
  * batch) that the host's MIDI plays. Its sequence is kept for the page's Play (the internal
- * sequencer doesn't follow the host's transport by default). The UI opens on V1 with the
- * Voice panel maximized, so it shows the Synth's full view (Restore brings back the other
- * panels, with the Sequence panel collapsed).
+ * sequencer doesn't follow the host's transport by default). The UI opens on V1 with
+ * Generate, Timeline and Voice open (Wavetables and Sequence collapsed); the plugin window's
+ * default size gives the Voice panel room for the Synth's full view.
  */
 export function pluginSessionState(): ModelState {
   const model = new AppModel();
@@ -53,7 +53,7 @@ export function pluginSessionState(): ModelState {
 }
 
 /** UI prefs of the plugin's fresh session (layout: see ui/layout.ts LayoutState). */
-export const PLUGIN_UI_PREFS = { layoutWide: { collapsed: ['gen', 'wt', 'tl', 'seq'], max: 'voice', restore: ['seq'] } } as const;
+export const PLUGIN_UI_PREFS = { layoutWide: { collapsed: ['wt', 'seq'], max: null, restore: null } } as const;
 
 export function pluginSession(): SessionState {
   const model = pluginSessionState();

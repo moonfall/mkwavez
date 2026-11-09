@@ -142,9 +142,11 @@ src/plugin/host.ts          plugin mode: PluginSessionStore (the session backend
   The init message carries the current values, so automation made while the editor was
   closed wins over the saved project. Play / BPM work the same way.
 - **Driven by the host's MIDI.** A fresh instance starts with one Synth voice (V1) that the
-  host's MIDI plays, in the Synth's full view: the Voice panel starts maximized (the editor
-  opens at 1280 × 800, wide enough for it), and its Restore button brings the other panels
-  back with the Sequence panel collapsed. The internal sequencer doesn't follow the host's transport unless
+  host's MIDI plays. Generate, Timeline and Voice start open (Wavetables and Sequence
+  collapsed), and the editor opens at 1400 × 880, so the Voice panel shows the Synth's full
+  view: every control, with the values under the knobs once the window is about 1360–1500
+  wide (by the web view's fonts; below that they show on hover). A much smaller window
+  switches it to the compact pages. The internal sequencer doesn't follow the host's transport unless
   **Sequencer follows host** is on (off by default): it runs from the page's Play. **Host
   sync** (on by default) makes the tempo follow the host (tempo-synced LFOs, and the
   sequencer when it runs); the page shows the effective transport. Projects saved before
@@ -161,7 +163,7 @@ src/plugin/host.ts          plugin mode: PluginSessionStore (the session backend
 | GC keeps a removed table alive while a voice fades it out | the engine retires pointers (`popRetired`) only once no voice plays them; `EngineHost::housekeeping` frees them |
 | Web MIDI (render-quantum jitter) | host MIDI, applied at its sample offset |
 | BPM / Play | host tempo (Host sync) or the BPM parameter; the sequencer runs from Play, or with the host's transport when *Sequencer follows host* is on (off by default: MIDI plays the voices) |
-| start session: three Simple voices, each with a sequence | one Synth voice (Voice panel maximized, full view) played by the host's MIDI, its sequence kept for Play |
+| start session: three Simple voices, each with a sequence | one Synth voice (full view, Generate and Timeline open) played by the host's MIDI, its sequence kept for Play |
 | localStorage MIDI settings | saved with the plugin state |
 | IndexedDB autosave (one tab owns it) | the same autosave into the plugin state (one page per instance) |
 | `confirm()` / `prompt()` | an in-page dialog (`ui/dialogs.ts`): macOS WKWebView under JUCE answers them with false / null |
@@ -204,8 +206,8 @@ addressing table map) instead of Maps.
   *Sequencer follows host* is turned on (and off again); state round-trip renders
   identical samples, garbage state ignored, editor opens (under xvfb in CI).
 - **Web view, end to end** (`tests/WebTest.cpp`, Linux / WebKitGTK under xvfb): a fresh
-  instance's page syncs its start state (one Synth voice, the Voice panel maximized in the
-  full view; Restore brings the other panels back) into the native document and saves its
+  instance's page syncs its start state (one Synth voice in the full view, Generate,
+  Timeline and Voice open) into the native document and saves its
   project; older projects take *Sequencer follows host* from their Host sync;
   Seed → Add batch clicked in the page reaches the engine; host automation of a voice
   parameter reaches the page's model and saved project; the saved state restores in a new
@@ -219,7 +221,7 @@ addressing table map) instead of Maps.
   bypasses the dialogs with `MKWAVEZ_TEST_SAVE_DIR` / `MKWAVEZ_TEST_OPEN_FILE`); the
   Session menu names the build and plugin mode; Session → New (asking in-page first)
   replaces the session with the plugin's start session in the engine and the saved
-  session, the Voice panel maximized again.
+  session, in the full view again.
 - **Names and enums** (`tests/pluginParity.test.ts`, with the web tests on every push):
   every `SynthJson` name table (sources, destinations, LFO shapes, warps…), the C++ enums
   the engine indexes by, the CC map keys, the automatable host parameters and every Synth

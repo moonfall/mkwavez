@@ -3,7 +3,7 @@ import { defaultSessionState, PLUGIN_UI_PREFS, pluginSession } from '../src/app/
 import { AppModel } from '../src/app/model';
 import { SYNTH_AMP_DEFAULTS } from '../src/core/synth';
 import { LAST_BATCH_WAVETABLE_ID } from '../src/core/wavetable';
-import { maximized, parseLayoutState } from '../src/ui/layout';
+import { parseLayoutState } from '../src/ui/layout';
 
 describe("the plugin's fresh session", () => {
   it('is one Synth voice on Last batch, with its sequence (the browser keeps three Simple voices)', () => {
@@ -25,9 +25,7 @@ describe("the plugin's fresh session", () => {
     expect(m.voices).toEqual(model.voices);
   });
 
-  it('opens with the Voice panel maximized (the full Synth view); Restore brings the rest back, Sequence collapsed', () => {
-    const s = parseLayoutState(PLUGIN_UI_PREFS.layoutWide, 'wide');
-    expect(s).toEqual(maximized({ collapsed: ['seq'], max: null, restore: null }, 'voice'));
-    expect(maximized(s, 'voice')).toEqual({ collapsed: ['seq'], max: null, restore: null });
+  it('opens with Generate, Timeline and Voice open (Wavetables and Sequence collapsed)', () => {
+    expect(parseLayoutState(PLUGIN_UI_PREFS.layoutWide, 'wide')).toEqual({ collapsed: ['wt', 'seq'], max: null, restore: null });
   });
 });

@@ -186,26 +186,24 @@ int main(int argc, const char* argv[]) {
         const auto meta = juce::JSON::parse(metaOf(*a.proc));
         check(meta.getProperty("format", {}).toString() == "mkwavez-session", "session meta saved");
         check(recordsOf(*a.proc) == 5, "5 waveform records saved (" + juce::String(recordsOf(*a.proc)) + ")");
-        // The Voice panel starts maximized, showing the Synth's full view.
+        // Generate, Timeline and Voice start open (Wavetables, Sequence collapsed), and the
+        // default window gives the Voice panel room for the Synth's full view (every control;
+        // "dense" where the fonts are wider: values show on hover).
         {
-            juce::String view;
+            juce::String r;
+            const auto evalA = [&](const juce::String& code) {
+                r = "<pending>";
+                a.web()->evaluate(code, [&](juce::WebBrowserComponent::EvaluationResult x) { r = x.getResult() ? x.getResult()->toString() : juce::String("<error>"); });
+                waitFor([&] { return r != "<pending>"; }, 5000, {});
+            };
             waitFor([&] {
-                view = "<pending>";
-                a.web()->evaluate("(document.getElementById('synth-panel') || {dataset: {}}).dataset.view || 'none'",
-                                  [&](juce::WebBrowserComponent::EvaluationResult r) { view = r.getResult() ? r.getResult()->toString() : juce::String("<error>"); });
-                waitFor([&] { return view != "<pending>"; }, 5000, {});
-                return view == "full";
-            }, 10000, "the Voice panel opens the Synth voice in its full view");
-            std::printf("     synth panel view: %s\n", view.toRawUTF8());
-            // Restore (as the panel's button): the other panels come back for the steps below.
-            a.web()->evaluate("mkwavez.layout.maximize('voice')");
-            waitFor([&] {
-                view = "<pending>";
-                a.web()->evaluate("document.querySelector('section.panel[data-panel=gen]').classList.contains('collapsed') ? 'collapsed' : 'open'",
-                                  [&](juce::WebBrowserComponent::EvaluationResult r) { view = r.getResult() ? r.getResult()->toString() : juce::String("<error>"); });
-                waitFor([&] { return view != "<pending>"; }, 5000, {});
-                return view == "open";
-            }, 5000, "Restore brings the Generate panel back");
+                evalA("(() => { const e = document.getElementById('synth-panel'); return e ? e.dataset.view + ' ' + e.dataset.density : 'none'; })()");
+                return r.startsWith("full ");
+            }, 10000, "the Voice panel shows the Synth's full view (every control)");
+            std::printf("     synth panel: %s\n", r.toRawUTF8());
+            evalA("[...document.querySelectorAll('section.panel')].map((p) => p.dataset.panel + (p.classList.contains('collapsed') ? '-' : '+')).join(' ')");
+            std::printf("     panels: %s\n", r.toRawUTF8());
+            check(r == "gen+ wt- tl+ voice+ seq-", "Generate, Timeline and Voice open; Wavetables and Sequence collapsed");
         }
 
         // 2. Generate in the page: Seed → Add batch (default N).
@@ -416,7 +414,7 @@ int main(int argc, const char* argv[]) {
         waitFor([&] {
             evalB("(document.getElementById('synth-panel') || {dataset: {}}).dataset.view || 'none'");
             return js == "full";
-        }, 10000, "with the Voice panel maximized again (the Synth's full view)");
+        }, 10000, "and the Voice panel shows the Synth's full view again");
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all web view checks passed");
