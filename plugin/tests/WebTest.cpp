@@ -389,6 +389,34 @@ int main(int argc, const char* argv[]) {
         b.web()->evaluate("document.getElementById('seed-add-shown').click()");
         waitFor([&] { b.render(1); return recordsOf(*b.proc) == tables + 1 && b.web()->link().tablesReceived() == 1; }, 10000,
                 "an add in the restored page reaches the engine and the saved session");
+
+        // Session → New (asks first, in-page): the plugin's start session replaces this one in
+        // the engine and the saved session, and the page says which build and mode it runs.
+        juce::String js;
+        const auto evalB = [&](const juce::String& code) {
+            js = "<pending>";
+            b.web()->evaluate(code, [&](juce::WebBrowserComponent::EvaluationResult r) { js = r.getResult() ? r.getResult()->toString() : juce::String("<error>"); });
+            waitFor([&] { return js != "<pending>"; }, 5000, {});
+        };
+        evalB("document.getElementById('app-version').textContent");
+        std::printf("     version: %s\n", js.toRawUTF8());
+        check(js.startsWith("mkwavez v") && js.endsWith(" · plugin"), "the Session menu names the build, and plugin mode");
+        b.web()->evaluate("document.getElementById('session-new').click()");
+        waitFor([&] {
+            evalB("document.getElementById('app-dialog-ok') ? (document.getElementById('app-dialog-ok').click(), 'ok') : 'no'");
+            return js == "ok";
+        }, 10000, "Session → New asks (in-page) first");
+        waitFor([&] {
+            b.render(1);
+            return b.doc([](const auto& d) {
+                return d.tables.size() == 5 && d.voices.size() == 1 && d.voices[0].type == mkwavez::VoiceType::synth && d.voices[0].synth.aUnison == 1 && d.sequences.size() == 1;
+            });
+        }, 10000, "Session → New starts the plugin's session (5 tables, one Synth voice) in the engine");
+        waitFor([&] { b.render(1); return recordsOf(*b.proc) == 5; }, 10000, "and it is what's saved");
+        waitFor([&] {
+            evalB("(document.getElementById('synth-panel') || {dataset: {}}).dataset.view || 'none'");
+            return js == "full";
+        }, 10000, "with the Voice panel maximized again (the Synth's full view)");
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all web view checks passed");

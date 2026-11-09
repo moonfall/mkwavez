@@ -33,6 +33,18 @@ export const ask = {
  * Escape = Cancel, focus kept inside and restored afterwards. One at a time (a second
  * request waits for the first).
  */
+/**
+ * Close open popovers (the Session / MIDI menus): they sit in the top layer, above anything
+ * else on the page, so they would cover the dialog (a click on it closes them anyway).
+ */
+function closePopovers(): void {
+  try {
+    for (const el of document.querySelectorAll<HTMLElement>(':popover-open')) el.hidePopover();
+  } catch {
+    /* no Popover API: those menus are ordinary elements under the dialog's backdrop */
+  }
+}
+
 export function pageDialogs(): DialogHost {
   let queue: Promise<unknown> = Promise.resolve();
   const open = (message: string, input: string | null): Promise<string | null> => {
@@ -77,6 +89,7 @@ export function pageDialogs(): DialogHost {
         backdrop.addEventListener('pointerdown', (e) => {
           if (e.target === backdrop) done(null);
         });
+        closePopovers();
         document.body.append(backdrop);
         if (field) {
           field.focus();

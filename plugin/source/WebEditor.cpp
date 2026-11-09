@@ -124,7 +124,9 @@ void WebEditor::saveFile(const juce::String& name, const juce::MemoryBlock& data
     if (const auto dir = juce::SystemStats::getEnvironmentVariable("MKWAVEZ_TEST_SAVE_DIR", {}); dir.isNotEmpty())
         return write(juce::File(dir).getChildFile(name));
     const auto start = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(name);
-    chooser = std::make_unique<juce::FileChooser>("Save " + name, start, "*" + start.getFileExtension());
+    // The editor as parent: on macOS the panel is then a sheet on the plugin's window; without
+    // one it opens as its own window, which a host's floating plugin window can cover.
+    chooser = std::make_unique<juce::FileChooser>("Save " + name, start, "*" + start.getFileExtension(), true, false, this);
     chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
                              juce::FileBrowserComponent::warnAboutOverwriting,
                          [write](const juce::FileChooser& fc) { write(fc.getResult()); });
@@ -150,7 +152,7 @@ void WebEditor::openFile(int id, const juce::String& accept) {
     // Tests: open this file, no dialog.
     if (const auto path = juce::SystemStats::getEnvironmentVariable("MKWAVEZ_TEST_OPEN_FILE", {}); path.isNotEmpty())
         return read(juce::File(path));
-    chooser = std::make_unique<juce::FileChooser>("Open", juce::File::getSpecialLocation(juce::File::userDocumentsDirectory), patternFor(accept));
+    chooser = std::make_unique<juce::FileChooser>("Open", juce::File::getSpecialLocation(juce::File::userDocumentsDirectory), patternFor(accept), true, false, this);
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                          [read](const juce::FileChooser& fc) { read(fc.getResult()); });
 }

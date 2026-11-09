@@ -1,7 +1,10 @@
 import { defineConfig } from 'vitest/config';
+import { buildVersion } from './scripts/version.mjs';
 
 export default defineConfig({
   base: './',
+  // Which build this is (src/version.ts).
+  define: { __MKWAVEZ_BUILD__: JSON.stringify(buildVersion()) },
   build: {
     target: 'es2022',
   },

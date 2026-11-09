@@ -52,6 +52,15 @@ newer push to the same branch cancels a run in progress. The golden and parity t
 also run on every push to `main` with `npm test` in the Pages workflow. Builds are
 unsigned (macOS: notarisation is a later step).
 
+**Which build is running:** the Session menu's last line (and the tooltip on the title)
+names it — the tag, or `v<version> · <commit> · <date>` (`· dirty` for a build with local
+edits) — and ends in `· plugin` when the page runs inside the plugin. The plugin embeds the
+page built with it, so this names the plugin build. If a host still shows an older build,
+look for other copies (VST3: `~/Library/Audio/Plug-Ins/VST3` and `/Library/Audio/Plug-Ins/VST3`;
+AU: `…/Components`; Windows: `C:\Program Files\Common Files\VST3`) and have the host
+rescan; on macOS a quarantined download may need `xattr -dr com.apple.quarantine` on the
+bundle before a host loads it.
+
 **Licensing:** JUCE 9 is AGPLv3 or commercial. Distributing binaries means either
 releasing mkwavez under the AGPL or holding a JUCE licence. The core (`plugin/core`)
 doesn't depend on JUCE. The VST3 SDK is MIT-licensed; CLAP is MIT.
@@ -207,7 +216,10 @@ addressing table map) instead of Maps.
   saved; the in-page
   prompt / confirm answer correctly; Session → Export writes a `.mkwz` through the native
   save path and Session → Import reads it back through the native open path (the test
-  bypasses the dialogs with `MKWAVEZ_TEST_SAVE_DIR` / `MKWAVEZ_TEST_OPEN_FILE`).
+  bypasses the dialogs with `MKWAVEZ_TEST_SAVE_DIR` / `MKWAVEZ_TEST_OPEN_FILE`); the
+  Session menu names the build and plugin mode; Session → New (asking in-page first)
+  replaces the session with the plugin's start session in the engine and the saved
+  session, the Voice panel maximized again.
 - **Names and enums** (`tests/pluginParity.test.ts`, with the web tests on every push):
   every `SynthJson` name table (sources, destinations, LFO shapes, warps…), the C++ enums
   the engine indexes by, the CC map keys, the automatable host parameters and every Synth

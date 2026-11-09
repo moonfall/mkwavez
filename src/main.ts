@@ -19,7 +19,8 @@ import { layout } from './ui/layout';
 import { buildMidi } from './ui/midi';
 import { buildSequences } from './ui/sequences';
 import { buildSessionMenu, downloadBytes, setDefaultSession, setFileHost, showNotice, stamp, type SessionHooks } from './ui/session';
-import { pluginSession, pluginSessionState } from './app/defaultSession';
+import { pluginSession } from './app/defaultSession';
+import { versionLabel } from './version';
 import { installShortcuts } from './ui/shortcuts';
 import { buildTimeline } from './ui/timeline';
 import { buildTransport, togglePlay } from './ui/transport';
@@ -41,9 +42,11 @@ if (plugin) {
   setDialogHost(pageDialogs());
   setFileHost(plugin.files);
   // A fresh plugin instance (and Session → New in it): one Synth voice, opened in full.
-  setDefaultSession(pluginSessionState);
+  setDefaultSession(pluginSession);
   plugin.onFileMessage = (text) => showNotice(text);
 }
+// Which build (also in the Session menu and the title's tooltip).
+console.info(`[mkwavez] ${versionLabel()}${plugin ? ' (plugin)' : ''}`);
 // Dark by default; an explicit choice (theme toggle) is remembered.
 setTheme(storedTheme() ?? 'dark', false);
 

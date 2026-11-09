@@ -342,6 +342,10 @@ canvas {
 #session-takeover {
   margin-bottom: 8px;
 }
+.session-version {
+  user-select: text;
+  font-variant-numeric: tabular-nums;
+}
 .session-actions {
   display: flex;
   flex-wrap: wrap;

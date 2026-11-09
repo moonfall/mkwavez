@@ -3,6 +3,7 @@ import type { UiContext } from './context';
 import { h, icon, ICONS } from './dom';
 import { buildHoldNote } from './holdNote';
 import { SHORTCUTS } from './shortcuts';
+import { versionLabel } from '../version';
 
 /** Start (audio first, on the first press) or stop the transport. */
 export async function togglePlay(ctx: UiContext): Promise<void> {
@@ -101,7 +102,7 @@ export function buildTransport(ctx: UiContext, extra: Node | null = null): HTMLE
   return h(
     'header',
     { class: 'transport' },
-    h('span', { class: 'title' }, 'mkwavez'),
+    h('span', { class: 'title', id: 'app-title', title: `mkwavez ${versionLabel()}` }, 'mkwavez'),
     play,
     tempo,
     // Play and sustain a note on the selected voice (no MIDI keyboard needed).
