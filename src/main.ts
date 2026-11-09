@@ -21,6 +21,7 @@ import { buildSequences } from './ui/sequences';
 import { buildSessionMenu, downloadBytes, setDefaultSession, setFileHost, showNotice, stamp, type SessionHooks } from './ui/session';
 import { pluginSession } from './app/defaultSession';
 import { versionLabel } from './version';
+import { animating } from './ui/playing';
 import { installShortcuts } from './ui/shortcuts';
 import { buildTimeline } from './ui/timeline';
 import { buildTransport, togglePlay } from './ui/transport';
@@ -186,11 +187,12 @@ model.on('notice', () => {
   toastTimer = setTimeout(() => (toast.hidden = true), 8000);
 });
 
-// ---- frame loop: views draw only when dirty (or animating while playing), ~25 fps cap while playing ----
+// ---- frame loop: views draw only when dirty (or animating while voices play: the transport
+// runs or notes sound, e.g. the host's MIDI in the plugin), ~25 fps cap while animating ----
 const views: FrameView[] = [generate.view, timeline.view, wavetables.view, voices.view, sequences.view];
 const limiter = throttle(40);
 const loop = (now: number) => {
-  if (!model.playing || limiter(now)) {
+  if (!animating(model, bridge, now) || limiter(now)) {
     for (const v of views) v.frame(now);
     layout.tick(now);
   }

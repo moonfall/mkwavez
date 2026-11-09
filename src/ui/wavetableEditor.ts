@@ -42,7 +42,7 @@ import { cssColor, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, voiceColorVar } from './dom';
 import { ask } from './dialogs';
-import { playingMix, voicePositions } from './playing';
+import { animating, playingMix, voicePositions } from './playing';
 import { addDropZone, beginDrag, consumeDragClick, DRAG_SLOP, isDragging, type DragPoint, type DragSource } from './waveDrag';
 
 export interface EditorHost {
@@ -1531,7 +1531,7 @@ export function buildWavetableEditor(ctx: UiContext, host: EditorHost): { el: HT
     view: {
       frame() {
         if (!host.isOpen() || !isOnScreen(canvas)) return;
-        if (!dirty && !model.playing) return;
+        if (!dirty && !animating(model, bridge)) return;
         dirty = false;
         draw();
       },

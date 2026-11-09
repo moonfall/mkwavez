@@ -64,6 +64,7 @@ import { h, isNarrowShell, voiceColorVar } from './dom';
 import { linear, type Taper } from './knob';
 import { buildPresetControls } from './presets';
 import { buildSynthFull, hz, logTaper, oscDrawer, panText, pct, secs, signed, timeTaper } from './synthFull';
+import { animating } from './playing';
 import { createVoicePad } from './voicePad';
 
 export type SynthPage = 'osc' | 'mix' | 'filter' | 'env' | 'mod';
@@ -1002,16 +1003,17 @@ export function buildSynthPanel(model: AppModel, bridge: AudioBridge, ui: UiStat
     },
     frame(v) {
       voice = v;
-      const limited = !!bridge.status.unisonLimited && model.playing;
+      const moving = animating(model, bridge);
+      const limited = !!bridge.status.unisonLimited && moving;
       if (guardNote.hidden === limited) guardNote.hidden = !limited;
       if (full.guard.hidden === limited) full.guard.hidden = !limited;
       if (view === 'full') {
-        if (full.frame(v, dirty, model.playing)) dirty = false;
+        if (full.frame(v, dirty, moving)) dirty = false;
         return;
       }
       if (page === 'osc') {
         const canvas = pad.canvas.hidden ? scope : pad.canvas;
-        if (isOnScreen(canvas) && (dirty || model.playing)) {
+        if (isOnScreen(canvas) && (dirty || moving)) {
           dirty = false;
           drawOsc(v);
         }

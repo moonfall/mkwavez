@@ -5,7 +5,7 @@ import { Mix } from '../core/wavetablePlayback';
 import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, icon, ICONS, isNarrowShell, panel, voiceColorVar } from './dom';
-import { dominantId, playingMix } from './playing';
+import { animating, dominantId, isLive, playingMix } from './playing';
 import { SHORTCUTS } from './shortcuts';
 import { beginDrag, consumeDragClick, DRAG_SLOP, dropTargetsActive, isDragging } from './waveDrag';
 
@@ -280,7 +280,7 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
   const drawMarkers = () => {
     const n = model.timeline.length;
     const left = scroller.scrollLeft;
-    const live = model.playing ? new Map(bridge.status.voices.map((s) => [s.id, s.index])) : null;
+    const live = new Map(bridge.status.voices.filter((s) => isLive(model, s)).map((s) => [s.id, s.index]));
     const marks: { v: VoiceParams; f: number; x: number; y: number }[] = [];
     if (n) {
       for (const v of model.voices) {
@@ -529,8 +529,8 @@ export function buildTimeline(ctx: UiContext): { el: HTMLElement; view: FrameVie
           dirtyGrid = false;
           drawGrid();
         }
-        // Markers follow live positions while playing (the loop caps that at ~25 fps).
-        if (dirtyMarkers || model.playing) {
+        // Markers follow live positions while voices play (the loop caps that at ~25 fps).
+        if (dirtyMarkers || animating(model, bridge)) {
           dirtyMarkers = false;
           drawMarkers();
         }

@@ -8,7 +8,7 @@ import { Mix } from '../core/wavetablePlayback';
 import { cssColor, drawSpectrum, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, icon, ICONS, panel, slider, voiceColorVar, type Slider } from './dom';
-import { playingMix } from './playing';
+import { animating, playingMix } from './playing';
 import { SHORTCUTS } from './shortcuts';
 import { buildCopyPaste } from './presets';
 import { buildSynthPanel } from './synthPanel';
@@ -470,13 +470,14 @@ export function buildVoices(ctx: UiContext): { el: HTMLElement; view: FrameView 
         const v = cur();
         if (!v || !sec.isOpen()) return;
         if (v.type === 'synth') return synthPanel.frame(v);
-        if (isOnScreen(scope) && (dirtyScope || model.playing)) {
+        const moving = animating(model, bridge);
+        if (isOnScreen(scope) && (dirtyScope || moving)) {
           dirtyScope = false;
           drawScope(v);
         }
         if (is2d(v)) {
           const wt = model.wavetable(v.wavetableId);
-          if (wt && isOnScreen(pad.canvas) && (dirtyPad || model.playing)) {
+          if (wt && isOnScreen(pad.canvas) && (dirtyPad || moving)) {
             dirtyPad = false;
             pad.draw(v, wt, Math.max(40, padBox.clientHeight || 110));
           }

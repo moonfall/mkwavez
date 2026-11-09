@@ -5,7 +5,7 @@ import { cssColor, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type FrameView, type UiContext } from './context';
 import { h, isNarrowShell, panel, voiceColorVar } from './dom';
 import { layout } from './layout';
-import { playingMix, voicePositions } from './playing';
+import { animating, playingMix, voicePositions } from './playing';
 import { buildWavetableEditor } from './wavetableEditor';
 
 /** 12×12 stroke icon (expand / collapse). */
@@ -454,7 +454,7 @@ export function buildWavetables(ctx: UiContext): { el: HTMLElement; view: FrameV
           return;
         }
         if (!sec.isOpen() || !isOnScreen(canvas)) return;
-        if (!dirty && !model.playing) return;
+        if (!dirty && !animating(model, bridge)) return;
         dirty = false;
         draw();
       },

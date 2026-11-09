@@ -25,7 +25,28 @@ const SOUNDING_ENV = 1e-3;
  */
 export function liveStatus(model: AppModel, bridge: AudioBridge, v: VoiceParams): VoiceStatus | undefined {
   const st = bridge.status.voices.find((s) => s.id === v.id);
-  return st && (model.playing || st.note >= 0 || st.env > SOUNDING_ENV) ? st : undefined;
+  return st && isLive(model, st) ? st : undefined;
+}
+
+/** A voice's status entry is live: the transport runs, or the voice sounds. */
+export function isLive(model: AppModel, st: VoiceStatus): boolean {
+  return model.playing || st.note >= 0 || st.env > SOUNDING_ENV;
+}
+
+/** How long views keep redrawing after the last voice falls silent (back to the sliders). */
+const SETTLE_MS = 400;
+let lastLiveAt = -Infinity;
+
+/**
+ * Whether views showing where voices play must redraw every frame: the transport runs or a
+ * voice sounds (host / MIDI notes, Hold), and briefly after (to settle on the sliders).
+ */
+export function animating(model: AppModel, bridge: AudioBridge, now = performance.now()): boolean {
+  if (model.playing || bridge.status.voices.some((s) => isLive(model, s))) {
+    lastLiveAt = now;
+    return true;
+  }
+  return now - lastLiveAt < SETTLE_MS;
 }
 
 /**

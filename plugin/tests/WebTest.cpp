@@ -224,11 +224,33 @@ int main(int argc, const char* argv[]) {
         }, 10000, "automated V1 position reaches the page and its saved session");
 
         // 5. It plays.
+        // What the Synth's osc A scope shows (a hash of its pixels), sampled twice ~0.4 s apart
+        // while the engine runs: whether the view follows where the voice plays.
+        const auto scopeMoves = [&] {
+            const auto hash = [&] {
+                juce::String r = "<pending>";
+                a.web()->evaluate("(() => { const c = document.getElementById('synf-a-scope'); if (!c) return 'none'; const d = c.toDataURL(); "
+                                  "let h = 0; for (let i = 0; i < d.length; i += 3) h = (h * 31 + d.charCodeAt(i)) | 0; return String(h); })()",
+                                  [&](juce::WebBrowserComponent::EvaluationResult x) { r = x.getResult() ? x.getResult()->toString() : juce::String("<error>"); });
+                waitFor([&] { return r != "<pending>"; }, 5000, {});
+                return r;
+            };
+            const auto h1 = hash();
+            for (int i = 0; i < 20; ++i) {
+                a.render(2);
+                pump(20);
+            }
+            return std::make_pair(h1 != hash(), h1);
+        };
         a.render(10);
+        pump(600);
+        const auto idleScope = scopeMoves();
+        check(idleScope.second != "none" && !idleScope.first, "silent, transport stopped: the Synth's scope stays still");
         const double rms = a.render(40, [](int b, juce::MidiBuffer& m) {
             if (b == 0) m.addEvent(juce::MidiMessage::noteOn(1, 57, (juce::uint8) 110), 0);
         });
         check(rms > 0.005, "a MIDI note sounds (rms " + juce::String(rms, 4) + ")");
+        check(scopeMoves().first, "while the host's note plays (transport stopped), the Synth's scope follows where it plays");
         // The note is still held (transport stopped, as by default): the page's status has the
         // voice live, osc B included, so it shows where the voice plays.
         {

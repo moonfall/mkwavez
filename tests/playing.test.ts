@@ -32,3 +32,18 @@ describe('where a voice plays (the position the UI shows)', () => {
     model.setTransport({ playing: false, bpm: 120 });
   });
 });
+
+describe('views animate while voices play', () => {
+  it('while a voice sounds (transport stopped), and briefly after, so they settle on the sliders', async () => {
+    const { animating } = await import('../src/ui/playing');
+    const model = new AppModel();
+    model.loadState(pluginSessionState());
+    expect(animating(model, status({ note: -1, env: 0 }), 0)).toBe(false);
+    expect(animating(model, status({ note: 60, env: 0.4 }), 1000)).toBe(true);
+    expect(animating(model, status({ note: -1, env: 0 }), 1200)).toBe(true); // settling
+    expect(animating(model, status({ note: -1, env: 0 }), 2000)).toBe(false);
+    model.setTransport({ playing: true, bpm: 120 });
+    expect(animating(model, status({ note: -1, env: 0 }), 5000)).toBe(true);
+    model.setTransport({ playing: false, bpm: 120 });
+  });
+});
