@@ -14,6 +14,8 @@ import parametersCpp from '../plugin/source/Parameters.cpp?raw';
 import hostTs from '../src/plugin/host.ts?raw';
 import { describe, expect, it } from 'vitest';
 import { CC_PARAMS } from '../src/core/midi';
+import { emptyStatus, SynthEngine } from '../src/core/engine/engine';
+import { DEFAULT_VOICE } from '../src/core/voice';
 import { DEFAULT_LFO, LFO_DIVS, LFO_SHAPES, MOD_DESTS, MOD_SOURCES } from '../src/core/modulation';
 import { DEFAULT_SYNTH, SYNTH_AMP_DEFAULTS, FILTER_MODES, NOISE_TYPES, NOTE_PRIORITIES, PHASE_MODES, PITCH_TARGETS, SUB_WAVES, VOICE_TYPES, WARP_MODES } from '../src/core/synth';
 
@@ -94,6 +96,15 @@ describe('plugin parity (C++ names and enums vs src/core)', () => {
   it("a new Synth voice's amp envelope matches (the plugin's start voice and V1's parameter defaults)", () => {
     const m = /SYNTH_AMP_DEFAULTS\{([^}]*)\}/.exec(synthH);
     expect(m?.[1].split(',').map(Number)).toEqual([SYNTH_AMP_DEFAULTS.attack, SYNTH_AMP_DEFAULTS.decay, SYNTH_AMP_DEFAULTS.sustain, SYNTH_AMP_DEFAULTS.release]);
+  });
+
+  it("the plugin's status message carries every field of the engine's status (as the worklet's)", () => {
+    const e = new SynthEngine(48000);
+    e.setVoice({ ...DEFAULT_VOICE, id: 1, name: 'V1' });
+    const st = e.status(emptyStatus());
+    const poll = webLink.slice(webLink.indexOf('void WebLink::poll'));
+    const missing = [...Object.keys(st), ...Object.keys(st.voices[0])].filter((k) => k !== 'voices' && !poll.includes(`{"${k}",`));
+    expect(missing).toEqual([]);
   });
 
   it('SynthJson reads and writes every Synth and LFO field', () => {

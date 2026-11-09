@@ -229,6 +229,20 @@ int main(int argc, const char* argv[]) {
             if (b == 0) m.addEvent(juce::MidiMessage::noteOn(1, 57, (juce::uint8) 110), 0);
         });
         check(rms > 0.005, "a MIDI note sounds (rms " + juce::String(rms, 4) + ")");
+        // The note is still held (transport stopped, as by default): the page's status has the
+        // voice live, osc B included, so it shows where the voice plays.
+        {
+            juce::String r;
+            waitFor([&] {
+                a.render(1);
+                r = "<pending>";
+                a.web()->evaluate("(() => { const s = mkwavez.bridge.status.voices.find((x) => x.id === 1); "
+                                  "return s && !mkwavez.model.playing && s.note === 57 && s.env > 0 && typeof s.posB === 'number' && typeof s.indexB === 'number' ? 'live' : JSON.stringify(s); })()",
+                                  [&](juce::WebBrowserComponent::EvaluationResult x) { r = x.getResult() ? x.getResult()->toString() : juce::String("<error>"); });
+                waitFor([&] { return r != "<pending>"; }, 5000, {});
+                return r == "live";
+            }, 10000, "the held note's voice is live in the page's status (osc B too), transport stopped");
+        }
         check(a.web()->link().tablesReceived() == afterBatch, "fresh page sent every table once (" + juce::String(a.web()->link().tablesReceived()) + ")");
 
         // MKWAVEZ_SCREENSHOT_PAUSE=ms keeps the window up for an external screenshot.

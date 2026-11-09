@@ -219,7 +219,8 @@ addressing table map) instead of Maps.
   prompt / confirm answer correctly; Session → Export writes a `.mkwz` through the native
   save path and Session → Import reads it back through the native open path (the test
   bypasses the dialogs with `MKWAVEZ_TEST_SAVE_DIR` / `MKWAVEZ_TEST_OPEN_FILE`); the
-  Session menu names the build and plugin mode; Session → New (asking in-page first)
+  Session menu names the build and plugin mode; with a host MIDI note held and the transport
+  stopped, the page's status has the voice live (osc B included), so it shows where it plays; Session → New (asking in-page first)
   replaces the session with the plugin's start session in the engine and the saved
   session, in the full view again.
 - **Names and enums** (`tests/pluginParity.test.ts`, with the web tests on every push):

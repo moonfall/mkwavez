@@ -367,12 +367,16 @@ void WebLink::poll(const Emit& emit) {
                         {"index", v.index.load()},
                         {"y", v.y.load()},
                         {"env", v.env.load()},
-                        {"note", v.note.load()}}));
+                        {"note", v.note.load()},
+                        {"posB", v.posB.load()},
+                        {"posYB", v.posYB.load()},
+                        {"indexB", v.indexB.load()},
+                        {"yB", v.yB.load()}}));
     }
     int tableCount = 0;
     proc.host().read([&](const Document& doc) { tableCount = (int) doc.tables.size(); });
     emit(obj({{"type", "status"},
-              {"status", obj({{"tick", (juce::int64) st.tick.load()}, {"playing", st.playing.load()}, {"voices", voices}})},
+              {"status", obj({{"tick", (juce::int64) st.tick.load()}, {"playing", st.playing.load()}, {"unisonLimited", st.unisonLimited.load()}, {"voices", voices}})},
               {"tableCount", tableCount},
               {"sampleRate", st.sampleRate.load()}}));
 

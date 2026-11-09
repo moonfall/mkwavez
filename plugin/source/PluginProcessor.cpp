@@ -128,7 +128,12 @@ void MkwavezProcessor::publishStatus(const SynthEngine& e) {
         d.y.store((float) s.y, std::memory_order_relaxed);
         d.env.store((float) s.env, std::memory_order_relaxed);
         d.note.store(s.note, std::memory_order_relaxed);
+        d.posB.store((float) s.posB, std::memory_order_relaxed);
+        d.posYB.store((float) s.posYB, std::memory_order_relaxed);
+        d.indexB.store((float) s.indexB, std::memory_order_relaxed);
+        d.yB.store((float) s.yB, std::memory_order_relaxed);
     }
+    status.unisonLimited.store(scratchStatus.unisonLimited, std::memory_order_relaxed);
     status.voiceCount.store(scratchStatus.voiceCount, std::memory_order_release);
 }
 

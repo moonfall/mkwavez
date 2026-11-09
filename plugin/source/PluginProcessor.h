@@ -18,10 +18,14 @@ struct LiveStatus {
         std::atomic<int> id{0};
         std::atomic<float> pos{0}, posY{0}, index{0}, y{0}, env{0};
         std::atomic<int> note{-1};
+        /** Synth voices: osc B (else equal to A's). */
+        std::atomic<float> posB{0}, posYB{0}, indexB{0}, yB{0};
     };
     /** Sequencer clock tick (see SynthEngine; -1 before the first). */
     std::atomic<int64_t> tick{-1};
     std::atomic<bool> playing{false};
+    /** The CPU guard is reducing unison. */
+    std::atomic<bool> unisonLimited{false};
     std::atomic<int> voiceCount{0};
     std::array<Voice, mkwavez::EngineStatus::MAX> voices;
     /** Effective transport (host or Play / BPM), as the engine runs it. */
