@@ -22,8 +22,8 @@
 import fixtureText from './fixtures/libraryDefaults.json?raw';
 import legacyText from './fixtures/libraryLegacy.json?raw';
 import { describe, expect, it } from 'vitest';
-import { compileFormula } from '../src/browser/formulaEval';
-import { renderRecipe, SEED_LIBRARY, seedBatch, type SeedEntry, type SeedRequest } from '../src/core/generators';
+import { compileFormula, compileRule } from '../src/browser/formulaEval';
+import { compileRules, renderRecipe, SEED_LIBRARY, seedBatch, seedRules, type SeedEntry, type SeedRequest } from '../src/core/generators';
 import type { ParamValue, Recipe } from '../src/core/table';
 
 const SEEDS = [0xdeadbeef, 1];
@@ -81,7 +81,7 @@ const request = (
   inputs,
 });
 
-const fnFor = (r: SeedRequest) => (r.entry.mode === 'formula' ? compileFormula(r.expr) : undefined);
+const fnFor = (r: SeedRequest) => (r.entry.mode === 'formula' ? compileFormula(r.expr) : r.entry.mode === 'rules' ? compileRules(seedRules(r), compileRule) : undefined);
 
 interface EntryFixture {
   /** Random-parameter cases: the params used. */
@@ -178,7 +178,7 @@ describe('library defaults (pinned to main, within 2^-20)', () => {
       // The recipes are those of the first seed's largest batch.
       const want = hashes[`${recipes[0].seed}/${recipes.length}`];
       expect(recipes.length, k).toBe(want.length);
-      recipes.forEach((r, i) => expect(hashTable(renderRecipe(r, { compileFormula })), `${k} #${i}`).toBe(want[i]));
+      recipes.forEach((r, i) => expect(hashTable(renderRecipe(r, { compileFormula, compileRule })), `${k} #${i}`).toBe(want[i]));
     }
   };
 

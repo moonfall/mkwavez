@@ -35,6 +35,15 @@
   --par-5: #ff6b6b;
   --par-6: #74c0fc;
   --par-7: #e599f7;
+  /* Harmonic rules 1…8 (rows and basis-plot stems) */
+  --rule-1: #7c9bff;
+  --rule-2: #ff922b;
+  --rule-3: #69db7c;
+  --rule-4: #da77f2;
+  --rule-5: #ffd43b;
+  --rule-6: #3bc9db;
+  --rule-7: #ff6b6b;
+  --rule-8: #c8946a;
   --radius: 8px;
   --gutter: 8px;
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -77,6 +86,14 @@
   --par-5: #c92a2a;
   --par-6: #1971c2;
   --par-7: #ae3ec9;
+  --rule-1: #2f55d4;
+  --rule-2: #d9480f;
+  --rule-3: #2b8a3e;
+  --rule-4: #9c36b5;
+  --rule-5: #b08800;
+  --rule-6: #0c8599;
+  --rule-7: #c92a2a;
+  --rule-8: #8d5524;
   color-scheme: light;
 }
 
@@ -4900,4 +4917,97 @@ button.br-clear:hover {
 }
 .grid-box > .gen-stepper {
   align-self: flex-start;
+}
+
+/* Harmonic rules editor (Seed entry and the Shape step "Rules"): one compact row per rule;
+   the list scrolls inside itself past a few rows, so the page never grows. */
+.rules-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 124px;
+  overflow-y: auto;
+  min-width: 0;
+}
+/* Wide shell: three rows, two on short screens (the viewer keeps its height). */
+@media (min-width: 900px) {
+  .rules-list {
+    max-height: 92px;
+  }
+}
+@media (min-width: 900px) and (max-height: 840px) {
+  .rules-list {
+    max-height: 62px;
+  }
+}
+.rules-list.empty {
+  display: none;
+}
+.rules-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.rules-num {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--rule);
+  color: var(--bg);
+  font: 600 11px/18px var(--font-mono);
+  text-align: center;
+}
+.rules-line input[type='checkbox'] {
+  flex: none;
+  margin: 0;
+}
+.rules-field {
+  min-width: 0;
+  padding: 0 6px;
+  gap: 4px;
+}
+.rules-field-when {
+  flex: 1 1 0;
+}
+.rules-field-value {
+  flex: 1.6 1 0;
+}
+.rules-field input.seed-expr {
+  height: 26px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.rules-line button.icon-btn {
+  flex: none;
+  width: 22px;
+}
+.rules-row.off .rules-num,
+.rules-row.off .rules-field {
+  opacity: 0.5;
+}
+.rules-err {
+  min-height: 0;
+  padding-left: 48px;
+  font-size: 11px;
+}
+.rules-err:empty {
+  display: none;
+}
+.rules-legend {
+  align-items: center;
+}
+.rules-legend button.small {
+  flex: none;
+  height: 20px;
+  padding: 0 7px;
+  font-size: 11px;
 }

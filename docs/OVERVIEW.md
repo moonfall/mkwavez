@@ -47,8 +47,10 @@ as a native plugin (VST3 / AU / CLAP / LV2 / Standalone) whose editor is the sam
   harmonic series, superformula, fractal sum, polygon, Perlin noise (the classic formula
   presets now open as starting points of the matching mode), 1D and Life-like cellular automata, dynamical systems (logistic /
   sine / circle / Hénon / tent), Karplus-Strong snapshots, additive designer, number
-  sequences (π, e, Collatz, prime gaps, Euclidean), reaction-diffusion, splines and
-  **glyph contours** (type a character, hear its outline); plus ~14 formula presets
+  sequences (π, e, Collatz, prime gaps, Euclidean), reaction-diffusion, splines,
+  **glyph contours** (type a character, hear its outline) and **harmonic rules** (an
+  ordered list of condition → value rules over the 72 harmonics, e.g. `k%2==1` → `1/k`,
+  `k>1` → `v + 0.3*a(k-1)`; stems coloured by rule); plus ~14 formula presets
   (vowels, bit tricks, chaos maps, bells, Euclidean pulses, digits of π and more). A formula language over phase
   `p`, `t`, batch index `n` and batch position `u`, with built-in functions for every wave
   and mode (`saw(2*p)`, `0.5*ks(p) + perlin(p, …)`), and Edit as formula on any preset.

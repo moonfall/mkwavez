@@ -28,7 +28,8 @@ export interface SeriesParams {
 
 export const DEFAULT_SERIES: SeriesParams = { set: 2, highest: 29, rolloff: 1.5, rolloffEnd: 0.5, phases: 0, pluck: 0, pluckEnd: 0 };
 
-const isPrime = (k: number) => {
+/** True if the integer k is prime. */
+export const isPrime = (k: number) => {
   if (k < 2) return false;
   for (let d = 2; d * d <= k; d++) if (k % d === 0) return false;
   return true;

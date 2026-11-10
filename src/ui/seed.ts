@@ -1,19 +1,29 @@
-import { compileFormula } from '../browser/formulaEval';
+import { compileFormula, compileRule } from '../browser/formulaEval';
 import { traceGlyph } from '../browser/glyphTrace';
 import {
   batchU,
+  compileRules,
+  evalRules,
   FormulaAborted,
   glyphInputs,
   modeFormula,
+  programError,
+  RuleError,
+  rulesJson,
+  rulesText,
   SEED_LIBRARY,
   seedFormulaExpr,
   seedParams,
+  seedRules,
   seedTable,
   seedUsesRandomness,
   sourceExpr,
   WAVE_FUNCTION_DOCS,
   type ExprSource,
   type FormulaFn,
+  type HarmonicRule,
+  type RuleProgram,
+  type RulesResult,
   type SeedEntry,
   type SeedRequest,
 } from '../core/generators';
@@ -27,6 +37,7 @@ import { h, selectField, slider } from './dom';
 import { ask } from './dialogs';
 import { buildLibrary } from './library';
 import { seedViz, type VizColors } from './seedViz';
+import { buildRulesEditor } from './rulesEditor';
 import { buildShapeOnAdd, previewOf, SHAPE_CARDS_MS } from './shapeOnAdd';
 
 /** Minimum interval between preview restarts while typing / dragging. */
@@ -57,7 +68,7 @@ export interface SeedPanelOpts {
 
 const hex = (s: number) => (s >>> 0).toString(16).padStart(8, '0');
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const tagOf = (e: SeedEntry) => (e.mode === 'formula' ? 'f(x)' : e.mode === 'basic' ? 'basic' : 'params');
+const tagOf = (e: SeedEntry) => (e.mode === 'formula' ? 'f(x)' : e.mode === 'basic' ? 'basic' : e.mode === 'rules' ? 'rules' : 'params');
 /** Basic presets (Sine … Square, Pulse): the expression comes from a source (built-in function / formula). */
 const hasSource = (e: SeedEntry) => e.mode === 'basic' || e.mode === 'pulse';
 const SOURCES: readonly (readonly [ExprSource, string, string])[] = [
@@ -73,10 +84,13 @@ const FUNCTIONS_TIP =
 interface Job {
   key: string;
   req: SeedRequest;
-  fn?: FormulaFn;
+  /** The compiled formula, or the compiled rules (Harmonic rules). */
+  fn?: FormulaFn | RuleProgram;
   tables: (GeneratedTable | undefined)[];
   /** Per-table runtime errors (the other tables still compute). */
   errors: (string | undefined)[];
+  /** Harmonic rules: the rule each failed waveform failed in. */
+  errorRules: (number | undefined)[];
   next: number;
   /** Set when a table was aborted as too slow: the whole preview stops. */
   fatal: string;
@@ -100,6 +114,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   const paramEdits = new Map<string, Record<string, number>>();
   /** Basic presets' expression source (default: the built-in function). */
   const sources = new Map<string, ExprSource>();
+  /** Harmonic rules edits, by entry id. */
+  const ruleEdits = new Map<string, HarmonicRule[]>();
   let seed = randomSeed();
 
   const entry = () => SEED_LIBRARY[sel];
@@ -109,6 +125,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   /** The unedited expression: the preset's, or a basic preset's source expression (Pulse: from its params). */
   const defaultExpr = (e: SeedEntry) => (hasSource(e) ? sourceExpr(e, sourceOf(e), paramsOf(e)) : (e.expr ?? ''));
   const exprOf = (e: SeedEntry) => edits.get(editKey(e)) ?? defaultExpr(e);
+  const rulesOf = (e: SeedEntry): readonly HarmonicRule[] => ruleEdits.get(e.id) ?? e.rules ?? [];
 
   // Glyph contour: the text and the traced contours (browser layer; recipes store the contour).
   const glyphTexts = new Map<string, string>();
@@ -129,10 +146,11 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const e = entry();
     const params = paramsOf(e);
     const inputs = e.mode === 'glyph' ? glyphInputsOf(e, params, opts.count()) : undefined;
-    return { entry: e, expr: exprOf(e), params, seed, count: opts.count(), inputs, source: hasSource(e) ? sourceOf(e) : undefined };
+    const rules = e.mode === 'rules' ? rulesOf(e) : undefined;
+    return { entry: e, expr: exprOf(e), params, seed, count: opts.count(), inputs, source: hasSource(e) ? sourceOf(e) : undefined, rules };
   };
   const keyOf = (r: SeedRequest) =>
-    `${r.entry.id}|${r.source ?? ''}|${r.entry.mode === 'formula' || hasSource(r.entry) ? r.expr : ''}|${JSON.stringify(r.params)}|${r.entry.mode === 'glyph' ? glyphTextOf(r.entry) : ''}|${r.seed}|${r.count}`;
+    `${r.entry.id}|${r.source ?? ''}|${r.entry.mode === 'formula' || hasSource(r.entry) ? r.expr : ''}|${r.entry.mode === 'rules' ? rulesJson(seedRules(r)) : ''}|${JSON.stringify(r.params)}|${r.entry.mode === 'glyph' ? glyphTextOf(r.entry) : ''}|${r.seed}|${r.count}`;
   /** The formula a request renders (formula entries, basic presets as formulas), or null. */
   const formulaOf = (r: SeedRequest) => seedFormulaExpr(r);
 
@@ -148,6 +166,24 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       }
     }
     return compiled;
+  };
+
+  let compiledRulesJson: string | null = null;
+  let compiledRules: RuleProgram | null = null;
+  /** Harmonic rules compiled (per-rule compile errors in .errors); memoised by the rules' JSON. */
+  const compileRuleList = (rules: readonly HarmonicRule[]): RuleProgram => {
+    const json = rulesJson(rules);
+    if (json !== compiledRulesJson || !compiledRules) {
+      compiledRulesJson = json;
+      compiledRules = compileRules(rules, compileRule);
+    }
+    return compiledRules;
+  };
+  /** The blocking (compile) error of a request: its formula's syntax, or a rule that doesn't compile. */
+  const syntaxOf = (r: SeedRequest): string | undefined => {
+    if (r.entry.mode === 'rules') return programError(compileRuleList(seedRules(r))) ?? undefined;
+    const fexpr = formulaOf(r);
+    return fexpr !== null ? compile(fexpr).err : undefined;
   };
 
   /** Last formula keystroke (the preview restarts TYPING_MS after it). */
@@ -169,7 +205,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     idPrefix: 'seed',
     title: 'Library',
     placeholder: 'Search name, category, formula',
-    items: SEED_LIBRARY.map((e) => ({ id: e.id, group: e.cat, name: e.name, tag: tagOf(e), search: `${e.name}\n${e.cat}\n${e.expr ?? e.formula ?? ''}\n${e.family ?? ''}` })),
+    items: SEED_LIBRARY.map((e) => ({ id: e.id, group: e.cat, name: e.name, tag: tagOf(e), search: `${e.name}\n${e.cat}\n${e.expr ?? e.formula ?? (e.rules ? rulesText(e.rules) : '')}\n${e.family ?? ''}` })),
     initial: sel,
     onChange: (i, from) => {
       thumbDrawn[from] = thumbDrawn[i] = '';
@@ -229,7 +265,11 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   );
 
   const isEdited = (e: SeedEntry) =>
-    e.mode === 'formula' ? edits.has(e.id) : edits.has(editKey(e)) || paramEdits.has(e.id) || glyphTexts.has(e.id);
+    e.mode === 'formula'
+      ? edits.has(e.id)
+      : e.mode === 'rules'
+        ? ruleEdits.has(e.id)
+        : edits.has(editKey(e)) || paramEdits.has(e.id) || glyphTexts.has(e.id);
   /** Pulse: its sliders apply only while the expression is unedited. */
   let paramInputs: (HTMLInputElement | HTMLSelectElement)[] = [];
   const syncParamLock = () => {
@@ -255,6 +295,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     edits.delete(editKey(e));
     paramEdits.delete(e.id);
     glyphTexts.delete(e.id);
+    ruleEdits.delete(e.id);
     renderEditor();
     onEdit();
   };
@@ -426,11 +467,24 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     });
   };
 
+  /** The Harmonic rules editor (one, reused across the rules entries). */
+  const rulesEd = buildRulesEditor({
+    id: 'seed-rules',
+    onChange: (rules) => {
+      const e = entry();
+      if (e.mode !== 'rules') return;
+      if (rulesJson(rules) === rulesJson(e.rules ?? [])) ruleEdits.delete(e.id);
+      else ruleEdits.set(e.id, rules);
+      onEdit();
+    },
+    onTyping: () => (lastTypedAt = performance.now()),
+  });
+
   const renderEditor = () => {
     const e = entry();
-    edKind.textContent = e.mode === 'formula' ? 'Formula' : e.mode === 'basic' ? 'Basic wave' : (e.family ?? 'Parameters');
+    edKind.textContent = e.mode === 'formula' ? 'Formula' : e.mode === 'basic' ? 'Basic wave' : e.mode === 'rules' ? 'Rules' : (e.family ?? 'Parameters');
     edPath.textContent = `${e.cat} › ${e.name}`;
-    revertBtn.textContent = e.mode === 'formula' || e.mode === 'basic' ? 'Revert to preset' : 'Revert to defaults';
+    revertBtn.textContent = e.mode === 'formula' || e.mode === 'basic' || e.mode === 'rules' ? 'Revert to preset' : 'Revert to defaults';
     showEdited(isEdited(e));
     exprInput = null;
     paramInputs = [];
@@ -441,6 +495,13 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     if (e.mode === 'formula') {
       setAbout('', null);
       edBody.replaceChildren(formulaInput(e), ...legend());
+    } else if (e.mode === 'rules') {
+      setAbout(
+        `${e.about ?? ''} Rules apply in order, each setting the harmonics (k = 1…72, from 0) where its condition holds to its value.`,
+        null,
+      );
+      rulesEd.sync(rulesOf(e));
+      edBody.replaceChildren(rulesEd.el);
     } else if (hasSource(e)) {
       // Basic presets: the expression (built-in function or naive formula), Pulse's sliders below it.
       const builtin = sourceOf(e) === 'builtin';
@@ -584,13 +645,16 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
   /** Start computing the current request; null when the formula doesn't compile. */
   const startJob = (): Job | null => {
     const req = request();
-    let fn: FormulaFn | undefined;
+    let fn: FormulaFn | RuleProgram | undefined;
     const fexpr = formulaOf(req);
-    if (fexpr !== null) {
+    if (req.entry.mode === 'rules') {
+      fn = compileRuleList(seedRules(req));
+      if (programError(fn) !== null) return null;
+    } else if (fexpr !== null) {
       fn = compile(fexpr).fn;
       if (!fn) return null;
     }
-    job = { key: keyOf(req), req, fn, tables: new Array(req.count), errors: new Array(req.count), next: 0, fatal: '' };
+    job = { key: keyOf(req), req, fn, tables: new Array(req.count), errors: new Array(req.count), errorRules: new Array(req.count), next: 0, fatal: '' };
     cardsDirty = mainDirty = statusDirty = true;
     return job;
   };
@@ -613,8 +677,11 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     try {
       j.tables[i] = seedTable(j.req, i, j.fn, () => performance.now() > stopAt);
     } catch (e) {
-      if (e instanceof FormulaAborted) j.fatal = `too slow (one waveform took over ${TABLE_CAP_MS} ms); simplify the formula`;
-      else j.errors[i] = errText(e);
+      if (e instanceof FormulaAborted) j.fatal = `too slow (one waveform took over ${TABLE_CAP_MS} ms); simplify the ${j.req.entry.mode === 'rules' ? 'rules' : 'formula'}`;
+      else {
+        j.errors[i] = errText(e);
+        if (e instanceof RuleError) j.errorRules[i] = e.rule;
+      }
       statusDirty = cardsDirty = mainDirty = true;
       return false;
     }
@@ -646,7 +713,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     statusDirty = false;
     const e = entry();
     const fexpr = formulaOf(request());
-    const syntax = fexpr !== null ? compile(fexpr).err : undefined;
+    const syntax = syntaxOf(request());
     const j = job && job.key === keyOf(request()) ? job : null;
     const failed = j ? failedOf(j) : [];
     const shown = strip.shown();
@@ -659,6 +726,16 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     }
     errEl.textContent = err;
     exprInput?.classList.toggle('invalid', !!blocking);
+    if (e.mode === 'rules') {
+      // Per-rule errors on their rows: compile errors, and the shown (or first) failed waveform's runtime error.
+      const rowErrs = [...compileRuleList(rulesOf(e)).errors];
+      if (j && failed.length) {
+        const first = failed.includes(shown) ? shown : failed[0];
+        const r = j.errorRules[first];
+        if (r !== undefined && rowErrs[r] === undefined) rowErrs[r] = `#${first + 1}: ${j.errors[first]!.replace(/^Rule \d+: /, "")}`;
+      }
+      rulesEd.setErrors(rowErrs);
+    }
     // Timeline full (every waveform used by a wavetable): adds are refused.
     const room1 = model.roomFor(1);
     const roomN = model.roomFor(opts.count());
@@ -669,7 +746,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     el.classList.toggle('seed-stale', !!blocking);
     // Parameter entries keep the seed box's space when a param turns the seed off (e.g.
     // Karplus excitation), so changing it doesn't shift the batch row.
-    const seeded = seedUsesRandomness(e, fexpr ?? exprOf(e), paramsOf(e));
+    const seeded = seedUsesRandomness(e, fexpr ?? exprOf(e), paramsOf(e), rulesOf(e));
     seedBox.hidden = !seeded && !e.params?.length;
     seedBox.classList.toggle('seed-off', !seeded);
   };
@@ -696,7 +773,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     }
     if (!model.addTables(j.tables.map((_, i) => finalTable(j, i)!), true).length) return; // refused: keep the seed
     const n = j.req.count;
-    if (seedUsesRandomness(j.req.entry, formulaOf(j.req) ?? j.req.expr, j.req.params)) {
+    if (seedUsesRandomness(j.req.entry, formulaOf(j.req) ?? j.req.expr, j.req.params, seedRules(j.req))) {
       newSeed();
       flash(`Added ${n} waveform${n > 1 ? 's' : ''} to the Timeline · new seed`);
     } else flash(`Added ${n} waveform${n > 1 ? 's' : ''} to the Timeline`);
@@ -757,13 +834,22 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const req = cur?.req ?? request();
     const count = req.count;
     const index = Math.min(i, count - 1);
-    const input = { params: req.params, seed: req.seed, index, count, u: batchU(index, count), inputs: req.inputs?.length ? req.inputs[index % req.inputs.length] : undefined };
+    const harmonics = e.mode === 'rules' ? rulesResult(req, index, count) : undefined;
+    const input = { params: req.params, seed: req.seed, index, count, u: batchU(index, count), inputs: req.inputs?.length ? req.inputs[index % req.inputs.length] : undefined, harmonics };
     const labels = v.axis(input);
     basisAxis.childNodes.forEach((n, k) => (n.textContent = labels[k]));
     basisAxis.title = labels[1];
     basisC.setAttribute('aria-label', `What ${e.name} is based on: ${labels[1]}`);
     if (failed && cur) return;
     v.draw(g, w, hh, input, vizColors());
+  };
+  /** Harmonic rules: the shown waveform's amplitudes and the rule that set each one (null if it fails). */
+  const rulesResult = (req: SeedRequest, index: number, count: number): RulesResult | null => {
+    try {
+      return evalRules(compileRuleList(seedRules(req)), null, req.seed, index, count);
+    } catch {
+      return null;
+    }
   };
   const vizColors = (): VizColors => ({
     line: cssColor('--text-2'),
@@ -798,7 +884,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
 
   const thumbTable = (e: SeedEntry): Float32Array => {
     try {
-      const fn = e.mode === 'formula' ? compileFormula(e.expr!) : undefined;
+      const fn = e.mode === 'formula' ? compileFormula(e.expr!) : e.mode === 'rules' ? compileRules(e.rules ?? [], compileRule) : undefined;
       return seedTable({ entry: e, expr: e.expr ?? '', params: {}, seed: THUMB_SEED, count: 3 }, 1, fn).data;
     } catch {
       return new Float32Array(2);
@@ -865,8 +951,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         return cur ? previewOf(cur.tables, shapeOn, strip.shown()) : null;
       },
       batch(deadline) {
-        const fexpr = formulaOf(request());
-        const syntax = fexpr !== null ? compile(fexpr).err : undefined;
+        const syntax = syntaxOf(request());
         if (syntax) return { error: `Seed: syntax: ${syntax}` };
         const j = currentJob();
         if (!j) return { error: 'Seed: nothing to make' };
@@ -890,7 +975,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         if (!opts.active() || !isOnScreen(el)) return;
         const deadline = performance.now() + BUDGET_MS;
         const key = keyOf(request());
-        const typing = (entry().mode === 'formula' || hasSource(entry())) && performance.now() - lastTypedAt < TYPING_MS;
+        const typing = (entry().mode === 'formula' || entry().mode === 'rules' || hasSource(entry())) && performance.now() - lastTypedAt < TYPING_MS;
         if (job?.key !== key && !typing && now - lastStart >= PREVIEW_MS) {
           lastStart = now;
           startJob();

@@ -4,15 +4,17 @@
  * leaves through shape(), exactly as the app adds it) and measures them (metrics.ts,
  * score.ts). Deterministic: every seed derives from `cfg.seed` and the item's id.
  */
-import { compileFormula } from '../../src/browser/formulaEval';
+import { compileFormula, compileRule } from '../../src/browser/formulaEval';
 import { BREED_OPS, breedBatch, defaultBreedBias, isSeededOp, type BreedMode, type BreedOpId } from '../../src/core/breed';
 import { basicWave } from '../../src/core/generators/basic';
 import { glyphInputs } from '../../src/core/generators/glyph';
+import { compileRules } from '../../src/core/generators/harmonicRules';
 import {
   SEED_LIBRARY,
   seedEntry,
   seedFormulaExpr,
   seedParams,
+  seedRules,
   seedTable,
   seedUsesRandomness,
   type SeedEntry,
@@ -167,9 +169,15 @@ export function seedRequest(entry: SeedEntry, params: Record<string, number>, se
 
 /** Render a Seed batch (formulas compiled with the browser's compiler, which is plain `new Function`). */
 export function renderSeed(req: SeedRequest): Float32Array[] {
-  const fexpr = seedFormulaExpr(req);
-  const fn = fexpr !== null ? compileFormula(fexpr) : undefined;
+  const fn = compiledFor(req);
   return Array.from({ length: req.count }, (_, i) => seedTable(req, i, fn).data);
+}
+
+/** What seedTable needs compiled for a request: its formula, or its Harmonic rules. */
+function compiledFor(req: SeedRequest) {
+  if (req.entry.mode === 'rules') return compileRules(seedRules(req), compileRule);
+  const fexpr = seedFormulaExpr(req);
+  return fexpr !== null ? compileFormula(fexpr) : undefined;
 }
 
 /** Can random batches differ from the default one? (params to randomise, or a seed that matters) */
@@ -239,8 +247,7 @@ function seedRef(id: string, entryId: string, index: number, count: number, seed
   const entry = seedEntry(entryId);
   if (!entry) throw new Error(`no Seed entry ${entryId}`);
   const req = seedRequest(entry, seedParams(entry), seed, count);
-  const fexpr = seedFormulaExpr(req);
-  const t = seedTable(req, index, fexpr !== null ? compileFormula(fexpr) : undefined);
+  const t = seedTable(req, index, compiledFor(req));
   return { id, label, how: `Seed '${entryId}', defaults, seed ${seed}, waveform ${index + 1} of ${count}`, table: { id: hashId(id), data: t.data, recipe: t.recipe } };
 }
 

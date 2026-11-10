@@ -21,6 +21,9 @@ src/
                         glyph(): raw cycles sampled at a phase, per-render memo),
                         asFormula.ts ("Edit as formula": a library entry's params →
                         the equivalent formula; basic presets' source expressions),
+                        harmonicRules.ts (Harmonic rules: rule lists, normalizeRules /
+                        rulesJson, compileRules with a host RuleCompiler, evalRules,
+                        rulesTable, the presets),
                         seed.ts (Seed library entries + seedTable/seedBatch),
                         (core/sample/: pitch.ts YIN pitch, extract.ts single cycle /
                         series frames, harmonic.ts harmonic snapshots, for the Sample tab)
@@ -75,7 +78,8 @@ src/
                         synthVoice.ts (the Synth voice path), svf.ts (ZDF multimode filter,
                         drive, limiter, response curve)
   browser/formulaEval.ts  JS expression → FormulaFn (browser-only convenience; binds the
-                        waveform functions the expression names)
+                        waveform functions the expression names); compileRule: a Harmonic
+                        rules expression → RuleFn (memoised by source)
   browser/glyphTrace.ts character → canvas → outer contour polyline (Glyph contour mode)
   browser/webMidi.ts    Web MIDI access: permission, inputs + hot-plug, chosen input(s),
                         unsupported / insecure / denied states
@@ -159,7 +163,17 @@ scripts/harmonics/      harmonic-interest evaluation (npm run eval:harmonics; ru
   function** renders through the generator (`basic` / `pulse` recipes, as before); the
   **Formula** source or an edited expression renders as a formula (`op: 'formula'`, `expr`,
   `name` = the preset's, `edited` vs that source's expression, `preset` = its id;
-  `seedFormulaExpr()` says which). `seed` and `batch {index, count}`
+  `seedFormulaExpr()` says which). **Harmonic rules** entries (mode / `op: 'rules'`,
+  library group "Harmonic rules", one entry per preset) record `rules` (the rule list's
+  canonical JSON, `rulesJson`: `[{ when, value, on }]`), `name`, `edited` (vs the preset's
+  rules) and `preset`; `seedTable` takes the compiled rules (`compileRules(seedRules(req),
+  compileRule)`) where formulas take their FormulaFn, and `renderRecipe` needs
+  `env.compileRule`. Evaluation (`evalRules`): amplitudes 1..KMAX from 0, each enabled rule
+  one ascending pass updating them in place (`v`, `a(j)`), `rand(x)` = a hash of (seed,
+  rule index, round(1024·x)); a rule that doesn't compile, throws or gives a non-finite value
+  is a `RuleError` (a FormulaError naming the rule, so the UI marks its row); `abort()` is
+  polled every 8 harmonics and by the waveform functions. The cycle is Σ A_k·sin(k·p) (an
+  inverse FFT), then shape(). `seed` and `batch {index, count}`
   are always set (also for single "Add shown" tables, which keep their batch position),
   so every Seed table re-renders exactly (tested for every library entry).
 - **Mutation recipe** — `op: 'mutate'`, `params { mutation, amount (this table's),
@@ -882,7 +896,9 @@ the C++ tests compare against, so a change here that alters those numbers fails
   `core/generators/waveFunctions.ts` (pure core code: each calls a generator's raw-cycle
   function, so the C++ generators can back them; "Edit as formula" output and the glyph
   contour literals are plain strings, numbers and arrays). Formula recipes store the
-  expression text, so tables still carry provenance.
+  expression text, so tables still carry provenance. Harmonic rules expressions are the
+  same language with other variables (k, K, v, a(j), n, u and prime / db / rand); the core
+  takes a `RuleCompiler` the same way.
 - **Formula waveform functions** (`waveFunctions(seed, memo, check)`, passed to every
   FormulaFn as its 7th argument, built per table by `formulaTable`): each returns its
   generator's cycle *before* shape(), divided by that cycle's peak (normalised to ±1, DC

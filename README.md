@@ -102,7 +102,8 @@ switches (the choice is remembered).
   noise, cellular automaton, simulations — dynamical systems, Karplus-Strong,
   reaction-diffusion, Life-like automata — and builders — additive designer, number
   sequences, spline, glyph contour (type text; each character's outline becomes a
-  waveform) — and a blank formula). Search filters by name,
+  waveform) — **Harmonic rules** (an ordered list of condition → value rules over the
+  harmonics; see [Harmonic rules](#harmonic-rules)) and a blank formula). Search filters by name,
   category or formula text (Enter picks the first match, ↓ moves into the list, Esc
   clears); ▲/▼ or the arrow keys step through the (filtered) list. On a phone the library
   is one row (▲ · Category › Name · ▼); tap the name for the list. Edit the formula (JS in
@@ -430,6 +431,37 @@ exactly, `pulse` stays the naive pulse, `perlin` is evaluated directly and the o
 functions interpolate their cycle (cubic). Examples: `saw(p) - saw(p + 2*PI*(0.1+0.4*u))`
 (a pulse-width sweep), `ca(p, 30, 32, n) * sine(p)`, `ks(p, 50*n, 0.5, 0.2, 96, 1) +
 0.3*pulse(3*p, 0.2)`.
+
+## Harmonic rules
+
+The Seed library's **Harmonic rules** group builds a waveform from its harmonics with an
+ordered list of rules, each a *condition* and a *value* in the formula language. The 72
+harmonic amplitudes start at 0 (linear; a negative value inverts that harmonic); each
+enabled rule is then one pass over k = 1 … 72 in ascending order, updating them in place:
+where the condition is non-zero (an empty condition means always) the harmonic takes the
+value. Every matching rule applies, in list order. The result is summed in sine phase (like
+the Additive designer) and then band-limited, phase-aligned and normalised like every
+waveform.
+
+| Name | Meaning |
+| --- | --- |
+| `k` | the harmonic number, 1 … 72 |
+| `K` | 72 |
+| `v` | this harmonic's current value |
+| `a(j)` | harmonic j's current value: below k already updated by this rule, above k as earlier rules left it; 0 out of range |
+| `n`, `u` | batch index and position, as in formulas |
+| `prime(x)` | 1 if x (rounded) is prime, else 0 |
+| `db(x)` | dB → linear (`db(-6)` ≈ 0.5) |
+| `rand(x)` | seeded 0 … 1, fixed per seed, rule and x (`rand()` = `rand(k)`); Reroll for another |
+| `pnoise(…)`, `noise(…)`, `sin`, …, waveform functions | as in formulas; `pnoise` reads around the harmonics (phase 2π(k−1)/72) |
+
+Use `**` or `pow()` for powers (`^` is JavaScript's bitwise XOR). Examples: `k%2==1` →
+`1/k` (a square), `prime(k)` → `1/k`, `k>1` → `v + 0.3*a(k-1)` (energy smeared upward),
+(always) → `v + exp(-pow(k-(4+20*u), 2)/6)` (a formant moving across the batch). Each row has an
+on / off toggle, ▲ / ▼ to reorder and × to remove; **+ Rule** adds one (up to 16). A
+rule that doesn't compile, throws or gives a non-finite value shows its error on its row;
+the basis plot draws each harmonic as a stem coloured by the last rule that matched it (the
+colour of that rule's number).
 
 ## Keyboard shortcuts
 

@@ -10,6 +10,7 @@ import { sourceExpr, type ExprSource } from './asFormula';
 import { basicWave, pulse, type BasicWave } from './basic';
 import { CA_RULES, caGenerations } from './ca';
 import { formulaTable, type FormulaFn } from './formula';
+import { RULES_PRESETS, rulesJson, rulesTable, rulesUseSeed, type HarmonicRule, type RuleProgram } from './harmonicRules';
 import { FORMULA_PRESETS } from './formulaPresets';
 import { PARAM_MODES, paramMode, type ModeVariant, type ParamModeDef, type ParamModeId, type SeedParam } from './paramModes';
 import { batchU, DEFAULT_PERLIN, perlinTable, type PerlinParams } from './perlin';
@@ -17,7 +18,7 @@ import { batchU, DEFAULT_PERLIN, perlinTable, type PerlinParams } from './perlin
 export type { SeedParam } from './paramModes';
 
 /** Built-in modes, or a PARAM_MODES mode (e.g. 'dynamical'). */
-export type SeedMode = 'basic' | 'pulse' | 'formula' | 'perlin' | 'ca' | ParamModeId;
+export type SeedMode = 'basic' | 'pulse' | 'formula' | 'perlin' | 'ca' | 'rules' | ParamModeId;
 
 export interface SeedEntry {
   /** Stable id, recorded in recipes as `params.preset`. */
@@ -27,6 +28,8 @@ export interface SeedEntry {
   readonly mode: SeedMode;
   /** Preset expression (mode 'formula'). */
   readonly expr?: string;
+  /** Preset rule list (mode 'rules': Harmonic rules). */
+  readonly rules?: readonly HarmonicRule[];
   /** Additive generator (mode 'basic'). */
   readonly wave?: BasicWave;
   /** Editable parameters (every mode except 'basic' and 'formula'). */
@@ -118,6 +121,9 @@ function addVariants(base: { mode: SeedMode; name: string; about?: string; param
 for (const m of MODES) addVariants({ ...m, mode: m.mode as ParamModeId }, m.variants ?? []);
 addVariants({ ...PERLIN_ENTRY, params: PERLIN_ENTRY.params!, about: PERLIN_ABOUT }, PERLIN_VARIANTS);
 
+/** The library group of the Harmonic rules presets. */
+export const RULES_CAT = 'Harmonic rules';
+
 const BASE_LIBRARY: readonly SeedEntry[] = [
   basic('Sine', 'sine', 'sine(p)', 'The fundamental alone.', 'sin(p)'),
   basic(
@@ -169,6 +175,7 @@ const BASE_LIBRARY: readonly SeedEntry[] = [
     ],
   },
   ...MODES.filter((m) => !m.after && !m.variants).map(modeEntry),
+  ...RULES_PRESETS.map((r): SeedEntry => ({ id: r.id, cat: RULES_CAT, name: r.name, mode: 'rules', rules: r.rules, about: r.about })),
   { id: 'blank-formula', cat: 'Custom', name: 'Blank formula', mode: 'formula', expr: 'sin(p) + 0.5*sin(2*p)*u' },
 ];
 
@@ -198,8 +205,10 @@ export function seedUsesRandomness(
   entry: SeedEntry,
   expr = entry.expr ?? '',
   params: Readonly<Record<string, number>> = {},
+  rules: readonly HarmonicRule[] = entry.rules ?? [],
 ): boolean {
   if (entry.mode === 'perlin' || entry.mode === 'ca') return true;
+  if (entry.mode === 'rules') return rulesUseSeed(rules);
   const pm = paramMode(entry.mode);
   if (pm) return pm.seeded(seedParams(entry, params));
   return (entry.mode === 'formula' || entry.mode === 'basic' || entry.mode === 'pulse') && SEEDED_CALL.test(expr);
@@ -222,6 +231,8 @@ export interface SeedRequest {
   readonly source?: ExprSource;
   /** Param values for parameter-mode entries (missing keys use defaults). */
   readonly params: Readonly<Record<string, number>>;
+  /** Harmonic rules entries: the rule list (may differ from the preset: edited); default the entry's. */
+  readonly rules?: readonly HarmonicRule[];
   readonly seed: number;
   /** Batch size N (u = index / (N-1)). */
   readonly count: number;
@@ -247,13 +258,18 @@ export function seedFormulaExpr(req: SeedRequest): string | null {
   return source === 'builtin' && expr === def ? null : expr;
 }
 
+/** The rule list a Harmonic rules request renders (the request's, else the preset's). */
+export const seedRules = (req: SeedRequest): readonly HarmonicRule[] => req.rules ?? req.entry.rules ?? [];
+
 /**
- * Table `index` of a Seed batch. Formula entries need the compiled expression (the core
- * never parses expressions). Throws FormulaError on non-finite formula output and
- * FormulaAborted when `abort()` returns true (polled during formula evaluation only;
- * the other modes are bounded).
+ * Table `index` of a Seed batch. Formula entries need the compiled expression, Harmonic
+ * rules entries the compiled rules (compileRules of seedRules(req)): the core never
+ * parses expressions. Throws FormulaError on non-finite formula output (RuleError for
+ * rules) and FormulaAborted when `abort()` returns true (polled during formula and rule
+ * evaluation only; the other modes are bounded).
  */
-export function seedTable(req: SeedRequest, index: number, fn?: FormulaFn, abort?: () => boolean): GeneratedTable {
+export function seedTable(req: SeedRequest, index: number, compiled?: FormulaFn | RuleProgram, abort?: () => boolean): GeneratedTable {
+  const fn = typeof compiled === 'function' ? compiled : undefined;
   const { entry, count } = req;
   const seed = req.seed >>> 0;
   const batch = { index, count };
@@ -290,6 +306,16 @@ export function seedTable(req: SeedRequest, index: number, fn?: FormulaFn, abort
         recipe: recipe('formula', { expr: req.expr, name: entry.name, edited: req.expr !== entry.expr }),
       };
     }
+    case 'rules': {
+      const prog = compiled && typeof compiled === 'object' ? compiled : undefined;
+      if (!prog) throw new Error('seedTable: Harmonic rules entries need compiled rules');
+      // The recipe records the rules that were compiled (and so rendered).
+      const json = rulesJson(prog.rules);
+      return {
+        data: rulesTable(prog, seed, index, count, abort),
+        recipe: recipe('rules', { rules: json, name: entry.name, edited: json !== rulesJson(entry.rules ?? []) }),
+      };
+    }
     case 'perlin': {
       const pp: PerlinParams = {
         freq: p.freq,
@@ -324,7 +350,7 @@ export function seedTable(req: SeedRequest, index: number, fn?: FormulaFn, abort
 }
 
 /** Every table of a Seed batch, in order. */
-export function seedBatch(req: SeedRequest, fn?: FormulaFn): GeneratedTable[] {
+export function seedBatch(req: SeedRequest, fn?: FormulaFn | RuleProgram): GeneratedTable[] {
   return Array.from({ length: req.count }, (_, i) => seedTable(req, i, fn));
 }
 

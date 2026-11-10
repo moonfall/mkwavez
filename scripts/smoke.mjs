@@ -3,7 +3,8 @@
 // scroll and panels in layout C; at 390px panels stack, collapse (Wavetables starts collapsed;
 // a collapsed panel stops redrawing) and nothing overflows sideways; only voice 1 starts
 // unmuted; voice tabs switch both the Voice and the Sequence panel; Seed (library search / ▲▼ /
-// arrow keys, formula edit / revert, parameter modes, batch strip arrow keys, Add shown / Add
+// arrow keys, formula edit / revert, parameter modes, Harmonic rules rows / per-row errors / basis
+// plot, batch strip arrow keys, Add shown / Add
 // batch) adds exactly the previewed tables; the worklet loads and the transport runs; the
 // timeline strip tints voice windows (bands in voice order, start / end edges, muted faint),
 // shows carets for unmuted voices, cycles its thumbnail view (remembered), keeps the selection
@@ -569,6 +570,37 @@ async function seedChecks(page, tlCount) {
   assert((await title()) === 'Math › Sine→saw' && !(await page.isVisible('#seed-list')), 'picking an entry selects it and closes the list');
   await page.waitForFunction(() => document.querySelector('#seed-basis-plot').hidden, null, { timeout: 3000 });
   assert(true, 'no basis plot for a builder without one (Sine→saw)');
+
+  // Harmonic rules: one row per rule, the basis plot (stems coloured by rule), per-row errors, + Rule, Revert.
+  await page.click('#seed-current');
+  await page.click('#seed-list .gen-entry[data-id="rules-comb"]');
+  await page.waitForFunction(() => document.querySelectorAll('#seed-rules-list .rules-row').length === 2 && !document.querySelector('#seed-basis-plot').hidden, null, { timeout: 3000 });
+  assert(
+    (await page.textContent('#seed-kind')) === 'Rules' && (await page.inputValue('#seed-rules-when-1')) === 'k%(3+n)==0' && (await page.inputValue('#seed-rules-value-1')) === '0',
+    'Harmonic rules: one row per rule (condition, value)',
+  );
+  await page.waitForFunction(
+    () => {
+      const c = document.querySelector('#seed-basis');
+      return c.width > 1 && c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 === 3 && v);
+    },
+    null,
+    { timeout: 3000 },
+  );
+  assert((await page.textContent('#seed-basis-plot .gen-axis')).includes('last rule that matched'), 'Harmonic rules: basis plot of stems coloured by rule');
+  await page.fill('#seed-rules-value-1', '1/(k-6)');
+  await page.waitForFunction(() => document.querySelector('#seed-rules-err-1').textContent.includes('non-finite value at k = 6'), null, { timeout: 3000 });
+  assert(await page.isDisabled('#seed-add-batch'), 'Harmonic rules: a non-finite value is shown on its row; Add batch disabled');
+  await page.fill('#seed-rules-when-0', 'k>');
+  await page.waitForFunction(() => document.querySelector('#seed-rules-err-0').textContent.startsWith('condition:') && document.querySelector('#seed-error').textContent.startsWith('Syntax: Rule 1'), null, { timeout: 3000 });
+  assert(true, 'Harmonic rules: a syntax error is shown on its row');
+  await page.click('#seed-rules-add');
+  assert((await page.$$('#seed-rules-list .rules-row')).length === 3 && (await page.isVisible('#seed-edited')), '+ Rule adds a row (edited)');
+  await page.click('#seed-revert');
+  await page.waitForFunction(() => document.querySelectorAll('#seed-rules-list .rules-row').length === 2 && !document.querySelector('#seed-add-batch').disabled, null, { timeout: 3000 });
+  assert((await page.textContent('#seed-rules-err-0')) === '' && !(await page.isVisible('#seed-edited')), 'Revert to preset restores the rules');
+  await page.click('#seed-current');
+  await page.click('#seed-list .gen-entry[data-id="sine-saw"]');
 
   // Formula edit / error / revert.
   const preset = await page.inputValue('#seed-expr');

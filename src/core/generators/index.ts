@@ -5,6 +5,7 @@ import type { Recipe, TableId } from '../table';
 import { basicWave, pulse, type BasicWave } from './basic';
 import { caGenerations } from './ca';
 import { formulaTable, type FormulaCompiler } from './formula';
+import { compileRules, parseRules, rulesTable, type RuleCompiler } from './harmonicRules';
 import { paramMode, renderParamMode } from './paramModes';
 import { DEFAULT_PERLIN, perlinTable } from './perlin';
 import { pulseWidth } from './seed';
@@ -18,6 +19,7 @@ export * from './paramModes';
 export * from './formula';
 export * from './formulaPresets';
 export * from './glyph';
+export * from './harmonicRules';
 export * from './life';
 export * from './perlin';
 export * from './series';
@@ -44,6 +46,8 @@ export * from './asFormula';
 export interface RenderEnv {
   /** Needed only for 'formula' recipes (browser: src/browser/formulaEval.ts). */
   compileFormula?: FormulaCompiler;
+  /** Needed only for 'rules' recipes (browser: src/browser/formulaEval.ts compileRule). */
+  compileRule?: RuleCompiler;
   /** Needed only for recipes with parents ('mutate', 'breed', 'shape'): parent table data by id. */
   resolveTable?: (id: TableId) => Float32Array | undefined;
 }
@@ -95,6 +99,10 @@ function renderOp(r: Recipe, env: RenderEnv): Float32Array {
     case 'formula': {
       if (!env.compileFormula) throw new Error('renderRecipe: formula needs a compiler');
       return formulaTable(env.compileFormula(String(p.expr)), r.seed, index, count);
+    }
+    case 'rules': {
+      if (!env.compileRule) throw new Error('renderRecipe: Harmonic rules need a rule compiler');
+      return rulesTable(compileRules(parseRules(p.rules), env.compileRule), r.seed, index, count);
     }
     case 'mutate': {
       if (!env.resolveTable) throw new Error('renderRecipe: mutate needs resolveTable');

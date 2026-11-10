@@ -77,10 +77,12 @@ import {
   type SplineParams,
   type SuperformulaParams,
   type SyncParams,
+  type RulesResult,
 } from '../core/generators';
 import { fbm, noiseField } from '../core/perlin';
 import type { ParamValue } from '../core/table';
 import { parseColor } from './canvas';
+import { ruleColor } from './rulesEditor';
 
 /** What the shown waveform was made from. */
 export interface VizInput {
@@ -93,6 +95,8 @@ export interface VizInput {
   readonly u: number;
   /** Per-table host inputs (Glyph contour: the traced contour and character). */
   readonly inputs?: Readonly<Record<string, ParamValue>>;
+  /** Harmonic rules: the shown waveform's amplitudes and the rule that set each (null: the rules fail). */
+  readonly harmonics?: RulesResult | null;
 }
 
 export interface VizColors {
@@ -1050,5 +1054,50 @@ viz('glyph-contour', {
     g.closePath();
     g.fill();
     g.stroke();
+  },
+});
+
+// Harmonic rules: a stem per harmonic at its amplitude (signed: below the axis = inverted),
+// coloured by the last rule that matched it (the colour on that rule's row); a harmonic a rule
+// set to 0 shows as a dot in that rule's colour.
+viz('mode:rules', {
+  axis: (i) => {
+    const r = i.harmonics;
+    if (!r) return ['h1', 'harmonics (the rules fail)', `h${KMAX}`];
+    let n = 0;
+    for (let k = 1; k <= KMAX; k++) if (r.amps[k] !== 0) n++;
+    return ['h1', `${n} harmonic${n === 1 ? '' : 's'} · colour = last rule that matched`, `h${KMAX}`];
+  },
+  draw: (g, w, h, i, c) => {
+    const r = i.harmonics;
+    if (!r) return;
+    let m = 0;
+    let neg = false;
+    for (let k = 1; k <= KMAX; k++) {
+      m = Math.max(m, Math.abs(r.amps[k]));
+      if (r.amps[k] < 0) neg = true;
+    }
+    const s = scale(w, h, 0.5, KMAX + 0.5, neg ? -1.05 : 0, 1.05);
+    const y0 = s.y(0);
+    g.strokeStyle = c.axis;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(0, Math.round(y0) + 0.5);
+    g.lineTo(w, Math.round(y0) + 0.5);
+    g.stroke();
+    g.lineWidth = Math.max(1, Math.min(3, (w / KMAX) * 0.5));
+    for (let k = 1; k <= KMAX; k++) {
+      const a = m > 0 ? r.amps[k] / m : 0;
+      const col = r.last[k] >= 0 ? ruleColor(r.last[k]) : c.muted;
+      if (a === 0) {
+        if (r.last[k] >= 0) dot(g, s.x(k), y0, 1.5, col);
+        continue;
+      }
+      g.strokeStyle = col;
+      g.beginPath();
+      g.moveTo(s.x(k), y0);
+      g.lineTo(s.x(k), s.y(a));
+      g.stroke();
+    }
   },
 });

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { compileFormula } from '../src/browser/formulaEval';
+import { compileFormula, compileRule } from '../src/browser/formulaEval';
 import { KMAX, TABLE_SIZE } from '../src/core/constants';
 import { harmonicMagnitudes } from '../src/core/fft';
 import {
+  compileRules,
   FormulaAborted,
   FormulaError,
   FORMULA_PRESETS,
@@ -12,6 +13,7 @@ import {
   seedBatch,
   seedEntry,
   seedParams,
+  seedRules,
   seedTable,
   DEFAULT_PERLIN,
   perlinAt,
@@ -22,7 +24,7 @@ import {
 import { describeRecipe } from '../src/core/table';
 
 const same = (a: Float32Array, b: Float32Array) => a.length === b.length && a.every((v, i) => v === b[i]);
-const fnFor = (r: SeedRequest) => (r.entry.mode === 'formula' ? compileFormula(r.expr) : undefined);
+const fnFor = (r: SeedRequest) => (r.entry.mode === 'formula' ? compileFormula(r.expr) : r.entry.mode === 'rules' ? compileRules(seedRules(r), compileRule) : undefined);
 const req = (entry: SeedEntry, over: Partial<SeedRequest> = {}): SeedRequest => ({
   entry,
   expr: entry.expr ?? '',
@@ -54,7 +56,7 @@ describe('Seed library', () => {
         expect(t.recipe.params.preset).toBe(entry.id);
         expect(t.recipe.batch).toEqual({ index: i, count: 5 });
         expect(t.recipe.seed).toBe(0xdeadbeef);
-        expect(same(t.data, renderRecipe(t.recipe, { compileFormula })), entry.id).toBe(true);
+        expect(same(t.data, renderRecipe(t.recipe, { compileFormula, compileRule })), entry.id).toBe(true);
         expect(same(t.data, seedTable(r, i, fnFor(r)).data), `${entry.id} single table = batch table`).toBe(true);
         expect(describeRecipe(t.recipe).length).toBeGreaterThan(0);
       });

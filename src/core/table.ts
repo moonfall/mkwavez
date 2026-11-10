@@ -88,6 +88,8 @@ function describeOp(r: Recipe): string {
       return `${String(p.wave)}${p.wave === 'noise' ? ` seed ${r.seed}` : ''}`;
     case 'formula':
       return `${p.name ? String(p.name) : 'formula'}${p.edited ? ' (edited)' : ''}${b}`;
+    case 'rules':
+      return `${p.name ? String(p.name) : 'Harmonic rules'} (rules${p.edited ? ', edited' : ''})${b}`;
     case 'pulse':
       return `pulse ${Math.round(Number(p.width) * 100)}→${Math.round(Number(p.widthEnd) * 100)}%${b}`;
     case 'perlin':
