@@ -46,7 +46,7 @@ export * from './asFormula';
 export interface RenderEnv {
   /** Needed only for 'formula' recipes (browser: src/browser/formulaEval.ts). */
   compileFormula?: FormulaCompiler;
-  /** Needed only for 'rules' recipes (browser: src/browser/formulaEval.ts compileRule). */
+  /** Needed only for 'rules' recipes and Shape chains with a Rules step (browser: formulaEval.ts compileRule). */
   compileRule?: RuleCompiler;
   /** Needed only for recipes with parents ('mutate', 'breed', 'shape'): parent table data by id. */
   resolveTable?: (id: TableId) => Float32Array | undefined;
@@ -60,7 +60,7 @@ export function renderRecipe(r: Recipe, env: RenderEnv = {}): Float32Array {
   const base = renderOp(r, env);
   if (r.shape === undefined || r.op === SHAPE_OP) return base;
   const c = recipeChain(r);
-  return c ? applyChain(base, c, r.batch ?? { index: 0, count: 1 }) : base;
+  return c ? applyChain(base, c, r.batch ?? { index: 0, count: 1 }, { compileRule: env.compileRule }) : base;
 }
 
 function renderOp(r: Recipe, env: RenderEnv): Float32Array {
@@ -114,7 +114,7 @@ function renderOp(r: Recipe, env: RenderEnv): Float32Array {
     }
     case SHAPE_OP: {
       if (!env.resolveTable) throw new Error('renderRecipe: shape needs resolveTable');
-      return renderShapeRecipe(r, env.resolveTable);
+      return renderShapeRecipe(r, env.resolveTable, { compileRule: env.compileRule });
     }
     default: {
       const pm = paramMode(r.op);

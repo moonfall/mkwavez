@@ -3840,6 +3840,20 @@ input.shape-num {
 .shape-key-set {
   color: var(--v2);
 }
+.shape-key-rule {
+  color: var(--rule-1);
+}
+.shape-ed-hint.error {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+/* The Rules step's editor takes the whole settings row. */
+.shape-params > .rules-editor {
+  flex: 1 1 100%;
+}
+button.shape-chip.warn {
+  border-color: var(--danger);
+}
 .shape .gen-seedbox {
   flex: none;
 }

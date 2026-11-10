@@ -13,7 +13,7 @@
  */
 import { mutateBatchTable, type MutateRequest } from './mutateBatch';
 import type { MutationId, SweepMode } from './mutations';
-import { applyChain, chainSweeps, shapeRecipe, type ShapeChain } from './shapeChain';
+import { applyChain, chainSweeps, shapeRecipe, type ChainEnv, type ShapeChain } from './shapeChain';
 import type { GeneratedTable, TableId, WaveTable } from './table';
 
 /** Largest side of a grid. */
@@ -58,15 +58,16 @@ export function rowOpVaries(op: GridRowOp): boolean {
 
 /**
  * Row table j (of `count`) of column `col` (its id may be a columnRef). A Mutate chain
- * needs `prev` = row j−1's data (ignored for j = 0).
+ * needs `prev` = row j−1's data (ignored for j = 0); a chain with a Rules step needs
+ * env.compileRule (and throws a ShapeStepError if a rule fails).
  */
-export function gridRowTable(op: GridRowOp, col: WaveTable, j: number, count: number, prev?: Float32Array): GeneratedTable {
+export function gridRowTable(op: GridRowOp, col: WaveTable, j: number, count: number, prev?: Float32Array, env: ChainEnv = {}): GeneratedTable {
   if (op.kind === 'mutate') {
     const req: MutateRequest = { mutation: op.mutation, amount: op.amount, seed: op.seed, mode: op.mode, count };
     return mutateBatchTable(req, col, j, prev);
   }
   const b = { index: j, count };
-  return { data: applyChain(col.data, op.chain, b), recipe: shapeRecipe(col.id, op.chain, b) };
+  return { data: applyChain(col.data, op.chain, b, env), recipe: shapeRecipe(col.id, op.chain, b) };
 }
 
 /** Relative RMS difference of b from a (0 = equal; 1 = as different as a is loud). */
@@ -85,8 +86,13 @@ export function relDiff(a: ArrayLike<number>, b: ArrayLike<number>): number {
  * stays close to the column (so the originals join smoothly); false when it starts away
  * from it (e.g. a chain whose first card is a filter that is already closed).
  */
-export function row1Fits(op: GridRowOp, col: WaveTable, rows: number): boolean {
+export function row1Fits(op: GridRowOp, col: WaveTable, rows: number, env: ChainEnv = {}): boolean {
   if (op.kind === 'mutate') return true;
-  const first = gridRowTable(op, col, 0, Math.max(1, rows - 1));
+  let first: GeneratedTable;
+  try {
+    first = gridRowTable(op, col, 0, Math.max(1, rows - 1), undefined, env);
+  } catch {
+    return true; // a failing chain: the rows report the error
+  }
   return relDiff(col.data, first.data) < 0.35;
 }

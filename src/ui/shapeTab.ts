@@ -10,8 +10,10 @@
  * as Add (BUDGET_MS per frame, only while the tab shows), so Add appends exactly what is
  * shown. The source is the Timeline selection and stays selected after Add.
  */
+import { compileRule } from '../browser/formulaEval';
 import { KMAX } from '../core/constants';
 import { harmonicMagnitudes } from '../core/fft';
+import { compileRules, RuleError, rulesUseBatch } from '../core/generators/harmonicRules';
 import { drawingSpan, drawingValue, StrokeBuffer, type Drawing, type DrawTool, type Pt } from '../core/drawing';
 import { MUTATION_CHOICES, MUTATION_REV } from '../core/mutations';
 import { randomSeed } from '../core/prng';
@@ -23,6 +25,7 @@ import {
   EMPTY_CHAIN,
   recipeChain,
   chainStages,
+  ShapeStepError,
   chainSweeps,
   chainUsesSeed,
   freshStepId,
@@ -47,6 +50,7 @@ import {
   newStep,
   RADIUS_RANGE,
   ROTATE_RANGE,
+  rulesStepEval,
   STEP_INFO,
   stepInfo,
   stepUsesSeed,
@@ -63,7 +67,8 @@ import { isOnScreen, watchVisibility, type GenerateView, type UiContext } from '
 import { h } from './dom';
 import { popupMenu } from './presets';
 import { pitchBadge } from './pitchBadge';
-import { previewOf } from './shapeOnAdd';
+import { chainEnv, chainError, previewOf } from './shapeOnAdd';
+import { buildRulesEditor, ruleColor, type RulesEditor } from './rulesEditor';
 import { downloadBytes, pickFile } from './session';
 import { ask } from './dialogs';
 
@@ -129,6 +134,12 @@ export function stepSummary(s: Step): string {
               : `Randomize ${pct(s.value)}`;
     case 'harmLimit':
       return `${LIMIT_LABELS[s.mode]} · ${TOOL_LABELS[s.draw.tool].toLowerCase()}`;
+    case 'rules': {
+      const on = s.rules.filter((r) => r.on);
+      if (!on.length) return 'no rules';
+      const r = on[0];
+      return `${r.when.trim() || 'always'} → ${r.value}${on.length > 1 ? ` (+${on.length - 1})` : ''}`;
+    }
     case 'mutation':
       return MUTATION_CHOICES.find((m) => m.id === s.mutation)?.label ?? s.mutation;
     case 'gain':
@@ -148,6 +159,8 @@ interface Job {
   chain: ShapeChain;
   n: number;
   tables: (GeneratedTable | undefined)[];
+  /** Results that failed (a Rules step whose rule fails): the message. */
+  errors: (string | undefined)[];
   next: number;
 }
 
@@ -406,7 +419,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   /** The view a step works in (its drawing's, harmonics for harmonic steps); null = keep the current one. */
   const viewOf = (s: Step): View | null => {
     const info = stepInfo(s.op);
-    return info.draws ?? (s.op === 'harmSet' || s.op === 'harmMod' ? 'harm' : null);
+    return info.draws ?? (s.op === 'harmSet' || s.op === 'harmMod' || s.op === 'rules' ? 'harm' : null);
   };
   /** Index of the selection at the last sync (a vanished step's neighbour is selected). */
   let lastSelIndex = 0;
@@ -610,6 +623,18 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const params = h('div', { class: 'shape-params', id: 'shape-params' });
   let paramSig = '';
   let syncs: ((s: Step) => void)[] = [];
+  /** The Rules step's editor while a Rules step is selected. */
+  let rulesEd: RulesEditor | null = null;
+  /** Per-rule errors of a Rules step: compile errors, and the shown waveform's runtime error if this step failed. */
+  const syncRuleErrors = (s: Step) => {
+    if (!rulesEd || s.op !== 'rules') return;
+    const errs = [...compileRules(s.rules, compileRule).errors];
+    if (stageErr && stageErr.stepId === s.id && stageErr.cause instanceof RuleError) {
+      const r = stageErr.cause.rule;
+      if (errs[r] === undefined) errs[r] = stageErr.cause.message.replace(/^Rule \d+: /, '');
+    }
+    rulesEd.setErrors(errs);
+  };
 
   const seg = <T extends string>(idp: string, label: string, options: Record<T, string>, get: (s: Step) => T, set: (v: T) => void) => {
     const btns = (Object.keys(options) as T[]).map((v) => h('button', { id: `${idp}-${v}`, onclick: () => set(v) }, options[v]));
@@ -734,6 +759,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
 
   const buildParams = (s: Step | undefined) => {
     syncs = [];
+    rulesEd = null;
     if (!s) {
       params.replaceChildren(note('Add a step to start shaping.'));
       return;
@@ -894,6 +920,23 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         resetDraw(),
         ...endDrawControls(s),
       );
+    } else if (s.op === 'rules') {
+      const ed = buildRulesEditor({
+        id: 'shape-rules',
+        legendExtra: 'v starts at the input’s level (strongest = 1)',
+        onChange: (rules, gesture) => {
+          const cur = sel();
+          if (cur && cur.op === 'rules') updateStep(cur.id, (x) => ({ ...x, rules }) as Step, gesture ? `rules:${cur.id}:${gesture}` : undefined);
+        },
+        onCommit: () => model.endGesture(),
+      });
+      rulesEd = ed;
+      syncs.push((x) => {
+        if (x.op !== 'rules') return;
+        ed.sync(x.rules);
+        syncRuleErrors(x);
+      });
+      kids.push(ed.el);
     } else if (s.op === 'mutation') {
       kids.push(
         select(
@@ -984,6 +1027,8 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
 
   // ---- stages of the shown card (prefix-cached) ----
   let stageCache: { srcId: number; keys: string[]; outs: Float64Array<ArrayBufferLike>[] } | null = null;
+  /** The step that failed computing the shown card's stages (a Rules step), if any. */
+  let stageErr: ShapeStepError | null = null;
   const shownPos = (): BatchPos => {
     const n = batchN();
     return { index: Math.min(strip.shown(), n - 1), count: n };
@@ -995,11 +1040,26 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const b = shownPos();
     const u = batchUOf(b);
     // A step's output depends on u through its amount sweep and its drawing sweep (end drawing).
-    const keys = c.steps.map((s) => `${JSON.stringify(s)}|${stepAmount(s, u)}|${'drawEnd' in s && s.drawEnd ? u : ''}|${stepUsesSeed(s) ? stepSeed(c, s, b) : ''}`);
+    // Rules that read n / u depend on the batch position itself.
+    const keys = c.steps.map(
+      (s) =>
+        `${JSON.stringify(s)}|${stepAmount(s, u)}|${'drawEnd' in s && s.drawEnd ? u : ''}|${stepUsesSeed(s) ? stepSeed(c, s, b) : ''}|${s.op === 'rules' && rulesUseBatch(s.rules) ? `${b.index}/${b.count}` : ''}`,
+    );
     let keep = 0;
     if (stageCache && stageCache.srcId === src.id) while (keep < keys.length && keep < stageCache.keys.length && keys[keep] === stageCache.keys[keep]) keep++;
-    const outs = chainStages(src.data, c, b, stageCache && stageCache.srcId === src.id ? stageCache.outs.slice(0, keep) : []);
-    stageCache = { srcId: src.id, keys, outs };
+    let outs: Float64Array<ArrayBufferLike>[];
+    stageErr = null;
+    try {
+      outs = chainStages(src.data, c, b, stageCache && stageCache.srcId === src.id ? stageCache.outs.slice(0, keep) : [], chainEnv());
+      stageCache = { srcId: src.id, keys, outs };
+    } catch (e) {
+      if (!(e instanceof ShapeStepError)) throw e;
+      // A failing step (a Rules step) and the steps after it pass their input on in the plots; the error is shown.
+      stageErr = e;
+      stageCache = { srcId: src.id, keys: keys.slice(0, e.index), outs: e.stages.slice() };
+      outs = e.stages.slice();
+      while (outs.length < c.steps.length) outs.push(outs.at(-1) ?? Float64Array.from(src.data));
+    }
     const i = selIndex();
     if (i < 0) return { inp: src.data, out: src.data, all: outs };
     return { inp: i > 0 ? outs[i - 1] : src.data, out: outs[i], all: outs };
@@ -1206,6 +1266,22 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
           g.fill();
         }
       }
+      if (s && s.op === 'rules' && !(stageErr && stageErr.index <= selIndex())) {
+        // Each harmonic a rule matched: a dot in that rule's colour (the last one that matched).
+        try {
+          const b = shownPos();
+          const r = rulesStepEval(s, inp, stepSeed(chain(), s, b), { ...chainEnv(), index: b.index, count: b.count });
+          for (let k = 1; k <= KMAX; k++) {
+            if (r.last[k] < 0) continue;
+            g.fillStyle = ruleColor(r.last[k]);
+            g.beginPath();
+            g.arc(((k - 0.5) / KMAX) * w, hh - 3, 1.8, 0, 2 * Math.PI);
+            g.fill();
+          }
+        } catch {
+          // The error is shown on the rule's row.
+        }
+      }
       bars(g, di, w, hh - DOTS_H, cssColor('--border-strong'), 0.85);
       g.globalAlpha = 0.9;
       bars(g, dout, w, hh - DOTS_H, cssColor('--accent'), 0.45);
@@ -1236,13 +1312,17 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         h('span', {}, h('i', { class: 'shape-key-out' }), 'output'),
         ...(s?.op === 'harmLimit' ? [h('span', {}, h('i', { class: 'shape-key-draw' }), 'curve')] : []),
         ...(s?.op === 'harmSet' ? [h('span', { class: 'shape-key-set' }, '• in set')] : []),
+        ...(s?.op === 'rules' ? [h('span', { class: 'shape-key-rule', title: 'Each harmonic a rule matched: a dot in the colour of the last rule that matched it' }, '• last rule')] : []),
       );
     }
     // Hint when this step has nothing to draw in this view.
     const drawnSet = !!s && s.op === 'harmSet' && s.set.kind === 'drawn';
     const otherView = !!s && ('draw' in s || drawnSet) && !canDraw;
-    edHint.hidden = !otherView;
+    edHint.hidden = !otherView && !stageErr;
     if (otherView) edHint.textContent = view === 'wave' ? 'This step draws on the harmonics: switch to Harmonics' : 'This step draws on the waveform: switch to Waveform';
+    if (stageErr) edHint.textContent = `${chainError(stageErr)} (skipped in this plot; results fail until it is fixed)`;
+    edHint.classList.toggle('error', !!stageErr);
+    if (s) syncRuleErrors(s);
     // Side: the other view.
     const [gs, sw, sh] = fit(sideCanvas, Math.max(30, sideBox.clientHeight || 90));
     if (view === 'wave') {
@@ -1622,17 +1702,22 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const startJob = (): Job | null => {
     const srcs = jobSources();
     const c = chain();
-    job = srcs ? { key: keyOf(srcs, c), srcs, chain: c, n: srcs.length, tables: new Array(srcs.length), next: 0 } : null;
+    job = srcs ? { key: keyOf(srcs, c), srcs, chain: c, n: srcs.length, tables: new Array(srcs.length), errors: new Array(srcs.length), next: 0 } : null;
     cardsDirty = true;
     return job;
   };
   const currentJob = (): Job | null => (job?.key === keyOf(jobSources(), chain()) ? job : startJob());
-  const computeOne = (j: Job, i: number): GeneratedTable => {
+  /** Result i of the job (computed if missing), or undefined when the chain fails on it (j.errors[i] says why). */
+  const computeOne = (j: Job, i: number): GeneratedTable | undefined => {
     let t = j.tables[i];
-    if (!t) {
+    if (!t && !j.errors[i]) {
       const b = { index: i, count: j.n };
-      t = { data: applyChain(j.srcs[i].data, j.chain, b), recipe: shapeRecipe(j.srcs[i].id, j.chain, b) };
-      j.tables[i] = t;
+      try {
+        t = { data: applyChain(j.srcs[i].data, j.chain, b, chainEnv()), recipe: shapeRecipe(j.srcs[i].id, j.chain, b) };
+        j.tables[i] = t;
+      } catch (e) {
+        j.errors[i] = chainError(e);
+      }
       cardsDirty = true;
     }
     return t;
@@ -1649,6 +1734,7 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     if (!j) return;
     const i = Math.min(strip.shown(), j.n - 1);
     const t = computeOne(j, i);
+    if (!t) return flash(`Not added: ${j.errors[i]}`, true);
     if (silent(t)) return flash(SILENT, true);
     if (!model.addTables([t], false).length) return; // refused (Timeline full): the notice says why
     if (applyTo === 'last') return fromLastBatchDone(1);
@@ -1657,7 +1743,10 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   const addBatch = () => {
     const j = currentJob();
     if (!j) return;
-    const tables = Array.from({ length: j.n }, (_, i) => computeOne(j, i));
+    const all = Array.from({ length: j.n }, (_, i) => computeOne(j, i));
+    const bad = all.findIndex((t) => !t);
+    if (bad >= 0) return flash(`Not added: #${bad + 1}: ${j.errors[bad]}`, true);
+    const tables = all as GeneratedTable[];
     if (tables.some(silent)) return flash(SILENT, true);
     if (writingBack()) {
       const t = targets();
@@ -1684,6 +1773,13 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     const cur = job && job.key === keyOf(jobSources(), chain()) ? job : null;
     strip.cards.forEach((c, i) => {
       const t = cur && i < cur.n ? cur.tables[i] : undefined;
+      const err = cur && i < cur.n ? cur.errors[i] : undefined;
+      c.el.classList.toggle('failed', !!err);
+      c.el.title = err ? `Error: ${err}` : '';
+      if (err && c.drawn) {
+        c.drawn = null;
+        drawCard(c, undefined);
+      }
       if (c.drawn === t || (!t && src)) return;
       c.drawn = t;
       drawCard(c, t?.data);
@@ -1794,8 +1890,10 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
         if (!j) return { error: 'Shape: select a source waveform in the Timeline' };
         const tables: GeneratedTable[] = [];
         for (let i = 0; i < j.n; i++) {
-          if (!j.tables[i] && performance.now() > deadline) return { wait: true };
-          tables.push(computeOne(j, i));
+          if (!j.tables[i] && !j.errors[i] && performance.now() > deadline) return { wait: true };
+          const t = computeOne(j, i);
+          if (!t) return { error: `Shape: #${i + 1}: ${j.errors[i]}` };
+          tables.push(t);
         }
         if (tables.some(silent)) return { error: 'Shape: a result is silent' };
         return { tables };

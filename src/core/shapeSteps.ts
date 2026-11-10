@@ -7,6 +7,7 @@
 import { KMAX, TABLE_SIZE } from './constants';
 import { lerpDrawing, normalizeDrawing, drawingValue, drawingWeight, type Drawing } from './drawing';
 import { fft } from './fft';
+import { compileRules, evalRules, normalizeRules, rulesUseSeed, type HarmonicRule, type RuleCompiler, type RulesResult } from './generators/harmonicRules';
 import { MUTATION_CHOICES, MUTATION_REV, mutate, mutationUsesSeed, type MutationId } from './mutations';
 import { Prng } from './prng';
 
@@ -53,6 +54,8 @@ export type ShapeStep = StepBase &
       }
     | { readonly op: 'harmMod'; readonly kind: HarmModKind; readonly value: number; readonly range: readonly [number, number] }
     | { readonly op: 'harmLimit'; readonly mode: LimitMode; readonly draw: Drawing }
+    // Harmonic rules (core/generators/harmonicRules.ts) over the input's harmonics: v starts at each one's magnitude.
+    | { readonly op: 'rules'; readonly rules: readonly HarmonicRule[] }
     // rev: the mutation revision (mutations.ts MUTATION_REV); steps saved without one are revision 1.
     | { readonly op: 'mutation'; readonly mutation: MutationId; readonly rev?: number }
     | { readonly op: 'gain' | 'rotate'; readonly value: number }
@@ -73,6 +76,7 @@ export const STEP_INFO: readonly { op: StepOp; group: string; label: string; hin
   { op: 'harmSet', group: 'Harmonics', label: 'Set harmonics', hint: 'Keep, remove, add or replace a set of harmonics', draws: null },
   { op: 'harmMod', group: 'Harmonics', label: 'Modify harmonics', hint: 'Shift, stretch, tilt, mirror or randomize the harmonics', draws: null },
   { op: 'harmLimit', group: 'Harmonics', label: 'Limit to curve', hint: 'Caps, floors, fits or scales the harmonics to a drawn curve', draws: 'harm' },
+  { op: 'rules', group: 'Harmonics', label: 'Rules', hint: 'Condition → value rules set each harmonic’s level (v = its level now, strongest = 1)', draws: null },
   { op: 'mutation', group: 'Whole wave', label: 'Mutation', hint: 'Any Mutate mutation at an amount', draws: null },
   { op: 'gain', group: 'Whole wave', label: 'Gain', hint: 'Scales the level, to drive the next step', draws: null },
   { op: 'invert', group: 'Whole wave', label: 'Invert', hint: 'Flips the wave upside down', draws: null },
@@ -115,6 +119,8 @@ const DEFAULT_DRAWS: Readonly<Record<DrawOp, Drawing>> = {
   mult: { tool: 'curve', pts: [[0, 1], [0.5, 0.25], [1, 1]] },
 };
 export const DEFAULT_LIMIT_DRAW: Drawing = { tool: 'line', pts: [[0, -4], [1, -40]] };
+/** A new Rules step: the even harmonics fade out across the batch. */
+export const DEFAULT_RULES: readonly HarmonicRule[] = [{ when: 'k%2==0', value: 'v*(1-u)', on: true }];
 export const defaultDrawing = (op: DrawOp): Drawing => DEFAULT_DRAWS[op];
 
 /** A new step of type `op` with its defaults. */
@@ -138,6 +144,8 @@ export function newStep(op: StepOp, id: string): ShapeStep {
       return { ...base, op, kind: 'tilt', value: -3, range: [1, KMAX] };
     case 'harmLimit':
       return { ...base, op, mode: 'limit', draw: DEFAULT_LIMIT_DRAW };
+    case 'rules':
+      return { ...base, op, rules: DEFAULT_RULES };
     case 'mutation':
       return { ...base, op, mutation: 'smooth', amount: 0.4, rev: MUTATION_REV };
     case 'gain':
@@ -254,6 +262,8 @@ export function normalizeStep(raw: unknown, id: string): ShapeStep | null {
       const draw = normalizeDrawing(o.draw, HARM_DB[0], HARM_DB[1], DEFAULT_LIMIT_DRAW);
       return { ...base, op, mode: pick(o.mode, ['limit', 'floor', 'fit', 'scale'] as const, 'limit'), draw, ...end(draw, HARM_DB[0], HARM_DB[1]) };
     }
+    case 'rules':
+      return { ...base, op, rules: normalizeRules(o.rules) };
     case 'mutation': {
       const ids = MUTATION_CHOICES.map((m) => m.id);
       // A valid later revision is kept; anything else (absent, invalid) is revision 1.
@@ -275,6 +285,7 @@ export function stepUsesSeed(s: ShapeStep): boolean {
   if (s.op === 'mutation') return mutationUsesSeed(s.mutation);
   if (s.op === 'harmSet') return (s.mode === 'add' || s.mode === 'replace') && s.phase === 'random';
   if (s.op === 'harmMod') return s.kind === 'randomize';
+  if (s.op === 'rules') return rulesUseSeed(s.rules);
   return false;
 }
 
@@ -464,7 +475,43 @@ export function stepDrawing(s: Extract<ShapeStep, { draw: Drawing }>, u: number)
   return s.drawEnd ? lerpDrawing(s.draw, s.drawEnd, u) : s.draw;
 }
 
-function harmonicStep(s: ShapeStep, x: Float64Array, a: number, seed: number, u: number): Float64Array {
+/** What a step needs beyond its settings: the batch position, a rule compiler and an abort hook (the Rules step). */
+export interface StepEnv {
+  /** Compiles Rules expressions (browser: src/browser/formulaEval.ts compileRule). */
+  readonly compileRule?: RuleCompiler;
+  /** Batch position (n, u for Rules); default 0 of 1. */
+  readonly index?: number;
+  readonly count?: number;
+  /** Polled while Rules evaluate (FormulaAborted when it returns true). */
+  readonly abort?: () => boolean;
+}
+
+/** Reference level of a Rules step: v = magnitude / ref (the strongest harmonic = 1; unit amplitude from silence). */
+function rulesRef(re: Float64Array, im: Float64Array): number {
+  let mx = 0;
+  for (let k = 1; k <= KMAX; k++) mx = Math.max(mx, Math.hypot(re[k], im[k]));
+  return mx > 0 ? mx : N / 2;
+}
+
+function rulesOn(s: Extract<ShapeStep, { op: 'rules' }>, re: Float64Array, im: Float64Array, seed: number, env: StepEnv): { ref: number; r: RulesResult } {
+  if (!env.compileRule) throw new Error('The Rules step needs a rule compiler');
+  const ref = rulesRef(re, im);
+  const init = new Float64Array(KMAX + 1);
+  for (let k = 1; k <= KMAX; k++) init[k] = Math.hypot(re[k], im[k]) / ref;
+  return { ref, r: evalRules(compileRules(s.rules, env.compileRule), init, seed, env.index ?? 0, env.count ?? 1, env.abort) };
+}
+
+/**
+ * A Rules step's evaluation on cycle x (its amplitudes after the rules, relative to the
+ * strongest input harmonic, and which rule set each): what the Shape tab marks per harmonic.
+ */
+export function rulesStepEval(s: ShapeStep, x: ArrayLike<number>, seed: number, env: StepEnv): RulesResult {
+  if (s.op !== 'rules') throw new Error('rulesStepEval: not a Rules step');
+  const { re, im } = spectrum(x);
+  return rulesOn(s, re, im, seed, env).r;
+}
+
+function harmonicStep(s: ShapeStep, x: Float64Array, a: number, seed: number, u: number, env: StepEnv = {}): Float64Array {
   const { re, im } = spectrum(x);
   const tr = new Float64Array(KMAX + 1);
   const ti = new Float64Array(KMAX + 1);
@@ -568,6 +615,23 @@ function harmonicStep(s: ShapeStep, x: Float64Array, a: number, seed: number, u:
       }
       break;
     }
+    case 'rules': {
+      // Each harmonic keeps its phase and takes its new magnitude (negative flips it); one
+      // that was absent gets sine phase.
+      const { ref, r } = rulesOn(s, re, im, seed, env);
+      for (let k = 1; k <= KMAX; k++) {
+        const target = r.amps[k] * ref;
+        const m = mag(k);
+        if (m > ref * 1e-12) {
+          tr[k] = (re[k] / m) * target;
+          ti[k] = (im[k] / m) * target;
+        } else {
+          tr[k] = 0;
+          ti[k] = -target;
+        }
+      }
+      break;
+    }
     default:
       return x;
   }
@@ -580,9 +644,12 @@ function harmonicStep(s: ShapeStep, x: Float64Array, a: number, seed: number, u:
 
 /**
  * One step at amount a (> 0) on the working cycle x (TABLE_SIZE samples). Returns a new
- * array (not band-limited: the engine does that). `seed` is the step's own seed.
+ * array (not band-limited: the engine does that). `seed` is the step's own seed. The Rules
+ * step needs env.compileRule (and takes n / u from env's batch position); it throws a
+ * RuleError when a rule fails.
  */
-export function applyStep(s: ShapeStep, x: Float64Array, a: number, seed: number, u = 0): Float64Array {
+export function applyStep(s: ShapeStep, x: Float64Array, a: number, seed: number, u = 0, env: StepEnv = {}): Float64Array {
+  if (s.op === 'rules' && a <= 0) return Float64Array.from(x);
   if ('draw' in s && s.op !== 'harmLimit') {
     const d = stepDrawing(s, u);
     const y = new Float64Array(N);
@@ -627,6 +694,6 @@ export function applyStep(s: ShapeStep, x: Float64Array, a: number, seed: number
       return rotate(Float64Array.from(y, (v) => v * p), -d);
     }
     default:
-      return harmonicStep(s, x, a, seed, u);
+      return harmonicStep(s, x, a, seed, u, env);
   }
 }

@@ -41,7 +41,8 @@ src/
     drawing.ts          Shape drawings: line / curve (Catmull-Rom) / freehand points, span
                         and edge fade, stroke resampling, normalisation
     shapeSteps.ts       Shape chain steps (draw: clip / soft / fold / replace / push /
-                        pull / add / multiply; harmonics: set / modify / limit to curve;
+                        pull / add / multiply; harmonics: set / modify / limit to curve /
+                        rules;
                         whole wave: any mutation, gain, invert, reverse, rotate):
                         defaults, normalizeStep, applyStep
     shapeChain.ts       Shape chains: normalizeChain (canonical JSON), per-step seeds and
@@ -209,7 +210,19 @@ scripts/harmonics/      harmonic-interest evaluation (npm run eval:harmonics; ru
   `shape()` (DC off; phase realign only if `realign`).
   Amount 0 skips the step. A step's seed is `deriveSeed(chain seed, hash(step id))` (stable
   when other steps change), per batch index too when `varySeed`. Mutation steps align the
-  cycle, mutate and rotate back, so the chain keeps its phase. `normalizeChain` clamps
+  cycle, mutate and rotate back, so the chain keeps its phase. The **Rules** step (`{ op:
+  'rules', rules }`, the Harmonic rules list) runs `evalRules` with `v` starting at each
+  harmonic's magnitude / the strongest's (unit amplitude from silence), then gives each
+  harmonic its new magnitude at its own phase (negative flips; absent → sine phase), blended
+  by the amount; n / u come from the batch position (rules reading them make the step
+  sweep: `stepSweeps`), `rand` from the step seed (`stepUsesSeed` when the rules call a
+  seeded function). It needs a rule compiler: `applyChain` / `chainStages` /
+  `renderShapeRecipe` / `gridRowTable` take an optional `ChainEnv { compileRule, abort }`
+  (`renderRecipe` passes `env.compileRule`); a failing step throws a `ShapeStepError`
+  (step index and id, the cause — a RuleError —, the stages before it). The Shape tab shows
+  it on the rule's row and over the plot (the plot skips the step) and its results fail;
+  Shape on add leaves the waveform unshaped and warns on the chip; Grid refuses the rows.
+  `normalizeChain` clamps
   untrusted data and writes fields in a fixed order (canonical JSON; idempotent). The Shape
   tab's chain is `AppModel.shapeChain` (topic 'shape'; every edit an undo step, a slider
   drag or drawn stroke one); saved chains are `AppModel.shapeChains` `{ id: 'chain-N',

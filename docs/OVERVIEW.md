@@ -61,7 +61,8 @@ as a native plugin (VST3 / AU / CLAP / LV2 / Standalone) whose editor is the sam
   transfer, harmonic crossover, genetic, time splice) along a bias walk or as a seeded
   generation of children.
 - **Shape** — a chain of editing steps: draw on the waveform (clip, fold, push, pull,
-  replace) or on its harmonics (set, shift, stretch, tilt, limit to a drawn curve), apply
+  replace) or on its harmonics (set, shift, stretch, tilt, limit to a drawn curve, or
+  harmonic rules with `v` = each harmonic's current level), apply
   any mutation, sweep any step across a batch (a drawing can morph from a start to an
   end drawing); apply to a selection, batch or whole
   wavetable, or attach a chain to Seed / Mutate / Breed adds.

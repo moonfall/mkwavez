@@ -2514,7 +2514,8 @@ const waitInk = (page, sel) =>
 /**
  * Generate → Shape (wide shell): the default chain's steps, step selection switches the
  * plot's view, toggling / reordering / adding / duplicating / removing steps (each one undo
- * step), drawing a line is one undo step per stroke, Sweep gives N cards and Add +N adds N
+ * step), a Rules step (its rules editor; a failing rule shown on its row and over the plot),
+ * drawing a line is one undo step per stroke, Sweep gives N cards and Add +N adds N
  * 'shape' waveforms of the selection (which stays selected), deterministic re-adds, loading
  * a factory chain, and the tab fits the Generate panel at 1440×900 and 1180×820.
  */
@@ -2767,6 +2768,25 @@ async function shapeChecks(page, tlCount) {
   await page.click('#shape-step-3 .shape-step-x');
   c = await chain();
   assert(c.steps.length === 4 && !c.steps.some((s) => s.op === 'gain'), 'steps can be taken out (menu and ×)');
+
+  // A Rules step: the rules editor in the settings (Harmonics view), errors on the row and over the plot.
+  await page.click('#shape-add');
+  await page.click('#shape-add-rules');
+  c = await chain();
+  const ri = c.steps.findIndex((s) => s.op === 'rules');
+  assert(
+    ri >= 0 && (await page.textContent('#shape-title')).trim() === `Step ${ri + 1} · Rules` && (await page.isVisible('#shape-rules-value-0')) && (await page.getAttribute('#shape-view-harm', 'aria-pressed')) === 'true',
+    'Rules step: its rules editor and the Harmonics view',
+  );
+  assert((await genFits()) && (await fitsScreen(page)), '1440×900: the Rules step fits the Generate panel');
+  await page.fill('#shape-rules-value-0', 'v/0');
+  await page.waitForFunction(() => document.querySelector('#shape-rules-err-0').textContent.includes('non-finite') && !document.querySelector('#shape-ed-hint').hidden, null, { timeout: 3000 });
+  assert(true, 'Rules step: a failing rule shows on its row and over the plot');
+  await page.fill('#shape-rules-value-0', 'v*0.5');
+  await page.waitForFunction(() => document.querySelector('#shape-rules-err-0').textContent === '' && document.querySelector('#shape-ed-hint').hidden, null, { timeout: 3000 });
+  assert((await chain()).steps[ri].rules[0].value === 'v*0.5', 'Rules step: edits reach the chain; fixed, the error clears');
+  await page.click(`#shape-step-${ri + 1} .shape-step-x`);
+  assert(!(await chain()).steps.some((s) => s.op === 'rules'), 'the Rules step can be taken out');
 
   // A click on a curve adds a point on it (a drag would move the whole drawing).
   await page.click('#shape-step-1');

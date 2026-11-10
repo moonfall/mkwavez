@@ -13,6 +13,7 @@
 import { TABLE_SIZE } from './constants';
 import { deriveSeed } from './prng';
 import { shape } from './shape';
+import { rulesUseBatch, type RuleCompiler } from './generators/harmonicRules';
 import { applyStep, bandLimit, normalizeStep, stepUsesSeed, type ShapeStep } from './shapeSteps';
 import type { Recipe, TableId } from './table';
 
@@ -32,6 +33,27 @@ export interface BatchPos {
   readonly count: number;
 }
 
+/** What a chain needs from its host: a rule compiler for Rules steps, an optional abort hook. */
+export interface ChainEnv {
+  readonly compileRule?: RuleCompiler;
+  readonly abort?: () => boolean;
+}
+
+/**
+ * A step failed (a Rules step whose rule doesn't compile, throws or gives a non-finite value):
+ * which step, why, and the working cycles of the steps before it.
+ */
+export class ShapeStepError extends Error {
+  constructor(
+    readonly index: number,
+    readonly stepId: string,
+    override readonly cause: unknown,
+    readonly stages: readonly Float64Array<ArrayBufferLike>[],
+  ) {
+    super(`Step ${index + 1}: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+}
+
 export const MAX_STEPS = 32;
 export const MAX_CHAIN_NAME = 60;
 export const SHAPE_OP = 'shape';
@@ -46,9 +68,10 @@ export function stepAmount(s: ShapeStep, u: number): number {
   return s.amountEnd === undefined ? s.amount : s.amount + (s.amountEnd - s.amount) * u;
 }
 
-/** True if a step sweeps across a batch: its amount, or its drawing (to an end drawing). */
+/** True if a step sweeps across a batch: its amount, its drawing (to an end drawing), or Rules that read n / u. */
 export function stepSweeps(s: ShapeStep): boolean {
   if (s.amountEnd !== undefined && s.amountEnd !== s.amount) return true;
+  if (s.op === 'rules' && rulesUseBatch(s.rules)) return true;
   return 'draw' in s && !!s.drawEnd && JSON.stringify(s.drawEnd) !== JSON.stringify(s.draw);
 }
 
@@ -120,13 +143,15 @@ export function freshStepId(c: ShapeChain): string {
  * The working cycle after each step (index i = after step i; a disabled step or one at
  * amount 0 passes its input on unchanged). Not normalised. `reuse` = stages already
  * computed for the same source, batch position and first `reuse.length` steps (the
- * editor keeps them while a later step changes); computing resumes after them.
+ * editor keeps them while a later step changes); computing resumes after them. A failing
+ * step throws a ShapeStepError (with the stages before it).
  */
 export function chainStages(
   src: ArrayLike<number>,
   c: ShapeChain,
   b: BatchPos,
   reuse: readonly Float64Array<ArrayBufferLike>[] = [],
+  env: ChainEnv = {},
 ): Float64Array<ArrayBufferLike>[] {
   if (src.length !== TABLE_SIZE) throw new Error(`chainStages: expected ${TABLE_SIZE} samples, got ${src.length}`);
   const u = batchUOf(b);
@@ -136,7 +161,13 @@ export function chainStages(
   for (let i = from; i < c.steps.length; i++) {
     const s = c.steps[i];
     const a = stepAmount(s, u);
-    if (s.on && a > 0) x = bandLimit(applyStep(s, x, a, stepSeed(c, s, b), u));
+    if (s.on && a > 0) {
+      try {
+        x = bandLimit(applyStep(s, x, a, stepSeed(c, s, b), u, { compileRule: env.compileRule, abort: env.abort, index: b.index, count: b.count }));
+      } catch (e) {
+        throw new ShapeStepError(i, s.id, e, out.slice());
+      }
+    }
     out.push(x);
   }
   return out;
@@ -147,9 +178,9 @@ export function finishChain(x: ArrayLike<number>, c: ShapeChain): Float32Array {
   return shape(x, { align: c.realign });
 }
 
-/** Apply the chain to a source table at batch position b. */
-export function applyChain(src: ArrayLike<number>, c: ShapeChain, b: BatchPos = { index: 0, count: 1 }): Float32Array {
-  const stages = chainStages(src, c, b);
+/** Apply the chain to a source table at batch position b (a Rules step needs env.compileRule). */
+export function applyChain(src: ArrayLike<number>, c: ShapeChain, b: BatchPos = { index: 0, count: 1 }, env: ChainEnv = {}): Float32Array {
+  const stages = chainStages(src, c, b, [], env);
   return finishChain(stages.length ? stages[stages.length - 1] : src, c);
 }
 
@@ -180,10 +211,10 @@ export function recipeChain(r: Recipe): ShapeChain | null {
 }
 
 /** Re-render a 'shape' recipe from its parent's data. */
-export function renderShapeRecipe(r: Recipe, resolveTable: (id: TableId) => Float32Array | undefined): Float32Array {
+export function renderShapeRecipe(r: Recipe, resolveTable: (id: TableId) => Float32Array | undefined, env: ChainEnv = {}): Float32Array {
   const c = recipeChain(r);
   if (!c) throw new Error('renderShapeRecipe: no chain in the recipe');
   const src = resolveTable(r.parents[0]);
   if (!src) throw new Error(`renderShapeRecipe: parent ${r.parents[0]} not available`);
-  return applyChain(src, c, r.batch ?? { index: 0, count: 1 });
+  return applyChain(src, c, r.batch ?? { index: 0, count: 1 }, env);
 }

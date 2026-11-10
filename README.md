@@ -463,6 +463,17 @@ rule that doesn't compile, throws or gives a non-finite value shows its error on
 the basis plot draws each harmonic as a stem coloured by the last rule that matched it (the
 colour of that rule's number).
 
+The **Shape** tab's **Rules** step (under Harmonics) runs the same rules on a waveform's
+harmonics: `v` starts at each harmonic's level relative to the strongest (= 1), each
+harmonic keeps its own phase and takes the new level (negative flips it; one that was
+absent gets sine phase), and Amount blends from the input. Rules that use `n` / `u`
+sweep across a batch, `rand()` follows the chain's seed (and Vary), and the step works
+wherever chains do (a selection, a batch or wavetable, Shape on add, Grid rows); the
+identity rule (always) → `v` leaves the waveform unchanged. In the Harmonics view a dot
+under each harmonic shows the last rule that matched it. A failing rule is shown on its row
+and over the plot; results that need the step fail (and aren't added) until it is fixed —
+on Seed / Mutate / Breed's Shape chip the chain is then skipped, with a warning on the chip.
+
 ## Keyboard shortcuts
 
 Shortcuts are ignored while typing in a text field, text area, select or editable text, and

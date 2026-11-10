@@ -19,6 +19,7 @@ import { LAST_BATCH_WAVETABLE_ID, wavetableDims, writeWindowOf, type WavetableId
 import { buildStepper, flasher } from './batch';
 import { cssColor, drawWave, fit, onThemeChange } from './canvas';
 import { isOnScreen, watchVisibility, type GenerateView, type UiContext } from './context';
+import { chainEnv, chainError } from './shapeOnAdd';
 import { h } from './dom';
 
 const BUDGET_MS = 8;
@@ -68,6 +69,8 @@ interface Job {
   n: number;
   /** cells[c][j] = row table j of column c (j < n). */
   cells: (GeneratedTable | undefined)[][];
+  /** Set when the row operation fails (a Shape chain's Rules step): nothing more is computed. */
+  error?: string;
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
@@ -308,13 +311,18 @@ export function buildGridPanel(ctx: UiContext, opts: GridPanelOpts): { el: HTMLE
     }
     return job;
   };
-  const computeCell = (j: Job, c: number, k: number): GeneratedTable => {
+  const computeCell = (j: Job, c: number, k: number): GeneratedTable | undefined => {
+    if (j.error) return undefined;
     const col = j.cells[c];
     let i = j.op.kind === 'mutate' && j.op.mode === 'chain' ? 0 : k;
     while (i < k && col[i]) i++;
-    for (; i <= k; i++) if (!col[i]) col[i] = gridRowTable(j.op, j.cols[c], i, j.n, col[i - 1]?.data);
+    try {
+      for (; i <= k; i++) if (!col[i]) col[i] = gridRowTable(j.op, j.cols[c], i, j.n, col[i - 1]?.data, chainEnv());
+    } catch (e) {
+      j.error = chainError(e);
+    }
     dirty = true;
-    return col[k]!;
+    return col[k];
   };
   const work = (j: Job, deadline: number) => {
     // The selected cell's column first, then column by column.
@@ -322,7 +330,7 @@ export function buildGridPanel(ctx: UiContext, opts: GridPanelOpts): { el: HTMLE
     for (const c of order)
       for (let k = 0; k < j.n; k++) {
         if (j.cells[c][k]) continue;
-        if (performance.now() > deadline) return;
+        if (j.error || performance.now() > deadline) return;
         computeCell(j, c, k);
       }
   };
@@ -409,6 +417,7 @@ export function buildGridPanel(ctx: UiContext, opts: GridPanelOpts): { el: HTMLE
   const blocked = (): string | null => {
     if ('error' in colsState) return colsState.error;
     if (!('cols' in colsState)) return 'Computing the columns…';
+    if (job?.error) return `The rows fail: ${job.error}`;
     const nc = colsState.cols.length;
     const lim = gridLimit(nc, P.rows);
     if (lim) return lim;
@@ -523,6 +532,7 @@ export function buildGridPanel(ctx: UiContext, opts: GridPanelOpts): { el: HTMLE
     const cs = colsState;
     const j = ensureJob(cs.cols);
     for (let c = 0; c < j.cols.length; c++) for (let k = 0; k < j.n; k++) if (!j.cells[c][k]) computeCell(j, c, k);
+    if (j.error) return flash(`Grid not added: the rows fail: ${j.error}`, true);
     const t = intoNow();
     const v = ui.voiceId;
     const done = model.addGrid({
@@ -593,7 +603,7 @@ export function buildGridPanel(ctx: UiContext, opts: GridPanelOpts): { el: HTMLE
           const k = opKey(j.op);
           if (k !== row1For) {
             row1For = k;
-            const fits = row1Fits(j.op, j.cols[0], P.rows);
+            const fits = row1Fits(j.op, j.cols[0], P.rows, chainEnv());
             if (fits !== row1) {
               row1 = fits;
               row1Box.checked = row1;

@@ -5,17 +5,46 @@
  * position, recorded in its recipe (`Recipe.shape`) so renderRecipe reproduces it. The
  * choice is a UI pref per tab (saved with the session).
  */
-import { applyChain, chainJson, type BatchPos, type ShapeChain } from '../core/shapeChain';
+import { compileRule } from '../browser/formulaEval';
+import { FormulaAborted } from '../core/generators/formula';
+import { applyChain, chainJson, ShapeStepError, type BatchPos, type ChainEnv, type ShapeChain } from '../core/shapeChain';
 import { FACTORY_CHAINS } from '../core/shapeFactory';
 import type { GeneratedTable } from '../core/table';
 import type { GeneratePreview, UiContext } from './context';
 import { h } from './dom';
 import { popupMenu } from './presets';
 
+/** Longest a chain may take on one waveform in the UI before it is stopped (a runaway Rules step). */
+export const CHAIN_CAP_MS = 150;
+
+/**
+ * What chains need in the browser: the Rules step's compiler, and a stop CHAIN_CAP_MS after
+ * the rules start evaluating (the clock starts at the first poll, so other steps don't count).
+ */
+export function chainEnv(): ChainEnv {
+  let stopAt = 0;
+  return {
+    compileRule,
+    abort: () => {
+      const now = performance.now();
+      if (!stopAt) stopAt = now + CHAIN_CAP_MS;
+      return now > stopAt;
+    },
+  };
+}
+
+/** A failed chain's message (a runaway rule says so). */
+export function chainError(e: unknown): string {
+  if (e instanceof ShapeStepError && e.cause instanceof FormulaAborted) return `Step ${e.index + 1} is too slow (its rules took over ${CHAIN_CAP_MS} ms on one waveform): simplify them`;
+  return e instanceof Error ? e.message : String(e);
+}
+
 export interface ShapeOnAdd {
   el: HTMLElement;
   /** The chosen chain, or null (none). */
   chain(): ShapeChain | null;
+  /** Why the chosen chain fails (a Rules step whose rule fails; waveforms then stay unshaped), or ''. */
+  failure(): string;
   /** t shaped by the chosen chain at its batch position (t itself when none); memoised per table. */
   apply(t: GeneratedTable, b: BatchPos): GeneratedTable;
   /** Like apply(), but undefined if it isn't memoised and `deadline` (performance.now()) has passed: try again next frame. */
@@ -87,6 +116,12 @@ export function buildShapeOnAdd(ctx: UiContext, prefix: string, onChange: () => 
   });
 
   let lastJson = '';
+  /** Set when the chain failed on a waveform: the chip warns and the waveform stays unshaped. */
+  let failure = '';
+  const showFailure = () => {
+    el.classList.toggle('warn', !!failure);
+    if (failure) el.title = failure;
+  };
   const sync = (notify = true) => {
     const v = choice();
     const c = resolve(v);
@@ -96,8 +131,10 @@ export function buildShapeOnAdd(ctx: UiContext, prefix: string, onChange: () => 
     const json = c ? chainJson(c) : '';
     if (json !== lastJson) {
       lastJson = json;
+      failure = '';
       if (notify) onChange();
     }
+    showFailure();
   };
   model.on('shape', () => sync());
   ui.onPrefs(() => sync());
@@ -108,6 +145,7 @@ export function buildShapeOnAdd(ctx: UiContext, prefix: string, onChange: () => 
   const self: ShapeOnAdd = {
     el,
     chain: () => resolve(choice()),
+    failure: () => failure,
     applyWithin(t, b, deadline) {
       const c = resolve(choice());
       if (!c || !c.steps.some((s) => s.on)) return t;
@@ -123,7 +161,15 @@ export function buildShapeOnAdd(ctx: UiContext, prefix: string, onChange: () => 
       if (m && m.json === json) return m.out;
       // The recipe's batch position is what renderRecipe applies the chain at.
       const pos = t.recipe.batch ?? { index: b.index, count: b.count };
-      const out: GeneratedTable = { data: applyChain(t.data, c, pos), recipe: { ...t.recipe, batch: pos, shape: json } };
+      let out: GeneratedTable;
+      try {
+        out = { data: applyChain(t.data, c, pos, chainEnv()), recipe: { ...t.recipe, batch: pos, shape: json } };
+      } catch (e) {
+        // A chain that fails here (a Rules step) isn't applied: the waveform (and its recipe) stay unshaped.
+        out = t;
+        failure = `“${c.name}” fails (${chainError(e)}): waveforms are added unshaped`;
+        showFailure();
+      }
       memo.set(t, { json, out });
       return out;
     },
