@@ -596,6 +596,11 @@ async function seedChecks(page, tlCount) {
   assert(true, 'Harmonic rules: a syntax error is shown on its row');
   await page.click('#seed-rules-add');
   assert((await page.$$('#seed-rules-list .rules-row')).length === 3 && (await page.isVisible('#seed-edited')), '+ Rule adds a row (edited)');
+  await page.click('#seed-rules-up-1');
+  assert(
+    (await page.inputValue('#seed-rules-value-0')) === '1/(k-6)' && (await page.evaluate(() => document.activeElement?.id)) === 'seed-rules-down-0',
+    '▲ moves a rule up; at the top the focus goes to its ▼',
+  );
   await page.click('#seed-revert');
   await page.waitForFunction(() => document.querySelectorAll('#seed-rules-list .rules-row').length === 2 && !document.querySelector('#seed-add-batch').disabled, null, { timeout: 3000 });
   assert((await page.textContent('#seed-rules-err-0')) === '' && !(await page.isVisible('#seed-edited')), 'Revert to preset restores the rules');

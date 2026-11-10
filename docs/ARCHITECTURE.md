@@ -911,7 +911,11 @@ the C++ tests compare against, so a change here that alters those numbers fails
   contour literals are plain strings, numbers and arrays). Formula recipes store the
   expression text, so tables still carry provenance. Harmonic rules expressions are the
   same language with other variables (k, K, v, a(j), n, u and prime / db / rand); the core
-  takes a `RuleCompiler` the same way.
+  takes a `RuleCompiler` the same way. Because rules arrive in imported chains, sessions and
+  recipes, `ruleExprError` whitelists their tokens before anything compiles (numbers, the
+  operators without assignment / `++` / arrows, parentheses, commas and the names in scope:
+  no `.`, brackets, braces, strings, keywords or `;`); `compileRules` and the browser's
+  `compileRule` both check it, so a rejected rule is an ordinary per-rule error.
 - **Formula waveform functions** (`waveFunctions(seed, memo, check)`, passed to every
   FormulaFn as its 7th argument, built per table by `formulaTable`): each returns its
   generator's cycle *before* shape(), divided by that cycle's peak (normalised to ±1, DC

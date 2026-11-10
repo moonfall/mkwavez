@@ -25,7 +25,7 @@ import { shape } from '../shape';
 import { FormulaAborted, FormulaError, type PNoise } from './formula';
 import { batchU } from './perlin';
 import { isPrime } from './series';
-import { waveFunctions, type WaveFunctions } from './waveFunctions';
+import { WAVE_FUNCTION_NAMES, waveFunctions, type WaveFunctions } from './waveFunctions';
 
 export interface HarmonicRule {
   /** Condition (empty = always). */
@@ -72,6 +72,69 @@ export class RuleError extends FormulaError {
   ) {
     super(`Rule ${rule + 1}: ${message}`);
   }
+}
+
+/** The variables and helpers a rule expression may name. */
+export const RULE_VARIABLES: readonly string[] = ['k', 'K', 'v', 'a', 'n', 'u', 'prime', 'db', 'rand', 'pnoise', 'noise'];
+/** The Math members a rule may name (Math.random is left out: rules must re-render exactly). */
+export const RULE_MATH: readonly string[] = [
+  'abs', 'acos', 'acosh', 'asin', 'asinh', 'atan', 'atan2', 'atanh', 'cbrt', 'ceil', 'clz32', 'cos', 'cosh', 'exp', 'expm1',
+  'floor', 'fround', 'hypot', 'imul', 'log', 'log10', 'log1p', 'log2', 'max', 'min', 'pow', 'round', 'sign', 'sin', 'sinh',
+  'sqrt', 'tan', 'tanh', 'trunc', 'E', 'LN10', 'LN2', 'LOG10E', 'LOG2E', 'PI', 'SQRT1_2', 'SQRT2',
+];
+const RULE_NAMES = new Set<string>([...RULE_VARIABLES, ...RULE_MATH, ...WAVE_FUNCTION_NAMES]);
+/** Operators a rule may use, longest first (no assignment, no ++ / --, no arrows). */
+const RULE_OPS = ['>>>', '===', '!==', '**', '==', '!=', '<=', '>=', '&&', '||', '??', '<<', '>>', '+', '-', '*', '/', '%', '<', '>', '!', '~', '&', '|', '^', '?', ':', '(', ')', ','];
+const REJECTED_OPS = ['=>', '++', '--', '?.'];
+/** Operators that, followed by =, assign. */
+const ASSIGNING = ['+', '-', '*', '/', '%', '**', '<<', '>>', '>>>', '&', '|', '^', '&&', '||', '??'];
+const NUMBER = /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/;
+const NAME = /^[A-Za-z_$][\w$]*/;
+
+/**
+ * Why a rule expression is not allowed, or null. Expressions come from imports, sessions and
+ * recipes, and the browser compiles them as JavaScript, so only a small language passes:
+ * numbers, the arithmetic / comparison / logical / bitwise / ternary operators, parentheses,
+ * commas and the names in scope (RULE_VARIABLES, RULE_MATH, the waveform functions). No member
+ * access, brackets, braces, strings, keywords, assignment, ++ / --, arrows or `;` — so no loops
+ * or function definitions, and nothing outside the scope can be reached. compileRules checks
+ * every expression before compiling it (and the browser compiler checks again).
+ */
+export function ruleExprError(expr: string): string | null {
+  let i = 0;
+  while (i < expr.length) {
+    const rest = expr.slice(i);
+    const ws = /^\s+/.exec(rest);
+    if (ws) {
+      i += ws[0].length;
+      continue;
+    }
+    const num = NUMBER.exec(rest);
+    if (num) {
+      // A name straight after a number (0x10, 1e, 2k) isn't a number.
+      if (NAME.test(rest.slice(num[0].length))) return `“${rest.slice(0, num[0].length + 1)}” is not a number`;
+      i += num[0].length;
+      continue;
+    }
+    const name = NAME.exec(rest);
+    if (name) {
+      if (!RULE_NAMES.has(name[0])) return `unknown name “${name[0]}”`;
+      i += name[0].length;
+      continue;
+    }
+    const bad = REJECTED_OPS.find((o) => rest.startsWith(o) && !(o === '?.' && /^\?\.\d/.test(rest)));
+    if (bad) return `“${bad}” is not allowed`;
+    const op = RULE_OPS.find((o) => rest.startsWith(o));
+    if (op) {
+      // Compound assignment (+=, **=, >>>=, ??=, …); a lone = is caught below.
+      if (expr[i + op.length] === '=' && ASSIGNING.includes(op)) return `“${op}=” is not allowed`;
+      i += op.length;
+      continue;
+    }
+    const ch = rest[0];
+    return ch === '.' ? '“.” is not allowed (no member access)' : `“${ch}” is not allowed`;
+  }
+  return null;
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, MAX_RULE_EXPR) : '');
@@ -150,6 +213,13 @@ export function compileRules(list: readonly HarmonicRule[], compile: RuleCompile
     let part = 'value';
     try {
       if (!r.value.trim()) throw new SyntaxError('the value is empty');
+      // Validate both before compiling either: nothing unvalidated reaches the compiler.
+      part = 'condition';
+      const whenErr = ruleExprError(r.when);
+      if (whenErr) throw new SyntaxError(whenErr);
+      part = 'value';
+      const valueErr = ruleExprError(r.value);
+      if (valueErr) throw new SyntaxError(valueErr);
       part = 'condition';
       const when = r.when.trim() ? compile(r.when) : null;
       part = 'value';

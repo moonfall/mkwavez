@@ -93,8 +93,9 @@ export function buildRulesEditor(o: RulesEditorOpts): RulesEditor {
     const next = rules.slice();
     [next[i], next[j]] = [next[j], next[i]];
     change(next);
-    // Keep the moved rule's button under the keyboard.
-    (d < 0 ? rows[j].up : rows[j].down).focus();
+    // Keep the moved rule under the keyboard: the same arrow, or its other one once it reaches an end.
+    const same = d < 0 ? rows[j].up : rows[j].down;
+    (same.disabled ? (d < 0 ? rows[j].down : rows[j].up) : same).focus();
   };
 
   const field = (i: number, key: 'when' | 'value', label: string, placeholder: string) => {

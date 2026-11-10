@@ -95,7 +95,7 @@ export interface VizInput {
   readonly u: number;
   /** Per-table host inputs (Glyph contour: the traced contour and character). */
   readonly inputs?: Readonly<Record<string, ParamValue>>;
-  /** Harmonic rules: the shown waveform's amplitudes and the rule that set each (null: the rules fail). */
+  /** Harmonic rules: the shown waveform's amplitudes and the rule that set each (null: not computed yet, or failed). */
   readonly harmonics?: RulesResult | null;
 }
 
@@ -1063,7 +1063,7 @@ viz('glyph-contour', {
 viz('mode:rules', {
   axis: (i) => {
     const r = i.harmonics;
-    if (!r) return ['h1', 'harmonics (the rules fail)', `h${KMAX}`];
+    if (!r) return ['h1', 'harmonics · colour = last rule that matched', `h${KMAX}`];
     let n = 0;
     for (let k = 1; k <= KMAX; k++) if (r.amps[k] !== 0) n++;
     return ['h1', `${n} harmonic${n === 1 ? '' : 's'} · colour = last rule that matched`, `h${KMAX}`];

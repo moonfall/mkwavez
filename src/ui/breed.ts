@@ -677,7 +677,6 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
 
   /** Child i as shown and added: shaped when a Shape chain is chosen. */
   const shaped = (j: Job, t: GeneratedTable | undefined, i: number) => t && shapeOn.apply(t, { index: i, count: j.req.count });
-  const finalTable = (j: Job, i: number): GeneratedTable => shaped(j, computeOne(j, i), i)!;
 
   // ---- actions ----
   const afterAdd = (msg: string) => {
@@ -691,7 +690,9 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     const j = currentJob();
     if (!j) return;
     const i = strip.shown();
-    if (!model.addTables([finalTable(j, i)], true).length) return; // refused (Timeline full): the notice says why
+    const add = shapeOn.forAdd([{ t: computeOne(j, i), b: { index: i, count: j.req.count } }]);
+    if ('error' in add) return flash(add.error, true);
+    if (!model.addTables(add.tables, true).length) return; // refused (Timeline full): the notice says why
     afterAdd(`Added ${mode === 'gen' ? `child ${i + 1}` : `#${i + 1}`} to the Timeline (selected)`);
   };
 
@@ -699,7 +700,9 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
     if (batchBlocked()) return;
     const j = currentJob();
     if (!j) return;
-    const tables = Array.from({ length: j.req.count }, (_, i) => finalTable(j, i));
+    const add = shapeOn.forAdd(Array.from({ length: j.req.count }, (_, i) => ({ t: computeOne(j, i), b: { index: i, count: j.req.count } })));
+    if ('error' in add) return flash(add.error, true);
+    const tables = add.tables;
     if (!model.addTables(tables, true).length) return; // refused: keep the seed
     afterAdd(`Added ${tables.length} waveform${tables.length > 1 ? 's' : ''} to the Timeline (the last is selected)`);
   };
@@ -910,8 +913,11 @@ export function buildBreedPanel(ctx: UiContext, opts: BreedPanelOpts): { el: HTM
         const tables: GeneratedTable[] = [];
         for (let i = 0; i < n; i++) {
           if (!j.tables[i] && performance.now() > deadline) return { wait: true };
-          const t = shapeOn.applyWithin(computeOne(j, i), { index: i, count: n }, deadline);
+          const raw = computeOne(j, i);
+          const t = shapeOn.applyWithin(raw, { index: i, count: n }, deadline);
           if (!t) return { wait: true };
+          const err = shapeOn.errorOf(raw);
+          if (err) return { error: `Breed: the Shape chain fails on #${i + 1} (${err})` };
           tables.push(t);
         }
         return { tables };

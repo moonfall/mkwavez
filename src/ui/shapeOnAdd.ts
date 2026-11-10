@@ -43,10 +43,21 @@ export interface ShapeOnAdd {
   el: HTMLElement;
   /** The chosen chain, or null (none). */
   chain(): ShapeChain | null;
-  /** Why the chosen chain fails (a Rules step whose rule fails; waveforms then stay unshaped), or ''. */
+  /** Why the chosen chain fails on some previewed waveform (a Rules step whose rule fails), or ''. */
   failure(): string;
-  /** t shaped by the chosen chain at its batch position (t itself when none); memoised per table. */
-  apply(t: GeneratedTable, b: BatchPos): GeneratedTable;
+  /**
+   * t shaped by the chosen chain at its batch position (t itself when none, or unshaped when
+   * the chain fails on it: errorOf says why); memoised per table. `retry` recomputes a
+   * memoised failure (a rule that was stopped as too slow may finish now).
+   */
+  apply(t: GeneratedTable, b: BatchPos, retry?: boolean): GeneratedTable;
+  /** Why the chosen chain failed on t (memoised for the current chain), or undefined. */
+  errorOf(t: GeneratedTable): string | undefined;
+  /**
+   * What Add appends: every table shaped (failures retried once), or a refusal when the chain
+   * fails on any of them, so a batch is never a mix of shaped and unshaped waveforms.
+   */
+  forAdd(items: readonly { t: GeneratedTable; b: BatchPos }[]): { tables: GeneratedTable[] } | { error: string };
   /** Like apply(), but undefined if it isn't memoised and `deadline` (performance.now()) has passed: try again next frame. */
   applyWithin(t: GeneratedTable, b: BatchPos, deadline: number): GeneratedTable | undefined;
 }
@@ -116,11 +127,13 @@ export function buildShapeOnAdd(ctx: UiContext, prefix: string, onChange: () => 
   });
 
   let lastJson = '';
-  /** Set when the chain failed on a waveform: the chip warns and the waveform stays unshaped. */
+  /** Tables the current chain failed on, and the last failure: the chip warns while any remain. */
+  const failed = new Set<GeneratedTable>();
   let failure = '';
   const showFailure = () => {
+    if (!failed.size) failure = '';
     el.classList.toggle('warn', !!failure);
-    if (failure) el.title = failure;
+    if (failure) el.title = `${failure}: nothing is added until it is fixed (or the chip is off)`;
   };
   const sync = (notify = true) => {
     const v = choice();
@@ -131,7 +144,7 @@ export function buildShapeOnAdd(ctx: UiContext, prefix: string, onChange: () => 
     const json = c ? chainJson(c) : '';
     if (json !== lastJson) {
       lastJson = json;
-      failure = '';
+      failed.clear();
       if (notify) onChange();
     }
     showFailure();
@@ -141,7 +154,11 @@ export function buildShapeOnAdd(ctx: UiContext, prefix: string, onChange: () => 
   // The owner is still being built: no change callback for the initial state.
   sync(false);
 
-  const memo = new WeakMap<GeneratedTable, { json: string; out: GeneratedTable }>();
+  const memo = new WeakMap<GeneratedTable, { json: string; out: GeneratedTable; error?: string }>();
+  const chainOn = () => {
+    const c = resolve(choice());
+    return c && c.steps.some((s) => s.on) ? c : null;
+  };
   const self: ShapeOnAdd = {
     el,
     chain: () => resolve(choice()),
@@ -153,24 +170,44 @@ export function buildShapeOnAdd(ctx: UiContext, prefix: string, onChange: () => 
       if (m && m.json === (lastJson || chainJson(c))) return m.out;
       return performance.now() < deadline ? self.apply(t, b) : undefined;
     },
-    apply(t, b) {
-      const c = resolve(choice());
-      if (!c || !c.steps.some((s) => s.on)) return t;
+    errorOf(t) {
+      const c = chainOn();
+      const m = c && memo.get(t);
+      return m && m.json === (lastJson || chainJson(c)) ? m.error : undefined;
+    },
+    forAdd(items) {
+      const c = chainOn();
+      const tables = items.map(({ t, b }) => self.apply(t, b, true));
+      const bad = items.findIndex(({ t }) => self.errorOf(t) !== undefined);
+      if (c && bad >= 0) {
+        const n = items.length > 1 ? ` on #${(items[bad].t.recipe.batch?.index ?? bad) + 1}` : '';
+        return { error: `Not added: the Shape chain “${c.name}” fails${n} (${self.errorOf(items[bad].t)}). Fix it in the Shape tab, or turn the Shape chip off.` };
+      }
+      return { tables };
+    },
+    apply(t, b, retry = false) {
+      const c = chainOn();
+      if (!c) return t;
       const json = lastJson || chainJson(c);
       const m = memo.get(t);
-      if (m && m.json === json) return m.out;
+      if (m && m.json === json && !(retry && m.error)) return m.out;
       // The recipe's batch position is what renderRecipe applies the chain at.
       const pos = t.recipe.batch ?? { index: b.index, count: b.count };
       let out: GeneratedTable;
+      let error: string | undefined;
       try {
         out = { data: applyChain(t.data, c, pos, chainEnv()), recipe: { ...t.recipe, batch: pos, shape: json } };
+        failed.delete(t);
       } catch (e) {
-        // A chain that fails here (a Rules step) isn't applied: the waveform (and its recipe) stay unshaped.
+        // A chain that fails here (a Rules step) isn't applied: the preview shows the waveform
+        // unshaped, and Add refuses (forAdd) until the chain is fixed.
         out = t;
-        failure = `“${c.name}” fails (${chainError(e)}): waveforms are added unshaped`;
-        showFailure();
+        error = chainError(e);
+        failed.add(t);
+        failure = `“${c.name}” fails (${error})`;
       }
-      memo.set(t, { json, out });
+      showFailure();
+      memo.set(t, { json, out, error });
       return out;
     },
   };

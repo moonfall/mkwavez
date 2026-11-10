@@ -8,7 +8,7 @@
  * (sine, saw, ca, ks, …: core/generators/waveFunctions.ts), which the core passes per table.
  */
 import type { FormulaFn } from '../core/generators/formula';
-import type { RuleFn } from '../core/generators/harmonicRules';
+import { ruleExprError, type RuleFn } from '../core/generators/harmonicRules';
 import { WAVE_FUNCTION_NAMES } from '../core/generators/waveFunctions';
 
 const MATH_NAMES = Object.getOwnPropertyNames(Math);
@@ -39,6 +39,9 @@ export function compileRule(expr: string): RuleFn {
   const hit = ruleCache.get(expr);
   if (hit) return hit;
   if (!expr.trim()) throw new SyntaxError('empty expression');
+  // Rule expressions arrive in imports, sessions and recipes: only the rule language compiles.
+  const bad = ruleExprError(expr);
+  if (bad) throw new SyntaxError(bad);
   const used = WAVE_FUNCTION_NAMES.filter((name) => new RegExp(`\\b${name}\\b`).test(expr));
   const bind = used.length ? `const { ${used.join(', ')} } = fx$;` : '';
   const factory = new Function(

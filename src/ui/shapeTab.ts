@@ -13,7 +13,7 @@
 import { compileRule } from '../browser/formulaEval';
 import { KMAX } from '../core/constants';
 import { harmonicMagnitudes } from '../core/fft';
-import { compileRules, RuleError, rulesUseBatch } from '../core/generators/harmonicRules';
+import { compileRules, RuleError, rulesUseBatch, type RulesResult } from '../core/generators/harmonicRules';
 import { drawingSpan, drawingValue, StrokeBuffer, type Drawing, type DrawTool, type Pt } from '../core/drawing';
 import { MUTATION_CHOICES, MUTATION_REV } from '../core/mutations';
 import { randomSeed } from '../core/prng';
@@ -1026,7 +1026,10 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
   };
 
   // ---- stages of the shown card (prefix-cached) ----
-  let stageCache: { srcId: number; keys: string[]; outs: Float64Array<ArrayBufferLike>[] } | null = null;
+  /** Stages of the last computation; `err` = it failed at that step (outs past it are pass-through copies). */
+  let stageCache: { srcId: number; keys: string[]; outs: Float64Array<ArrayBufferLike>[]; err?: ShapeStepError } | null = null;
+  /** The selected Rules step's evaluation (dots in the Harmonics view), keyed by the stages leading to it. */
+  let dotsCache: { key: string; r: RulesResult | null } | null = null;
   /** The step that failed computing the shown card's stages (a Rules step), if any. */
   let stageErr: ShapeStepError | null = null;
   const shownPos = (): BatchPos => {
@@ -1049,20 +1052,50 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
     if (stageCache && stageCache.srcId === src.id) while (keep < keys.length && keep < stageCache.keys.length && keys[keep] === stageCache.keys[keep]) keep++;
     let outs: Float64Array<ArrayBufferLike>[];
     stageErr = null;
-    try {
-      outs = chainStages(src.data, c, b, stageCache && stageCache.srcId === src.id ? stageCache.outs.slice(0, keep) : [], chainEnv());
-      stageCache = { srcId: src.id, keys, outs };
-    } catch (e) {
-      if (!(e instanceof ShapeStepError)) throw e;
-      // A failing step (a Rules step) and the steps after it pass their input on in the plots; the error is shown.
-      stageErr = e;
-      stageCache = { srcId: src.id, keys: keys.slice(0, e.index), outs: e.stages.slice() };
-      outs = e.stages.slice();
-      while (outs.length < c.steps.length) outs.push(outs.at(-1) ?? Float64Array.from(src.data));
+    const cached = stageCache && stageCache.srcId === src.id ? stageCache : null;
+    if (cached?.err && keep === keys.length && keys.length === cached.keys.length) {
+      // The same failure as last time: don't run the failing step (to its abort) again.
+      stageErr = cached.err;
+      outs = cached.outs;
+    } else {
+      // Only stages before a cached failure are real; recompute from there.
+      if (cached?.err) keep = Math.min(keep, cached.err.index);
+      try {
+        outs = chainStages(src.data, c, b, cached ? cached.outs.slice(0, keep) : [], chainEnv());
+        stageCache = { srcId: src.id, keys, outs };
+      } catch (e) {
+        if (!(e instanceof ShapeStepError)) throw e;
+        // A failing step (a Rules step) and the steps after it pass their input on in the plots; the error is shown.
+        stageErr = e;
+        outs = e.stages.slice();
+        while (outs.length < c.steps.length) outs.push(outs.at(-1) ?? Float64Array.from(src.data));
+        stageCache = { srcId: src.id, keys, outs, err: e };
+      }
     }
     const i = selIndex();
     if (i < 0) return { inp: src.data, out: src.data, all: outs };
     return { inp: i > 0 ? outs[i - 1] : src.data, out: outs[i], all: outs };
+  };
+
+  /**
+   * The selected Rules step's evaluation on its input (which rule set each harmonic), only when
+   * the step applies (on, amount > 0) and hasn't failed; evaluated once per change of the stages
+   * leading to it, under the chain cap.
+   */
+  const rulesDots = (s: Step, inp: ArrayLike<number>): RulesResult | null => {
+    const i = selIndex();
+    const b = shownPos();
+    if (s.op !== 'rules' || !s.on || stepAmount(s, batchUOf(b)) <= 0 || (stageErr && stageErr.index <= i) || !stageCache) return null;
+    const key = `${stageCache.srcId}|${stageCache.keys.slice(0, i + 1).join('\n')}`;
+    if (dotsCache?.key === key) return dotsCache.r;
+    let r: RulesResult | null = null;
+    try {
+      r = rulesStepEval(s, inp, stepSeed(chain(), s, b), { ...chainEnv(), index: b.index, count: b.count });
+    } catch {
+      // The error is shown on the rule's row.
+    }
+    dotsCache = { key, r };
+    return r;
   };
 
   /** Level range of the waveform plot (frozen while a stroke is drawn). */
@@ -1266,20 +1299,15 @@ export function buildShapePanel(ctx: UiContext, opts: ShapePanelOpts): { el: HTM
           g.fill();
         }
       }
-      if (s && s.op === 'rules' && !(stageErr && stageErr.index <= selIndex())) {
+      const dots = s && s.op === 'rules' ? rulesDots(s, inp) : null;
+      if (dots) {
         // Each harmonic a rule matched: a dot in that rule's colour (the last one that matched).
-        try {
-          const b = shownPos();
-          const r = rulesStepEval(s, inp, stepSeed(chain(), s, b), { ...chainEnv(), index: b.index, count: b.count });
-          for (let k = 1; k <= KMAX; k++) {
-            if (r.last[k] < 0) continue;
-            g.fillStyle = ruleColor(r.last[k]);
-            g.beginPath();
-            g.arc(((k - 0.5) / KMAX) * w, hh - 3, 1.8, 0, 2 * Math.PI);
-            g.fill();
-          }
-        } catch {
-          // The error is shown on the rule's row.
+        for (let k = 1; k <= KMAX; k++) {
+          if (dots.last[k] < 0) continue;
+          g.fillStyle = ruleColor(dots.last[k]);
+          g.beginPath();
+          g.arc(((k - 0.5) / KMAX) * w, hh - 3, 1.8, 0, 2 * Math.PI);
+          g.fill();
         }
       }
       bars(g, di, w, hh - DOTS_H, cssColor('--border-strong'), 0.85);

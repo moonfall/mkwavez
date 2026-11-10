@@ -453,7 +453,13 @@ waveform.
 | `prime(x)` | 1 if x (rounded) is prime, else 0 |
 | `db(x)` | dB → linear (`db(-6)` ≈ 0.5) |
 | `rand(x)` | seeded 0 … 1, fixed per seed, rule and x (`rand()` = `rand(k)`); Reroll for another |
-| `pnoise(…)`, `noise(…)`, `sin`, …, waveform functions | as in formulas; `pnoise` reads around the harmonics (phase 2π(k−1)/72) |
+| `pnoise(…)`, `noise(…)`, `sin`, `PI`, …, waveform functions | as in formulas (the Math functions and constants except `random`); `pnoise` reads around the harmonics (phase 2π(k−1)/72) |
+
+Rule expressions are a small subset of the formula language, checked before anything is
+compiled (rules also arrive in imported chains and sessions): numbers, the arithmetic,
+comparison, logical, bitwise and ternary operators, parentheses, commas and the names above.
+Member access (`.`), brackets, braces, strings, assignment, `++` / `--`, arrows, `;`,
+keywords and any other name are errors on the rule's row.
 
 Use `**` or `pow()` for powers (`^` is JavaScript's bitwise XOR). Examples: `k%2==1` →
 `1/k` (a square), `prime(k)` → `1/k`, `k>1` → `v + 0.3*a(k-1)` (energy smeared upward),

@@ -18,6 +18,7 @@ import {
   rulesUseBatch,
   rulesUseSeed,
   RuleError,
+  ruleExprError,
   SEED_LIBRARY,
   seedBatch,
   seedEntry,
@@ -158,6 +159,60 @@ const entries = SEED_LIBRARY.filter((e) => e.mode === 'rules');
 const prog = (req: SeedRequest) => compileRules(seedRules(req), compileRule);
 const req = (id: string, seed = 5, count = 8, rules?: HarmonicRule[]): SeedRequest => ({ entry: seedEntry(id)!, expr: '', params: {}, seed, count, rules });
 const peak = (x: ArrayLike<number>) => Math.max(...Array.from(x, Math.abs));
+
+describe('Harmonic rules: the expression whitelist', () => {
+  const ok = [
+    'k%2==1', '1/k', 'prime(k)', 'k==1 || prime(k)', 'v + 0.3*a(k-1)', 'v + exp(-pow(k-(4+20*u), 2)/6)', 'db(-6)', 'rand()',
+    'k>1 && rand(k) < 0.4', '1/(k-6)', 'v/0', 'v*(1-u)', 'k%(3+n)==0', 'k ** 2', '(k & 3) ^ 1 | ~k >> 1 >>> 0', 'k <= 3 ? .5 : 1e-3',
+    'k===1', 'k!==2', 'sin(PI*k/K)', 'saw(k/K*2*PI) + noise(k, 0, 0)', 'pnoise(2, u, 4, 0.5)', 'k?.5:1', 'v ?? 0', '',
+  ];
+  it('the rule language passes (presets, README examples)', () => {
+    for (const e of ok) expect(ruleExprError(e), e).toBeNull();
+    for (const p of RULES_PRESETS) for (const r of p.rules) expect([ruleExprError(r.when), ruleExprError(r.value)], p.id).toEqual([null, null]);
+  });
+  it('rejects member access, brackets, braces, strings, keywords, assignment, arrows, ; and unknown names', () => {
+    const bad: [string, RegExp][] = [
+      ['(globalThis.pwned=(globalThis.pwned||0)+1, v)', /globalThis/],
+      ['(()=>{for(;;);})()', /=>|not allowed/],
+      ['Math.random()', /Math/],
+      ['v.constructor', /member access/],
+      ['a["constructor"]', /\[/],
+      ['{}', /\{/],
+      ["'x'", /'/],
+      ['`x`', /`/],
+      ['k = 1', /=/],
+      ['v += 1', /\+=/],
+      ['v **= 2', /\*\*=/],
+      ['k >>>= 1', />>>=/],
+      ['v ??= 1', /\?\?=/],
+      ['v++', /\+\+/],
+      ['--v', /--/],
+      ['k; 1', /;/],
+      ['function(){}', /function/],
+      ['new Date', /new/],
+      ['this', /this/],
+      ['random()', /random/],
+      ['0x10', /not a number/],
+      ['2k', /not a number/],
+      ['1..toString()', /member access|not a number/],
+      ['v?.x', /\?\./],
+      ['\\u0061', /\\/],
+      ['eval("1")', /eval/],
+    ];
+    for (const [e, re] of bad) expect(ruleExprError(e), e).toMatch(re);
+  });
+  it('a rejected rule is a per-rule compile error, and nothing is compiled', () => {
+    const seen: string[] = [];
+    const spy = (e: string) => (seen.push(e), compileRule(e));
+    const p = compileRules([R('', '1/k'), R('', '(globalThis.pwned=(globalThis.pwned||0)+1, v)'), R('k.x', 'v')], spy);
+    expect(p.errors[0]).toBeUndefined();
+    expect(p.errors[1]).toMatch(/^value: unknown name “globalThis”/);
+    expect(p.errors[2]).toMatch(/^condition: .*member access/);
+    expect(seen).toEqual(['1/k']);
+    expect(() => compileRule('(()=>{for(;;);})()')).toThrow(SyntaxError);
+    expect((globalThis as { pwned?: number }).pwned).toBeUndefined();
+  });
+});
 
 describe('Harmonic rules: Seed entries', () => {
   it('every preset is in the library (group Harmonic rules)', () => {

@@ -91,6 +91,8 @@ interface Job {
   errors: (string | undefined)[];
   /** Harmonic rules: the rule each failed waveform failed in. */
   errorRules: (number | undefined)[];
+  /** Harmonic rules: the basis plot's evaluation of each computed waveform (null: it failed), cached. */
+  rulesRes: (RulesResult | null | undefined)[];
   next: number;
   /** Set when a table was aborted as too slow: the whole preview stops. */
   fatal: string;
@@ -654,7 +656,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
       fn = compile(fexpr).fn;
       if (!fn) return null;
     }
-    job = { key: keyOf(req), req, fn, tables: new Array(req.count), errors: new Array(req.count), errorRules: new Array(req.count), next: 0, fatal: '' };
+    job = { key: keyOf(req), req, fn, tables: new Array(req.count), errors: new Array(req.count), errorRules: new Array(req.count), rulesRes: new Array(req.count), next: 0, fatal: '' };
     cardsDirty = mainDirty = statusDirty = true;
     return job;
   };
@@ -756,7 +758,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const j = currentJob();
     const shown = strip.shown();
     if (!j || !computeOne(j, shown)) return updateStatus();
-    if (!model.addTables([finalTable(j, shown)!], true).length) return; // refused (Timeline full): the notice says why
+    const add = shapeOn.forAdd([{ t: j.tables[shown]!, b: { index: shown, count: j.req.count } }]);
+    if ('error' in add) return flash(add.error, true);
+    if (!model.addTables(add.tables, true).length) return; // refused (Timeline full): the notice says why
     flash(`Added #${shown + 1} to the Timeline`);
   };
 
@@ -771,7 +775,9 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         flash(`Batch not added: ${failed.length} of ${j.req.count} waveforms failed (first #${failed[0] + 1}). Fix the formula, or Add shown for single waveforms.`, true);
       return;
     }
-    if (!model.addTables(j.tables.map((_, i) => finalTable(j, i)!), true).length) return; // refused: keep the seed
+    const add = shapeOn.forAdd(j.tables.map((t, i) => ({ t: t!, b: { index: i, count: j.req.count } })));
+    if ('error' in add) return flash(add.error, true);
+    if (!model.addTables(add.tables, true).length) return; // refused: keep the seed
     const n = j.req.count;
     if (seedUsesRandomness(j.req.entry, formulaOf(j.req) ?? j.req.expr, j.req.params, seedRules(j.req))) {
       newSeed();
@@ -834,7 +840,7 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     const req = cur?.req ?? request();
     const count = req.count;
     const index = Math.min(i, count - 1);
-    const harmonics = e.mode === 'rules' ? rulesResult(req, index, count) : undefined;
+    const harmonics = e.mode === 'rules' ? rulesResult(cur, index) : undefined;
     const input = { params: req.params, seed: req.seed, index, count, u: batchU(index, count), inputs: req.inputs?.length ? req.inputs[index % req.inputs.length] : undefined, harmonics };
     const labels = v.axis(input);
     basisAxis.childNodes.forEach((n, k) => (n.textContent = labels[k]));
@@ -843,13 +849,24 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
     if (failed && cur) return;
     v.draw(g, w, hh, input, vizColors());
   };
-  /** Harmonic rules: the shown waveform's amplitudes and the rule that set each one (null if it fails). */
-  const rulesResult = (req: SeedRequest, index: number, count: number): RulesResult | null => {
+  /**
+   * Harmonic rules: the shown waveform's amplitudes and the rule that set each one, once its
+   * table has computed (null while it hasn't, or when it or the job failed). Evaluated once per
+   * waveform of the job, under the same cap as the table.
+   */
+  const rulesResult = (j: Job | null, i: number): RulesResult | null => {
+    if (!j || j.fatal || j.errors[i] || !j.tables[i] || !j.fn || typeof j.fn === 'function') return null;
+    const have = j.rulesRes[i];
+    if (have !== undefined) return have;
+    const stopAt = performance.now() + TABLE_CAP_MS;
+    let r: RulesResult | null;
     try {
-      return evalRules(compileRuleList(seedRules(req)), null, req.seed, index, count);
+      r = evalRules(j.fn, null, j.req.seed, i, j.req.count, () => performance.now() > stopAt);
     } catch {
-      return null;
+      r = null;
     }
+    j.rulesRes[i] = r;
+    return r;
   };
   const vizColors = (): VizColors => ({
     line: cssColor('--text-2'),
@@ -967,6 +984,8 @@ export function buildSeedPanel(ctx: UiContext, opts: SeedPanelOpts): { el: HTMLE
         for (let i = 0; i < n; i++) {
           const t = shapeOn.applyWithin(j.tables[i]!, { index: i, count: n }, deadline);
           if (!t) return { wait: true };
+          const err = shapeOn.errorOf(j.tables[i]!);
+          if (err) return { error: `Seed: the Shape chain fails on #${i + 1} (${err})` };
           tables.push(t);
         }
         return { tables };

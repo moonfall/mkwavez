@@ -163,6 +163,34 @@ describe('Shape step: Rules', () => {
     expect(out.timeline.at(-1)!.recipe).toEqual(shaped.recipe);
   });
 
+  it('imported rules never run as JS: payloads are rejected (chains, sessions, recipes)', () => {
+    const payloads = ['(globalThis.pwned=(globalThis.pwned||0)+1, v)', '(()=>{for(;;);})()'];
+    const g = globalThis as { pwned?: number };
+    for (const p of payloads) {
+      // A chain from an import / saved file goes through normalizeChain.
+      const c = normalizeChain(JSON.parse(JSON.stringify({ v: 1, name: 'evil', seed: 1, steps: [{ id: 'x', op: 'rules', amount: 1, rules: [{ when: '', value: p }, { when: p, value: 'v' }] }] })));
+      let e: unknown;
+      try {
+        applyChain(saw, c, undefined, env);
+      } catch (x) {
+        e = x;
+      }
+      expect(e).toBeInstanceOf(ShapeStepError);
+      expect((e as ShapeStepError).cause).toBeInstanceOf(RuleError);
+      // A session carrying the chain (the Shape tab's and a saved one) and a recipe shaped on add.
+      const m = new AppModel(64);
+      m.addTables([{ data: saw, recipe: { ...generateBasic('saw', 0).recipe, shape: chainJson(c) } }]);
+      m.setShapeChain(c);
+      m.saveShapeChain('evil');
+      const s: SessionState = { model: m.exportState(), ui: {} };
+      const { meta, records } = unpackSessionFile(packSessionFile(encodeMeta(s, 1), encodeWaveforms(s.model.timeline)));
+      const out = decodeSession(meta, records).state.model;
+      for (const ch of [out.shapeChain!, ...out.shapeChains!.map((x) => x.chain)]) expect(() => applyChain(saw, ch, undefined, env)).toThrow(ShapeStepError);
+      expect(() => renderRecipe(out.timeline.at(-1)!.recipe, { compileRule })).toThrow(/not allowed|unknown name/);
+    }
+    expect(g.pwned).toBeUndefined();
+  });
+
   it('works in Grid rows (a Shape chain row operation)', () => {
     const c = chain([rulesStep([R('k>1', 'v*(1-u)')])]);
     const col = makeTable(3, generateBasic('saw', 0));
